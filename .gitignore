@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+flask_server.log
+
+# Generated files (keep the directories, ignore contents)
+generated_ppt/*
+generated_lectures/*
+generated_outlines/*
+generated_speeches/*
+generated_exercises/*
+generated_quizzes/*
+generated_cards/*
+generated_mindmaps/*
+generated_content/text/*
+generated_content/audio/*
+generated_content/images/*
+ppt_previews/*
+
+# Memory (optional - comment out if you want to keep memory)
+memory/sessions/*
+
+# Environment
+.env
+.env.local
+*.env

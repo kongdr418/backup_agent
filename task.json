@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    {
+      "description": "从 task.json 领取任务，完成后标记 passes: true",
+      "passes": false,
+      "priority": "high"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+# AI 开发进度日志
+
+## 2026-04-26 - Task: 添加 6 个教育功能生成模块
+
+### What was done:
+- 创建 course_outline_generator.py（课程大纲）
+- 创建 speech_generator.py（讲稿）
+- 创建 exercise_generator.py（习题集）
+- 创建 quiz_generator.py（课堂测验）
+- 创建 knowledge_card_generator.py（知识卡片）
+- 创建 mindmap_generator.py（思维导图）
+- 修改 minimax_agent.py 集成所有新生成器
+- 修改 app.py 的 /api/files 端点支持新目录结构
+
+### Testing:
+- 逐一测试所有 6 个新功能，均生成成功
+- PPT 生成测试通过（需要先 npm install）
+- 小红书图文、短视频脚本功能测试通过
+
+### Notes:
+- node_modules 不可打包，需接收者运行 npm install
+- 生成文件按类型分开存放于不同目录
+
+---
+
+## 2026-04-26 - Task: 目录结构优化
+
+### What was done:
+- 将生成文件按类型分开存放
+- 调整 allowed_dirs 安全检查覆盖所有目录
+- 清理旧缓存和临时文件
+
+### Testing:
+- API /api/files 返回正确分类
+- 各目录文件独立存放验证通过
+
+### Notes:
+- 待办：考虑添加独立的下载 API
+
+---
+
+## 2026-04-26 - Task: 添加 AI 开发流程系统
+
+### What was done:
+- 创建 task.json（任务列表）
+- 创建 progress.txt（工作日志）
+- 创建 CLAUDE.md（AI 员工手册）
+
+### Testing:
+- N/A - 配置类任务
+
+### Notes:
+- 下次 AI 开始工作时从 task.json 领取任务
