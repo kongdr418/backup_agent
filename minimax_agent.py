@@ -149,7 +149,8 @@ class MiniMaxAgent:
         exercise_request = self.exercise_generator.parse_exercise_request(message)
         if exercise_request:
             topic = exercise_request['topic']
-            return self._create_exercise_with_ai(topic)
+            output_format = exercise_request.get('format', 'md')
+            return self._create_exercise_with_ai(topic, output_format)
 
         # 检查是否是课堂测验请求
         quiz_request = self.quiz_generator.parse_quiz_request(message)
@@ -985,11 +986,11 @@ class MiniMaxAgent:
             else:
                 yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
 
-    def _create_exercise_with_ai(self, topic: str):
+    def _create_exercise_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成习题集"""
-        yield f"📋 即将为您生成习题集：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield f"📋 即将为您生成习题集：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
 
-        for update in self.exercise_generator.generate_exercise_stream(topic):
+        for update in self.exercise_generator.generate_exercise_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 self.memory.log_generation(topic, 'exercise', filtered_data)

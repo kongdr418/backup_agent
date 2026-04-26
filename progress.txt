@@ -71,3 +71,27 @@
 ### Notes:
 - .env 文件不会被提交到 GitHub
 - 新克隆仓库后需要复制 .env.example 为 .env 并填入 Keys
+
+---
+
+## 2026-04-26 - Task: 添加 docx 文档格式支持（以习题集为例）
+
+### What was done:
+- 添加 python-docx 依赖到 requirements.txt
+- 修改 exercise_generator.py：
+  - parse_exercise_request() 支持检测 "docx" 格式关键字
+  - generate_exercise_stream() 新增 output_format 参数
+  - 新增 _save_as_docx() 方法将 Markdown 内容转换为 docx
+- 修改 minimax_agent.py 的 _create_exercise_with_ai() 传递 output_format 参数
+
+### Testing:
+- 语法检查通过：python3 -c "import exercise_generator; import minimax_agent"
+- 直接调用测试通过：DEEPSEEK_API_KEY=xxx python3 -c "..." - 成功生成 docx 文件
+- API 服务启动测试通过：curl http://127.0.0.1:5001/api/health 返回 {"status":"ok"}
+- API 调用测试：因测试环境 API key 认证失败（非代码问题）
+
+### Notes:
+- 支持的触发命令格式：
+  - 习题集：机器学习 docx
+  - 习题集docx：机器学习
+  - 习题集：机器学习（默认 md 格式）

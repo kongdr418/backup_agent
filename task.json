@@ -2,7 +2,12 @@
   "tasks": [
     {
       "description": "从 task.json 领取任务，完成后标记 passes: true",
-      "passes": false,
+      "passes": true,
+      "priority": "high"
+    },
+    {
+      "description": "添加 docx 文档格式支持（以习题集为例）",
+      "passes": true,
       "priority": "high"
     }
   ]
