@@ -57,8 +57,8 @@ app_logger.info('=' * 60)
 app_logger.info('MiniMax Agent Web 应用启动中...')
 app_logger.info('=' * 60)
 
-# API 密钥
-API_KEY = "sk-cp-R5mBFqj9u1T2bGt0aoKbmeND4g192tPUl-CQ5jLt4cbv5dsCSkmYbEVyfPALPzEI-jnVNfSQB_dHCAiiAO_pi2um_sWwFBbageq9P8yKmBc-ZaZeX7dY5Do"
+# API 密钥 - 从环境变量读取
+API_KEY = os.environ.get('MINIMAX_API_KEY', '')
 
 # 存储用户会话（简单实现，生产环境应使用 Redis 等）
 sessions = {}

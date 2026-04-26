@@ -1344,9 +1344,10 @@ class MiniMaxAgent:
 
 
 if __name__ == "__main__":
-    # 测试代码
-    API_KEY = "sk-cp-R5mBFqj9u1T2bGt0aoKbmeND4g192tPUl-CQ5jLt4cbv5dsCSkmYbEVyfPALPzEI-jnVNfSQB_dHCAiiAO_pi2um_sWwFBbageq9P8yKmBc-ZaZeX7dY5Do"
-    
+    # 测试代码 - 从环境变量读取
+    import os
+    API_KEY = os.environ.get('MINIMAX_API_KEY', '')
+
     agent = MiniMaxAgent(API_KEY)
     
     print("=" * 60)

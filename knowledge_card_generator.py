@@ -165,7 +165,7 @@ type: knowledge_card
         """调用大语言模型"""
         from openai import OpenAI
         client = OpenAI(
-            api_key="sk-d95d1b8567d844889648d0bda30a8ebe",
+            api_key=os.environ.get('DEEPSEEK_API_KEY', ''),
             base_url="https://api.deepseek.com"
         )
         response = client.chat.completions.create(

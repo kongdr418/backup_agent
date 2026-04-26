@@ -51,3 +51,23 @@
 
 ### Notes:
 - 下次 AI 开始工作时从 task.json 领取任务
+
+---
+
+## 2026-04-26 - Task: API Key 安全改进
+
+### What was done:
+- 创建 .env.example 模板文件
+- 创建 .env 存储实际 Keys
+- 修改 app.py、minimax_agent.py 从环境变量读取 MINIMAX_API_KEY
+- 修改 content_generator.py 从环境变量读取 DEEPSEEK_API_KEY、MIMO_API_KEY、MINIMAX_IMAGE_API_KEY
+- 修改 6 个生成器从环境变量读取 DEEPSEEK_API_KEY
+- 修改 init.sh 自动加载 .env 环境变量
+- .gitignore 已包含 .env 不会被提交
+
+### Testing:
+- N/A - 配置类任务
+
+### Notes:
+- .env 文件不会被提交到 GitHub
+- 新克隆仓库后需要复制 .env.example 为 .env 并填入 Keys

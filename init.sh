@@ -1,6 +1,12 @@
 #!/bin/bash
 # 初始化脚本 - 安装依赖并启动服务
 
+# 加载 .env 环境变量
+if [ -f .env ]; then
+    echo "📁 加载环境变量..."
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
 echo "📦 安装 Python 依赖..."
 pip3 install -r requirements.txt -q
 

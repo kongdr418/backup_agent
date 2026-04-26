@@ -22,17 +22,17 @@ logger = logging.getLogger('MiniMaxAgent.content')
 class ContentGenerator:
     """自媒体内容生成器"""
 
-    # API 配置 - 沿用原有设计，硬编码
-    DEEPSEEK_API_KEY = "sk-d95d1b8567d844889648d0bda30a8ebe"  # 请替换为你的 key
+    # API 配置 - 从环境变量读取
+    DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
     DEEPSEEK_BASE_URL = "https://api.deepseek.com"
     DEEPSEEK_MODEL = "deepseek-chat"
 
-    MIMO_API_KEY = "sk-cf3y8ftjor9awrff2kt3ni9ijolrj0zjx4vp8rz5250hfxac"  # 请替换为你的 key
+    MIMO_API_KEY = os.environ.get('MIMO_API_KEY', '')
     MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
     MIMO_MODEL = "mimo-v2-tts"
     MIMO_VOICE = "mimo_default"
 
-    MINIMAX_IMAGE_API_KEY = "sk-api-qGS9gpTGTTLYCAd3Z2tC_AX5yEfX18DxLxN7OvsijebsnRo2FxwNbE-gSMim_ueJleRew7hD9rv0wrniIPgy84pFTmfGLbwIZcd5-CwXQMhm7Dh5iaRJhgk"  # 请替换为你的 key
+    MINIMAX_IMAGE_API_KEY = os.environ.get('MINIMAX_IMAGE_API_KEY', '')
 
     # 默认设置
     DEFAULT_SETTINGS = {
