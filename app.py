@@ -3,6 +3,9 @@ MiniMax Agent Web 应用
 Flask 后端服务
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from minimax_agent import MiniMaxAgent
