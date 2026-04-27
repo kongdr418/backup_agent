@@ -70,6 +70,18 @@ python3 app.py
    - 服务启动无异常
    - API 调用返回正确结果
 
+**重要：生成器测试必须通过 Flask API，不建议直接运行 .py 文件。**
+
+原因：生成器（如 `speech_generator.py`、`knowledge_card_generator.py`）直接调用 `os.environ.get('DEEPSEEK_API_KEY')`，但 `.env` 文件由 Flask 的 `load_dotenv()` 加载。直接运行 `python xxx_generator.py` 会因缺少 API Key 而失败。
+
+正确方式：
+```bash
+# 启动 Flask 服务
+python3 app.py
+# 新开终端，用 curl 测试
+curl -s -X POST http://127.0.0.1:5000/api/chat/stream -H "Content-Type: application/json; charset=utf-8" -d @/tmp/test.json
+```
+
 ### Step 5: 更新进度
 
 在 `progress.txt` 末尾追加：
