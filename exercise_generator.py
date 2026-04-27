@@ -193,68 +193,205 @@ D. 选项4
         return self._call_llm(prompt)
 
     def _save_as_docx(self, content: str, filepath: str, topic: str):
-        """将 Markdown 格式的习题内容保存为 docx"""
+        """直接构建 docx 格式的习题集文档"""
         from docx import Document
-        from docx.shared import Pt, Inches
+        from docx.shared import Pt, Cm
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.enum.style import WD_STYLE_TYPE
+        from docx.enum.table import WD_TABLE_ALIGNMENT
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
 
         doc = Document()
 
-        # 设置默认字体
+        # 设置默认字体（微软雅黑，支持中文）
         style = doc.styles['Normal']
-        style.font.name = 'Arial'
+        style.font.name = '微软雅黑'
         style.font.size = Pt(11)
+        style._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
 
+        # 页面边距
+        section = doc.sections[0]
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+
+        # 解析 Markdown 内容
         lines = content.split('\n')
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
+        current_section = None  # 当前题型：choice, fill, essay, answer
+        choice_questions = []   # 选择题列表
+        fill_questions = []    # 填空题列表
+        essay_questions = []    # 简答题列表
+        answers = {}           # 答案汇总
+        current_question = None
+        current_answer = None
 
-            if not line:
-                i += 1
+        # 解析内容
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('```'):
                 continue
 
-            # 标题处理 (# 标题)
+            # 标题处理
             if line.startswith('# '):
-                p = doc.add_heading(line[2:], level=1)
+                # 主标题 - 添加文档标题
+                p = doc.add_heading(line[2:], level=0)
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            elif line.startswith('## '):
-                p = doc.add_heading(line[3:], level=2)
-            elif line.startswith('### '):
-                p = doc.add_heading(line[4:], level=3)
-            # 分隔线
-            elif line == '---':
-                p = doc.add_paragraph()
-                p.paragraph_format.space_before = Pt(6)
-                p.paragraph_format.space_after = Pt(6)
-            # 选择题选项 (A. B. C. D.)
-            elif line.startswith(('A.', 'B.', 'C.', 'D.', 'A．', 'B．', 'C．', 'D．')):
-                p = doc.add_paragraph(line, style='List Bullet')
-            # 答案标记 【答案：XXX】
-            elif line.startswith('【答案'):
-                p = doc.add_paragraph()
-                run = p.add_run(line)
-                run.font.color.rgb = None  # 保持原样
-            # 要点列表
-            elif line.startswith('- '):
-                p = doc.add_paragraph(line[2:], style='List Bullet')
-            # 普通文本
-            else:
-                # 处理粗体 **text**
-                if '**' in line:
-                    p = doc.add_paragraph()
-                    parts = line.split('**')
-                    for j, part in enumerate(parts):
-                        if j % 2 == 1:  # 粗体部分
-                            run = p.add_run(part)
-                            run.bold = True
-                        else:
-                            p.add_run(part)
-                else:
-                    doc.add_paragraph(line)
+                for run in p.runs:
+                    run.font.name = '微软雅黑'
+                    run.font.size = Pt(18)
+            elif line.startswith('## 一、选择题') or line.startswith('## 一，选择题'):
+                current_section = 'choice'
+            elif line.startswith('## 二、填空题') or line.startswith('## 二，填空题'):
+                current_section = 'fill'
+            elif line.startswith('## 三、简答题') or line.startswith('## 三，简答题'):
+                current_section = 'essay'
+            elif line.startswith('## 答案汇总') or line.startswith('## 答案'):
+                current_section = 'answer'
+            elif line.startswith('### 选择题答案') or line.startswith('### 选择题'):
+                current_section = 'answer_choice'
+            elif line.startswith('### 填空题答案') or line.startswith('### 填空题'):
+                current_section = 'answer_fill'
+            # 题目处理
+            elif line.startswith('**') and '**' in line[2:]:
+                # 提取题目编号
+                match = re.match(r'\*\*(\d+)\.', line)
+                if match:
+                    q_num = match.group(1)
+                    q_text = re.sub(r'\*\*\d+\.\s*', '', line).strip()
+                    q_text = q_text.replace('**', '')
+                    current_question = {'num': q_num, 'text': q_text, 'options': [], 'answer': ''}
+                    if current_section == 'choice':
+                        choice_questions.append(current_question)
+                    elif current_section == 'fill':
+                        fill_questions.append(current_question)
+                    elif current_section == 'essay':
+                        essay_questions.append(current_question)
+            # 选项处理
+            elif re.match(r'^[A-D][\.．]\s*', line):
+                if current_question and current_section == 'choice':
+                    option_text = re.sub(r'^[A-D][\.．]\s*', '', line)
+                    current_question['options'].append(line)
+            # 答案处理
+            elif line.startswith('【答案') or line.startswith('【参考答案'):
+                if current_question:
+                    answer_match = re.search(r'[【\[](答案|参考答案)[：:\]]\s*(.+)', line)
+                    if answer_match:
+                        current_question['answer'] = answer_match.group(2).strip()
+            # 要点列表（简答题答案要点）
+            elif line.startswith('- ') and current_section == 'essay' and current_question:
+                if 'points' not in current_question:
+                    current_question['points'] = []
+                current_question['points'].append(line[2:].strip())
 
-            i += 1
+        # ========== 构建文档 ==========
+
+        # 添加习题集标题
+        title = doc.add_heading(f'{topic} - 习题集', level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # 添加元信息
+        meta = doc.add_paragraph()
+        meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = meta.add_run(f'生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        run.font.size = Pt(9)
+        run.font.color.rgb = None
+
+        # ========== 一、选择题 ==========
+        if choice_questions:
+            doc.add_heading('一、选择题', level=1)
+            for q in choice_questions:
+                # 题目
+                p = doc.add_paragraph()
+                run = p.add_run(f"{q['num']}. {q['text']}")
+                run.bold = True
+                run.font.size = Pt(11)
+
+                # 选项
+                for opt in q.get('options', []):
+                    doc.add_paragraph(opt, style='List Bullet')
+                # 答案
+                if q.get('answer'):
+                    p = doc.add_paragraph()
+                    run = p.add_run(f"【答案：{q['answer']}】")
+                    run.font.color.rgb = None
+                doc.add_paragraph()  # 空行
+
+        # ========== 二、填空题 ==========
+        if fill_questions:
+            doc.add_heading('二、填空题', level=1)
+            for q in fill_questions:
+                p = doc.add_paragraph()
+                run = p.add_run(f"{q['num']}. {q['text']}")
+                run.bold = True
+
+                if q.get('answer'):
+                    p = doc.add_paragraph()
+                    run = p.add_run(f"【答案：{q['answer']}】")
+                doc.add_paragraph()
+
+        # ========== 三、简答题 ==========
+        if essay_questions:
+            doc.add_heading('三、简答题', level=1)
+            for q in essay_questions:
+                p = doc.add_paragraph()
+                run = p.add_run(f"{q['num']}. {q['text']}")
+                run.bold = True
+
+                # 要点列表
+                if q.get('points'):
+                    for point in q['points']:
+                        doc.add_paragraph(point, style='List Bullet')
+
+                if q.get('answer'):
+                    p = doc.add_paragraph()
+                    run = p.add_run(f"【参考答案】")
+                    run.bold = True
+                    p = doc.add_paragraph()
+                    p.paragraph_format.left_indent = Cm(0.5)
+                    run = p.add_run(q['answer'])
+                doc.add_paragraph()
+
+        # ========== 答案汇总 ==========
+        doc.add_heading('答案汇总', level=1)
+
+        # 选择题答案表
+        if choice_questions:
+            doc.add_heading('选择题答案', level=2)
+            table = doc.add_table(rows=len(choice_questions)+1, cols=2)
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            # 表头
+            hdr = table.rows[0].cells
+            hdr[0].text = '题号'
+            hdr[1].text = '答案'
+            for cell in hdr:
+                cell.paragraphs[0].runs[0].bold = True
+
+            # 数据行
+            for i, q in enumerate(choice_questions):
+                row = table.rows[i+1].cells
+                row[0].text = q['num']
+                row[1].text = q['answer']
+
+        # 填空题答案表
+        if fill_questions:
+            doc.add_heading('填空题答案', level=2)
+            table = doc.add_table(rows=len(fill_questions)+1, cols=2)
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            hdr = table.rows[0].cells
+            hdr[0].text = '题号'
+            hdr[1].text = '答案'
+            for cell in hdr:
+                cell.paragraphs[0].runs[0].bold = True
+
+            for i, q in enumerate(fill_questions):
+                row = table.rows[i+1].cells
+                row[0].text = q['num']
+                row[1].text = q['answer']
 
         doc.save(filepath)
 
