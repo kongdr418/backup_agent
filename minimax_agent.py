@@ -137,13 +137,15 @@ class MiniMaxAgent:
         outline_request = self.course_outline_generator.parse_outline_request(message)
         if outline_request:
             topic = outline_request['topic']
-            return self._create_outline_with_ai(topic)
+            output_format = outline_request.get('format', 'md')
+            return self._create_outline_with_ai(topic, output_format)
 
         # 检查是否是讲稿请求
         speech_request = self.speech_generator.parse_speech_request(message)
         if speech_request:
             topic = speech_request['topic']
-            return self._create_speech_with_ai(topic)
+            output_format = speech_request.get('format', 'md')
+            return self._create_speech_with_ai(topic, output_format)
 
         # 检查是否是习题集请求
         exercise_request = self.exercise_generator.parse_exercise_request(message)
@@ -156,13 +158,15 @@ class MiniMaxAgent:
         quiz_request = self.quiz_generator.parse_quiz_request(message)
         if quiz_request:
             topic = quiz_request['topic']
-            return self._create_quiz_with_ai(topic)
+            output_format = quiz_request.get('format', 'md')
+            return self._create_quiz_with_ai(topic, output_format)
 
         # 检查是否是知识卡片请求
         card_request = self.knowledge_card_generator.parse_card_request(message)
         if card_request:
             topic = card_request['topic']
-            return self._create_card_with_ai(topic)
+            output_format = card_request.get('format', 'md')
+            return self._create_card_with_ai(topic, output_format)
 
         # 检查是否是思维导图请求
         mindmap_request = self.mindmap_generator.parse_mindmap_request(message)
@@ -936,11 +940,11 @@ class MiniMaxAgent:
         except Exception as e:
             return f"❌ 讲义生成失败: {str(e)}"
 
-    def _create_outline_with_ai(self, topic: str):
+    def _create_outline_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成课程大纲"""
-        yield f"📋 即将为您生成课程大纲：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield f"📋 即将为您生成课程大纲：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
 
-        for update in self.course_outline_generator.generate_outline_stream(topic):
+        for update in self.course_outline_generator.generate_outline_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 self.memory.log_generation(topic, 'course_outline', filtered_data)
@@ -961,11 +965,11 @@ class MiniMaxAgent:
             else:
                 yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
 
-    def _create_speech_with_ai(self, topic: str):
+    def _create_speech_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成讲稿"""
-        yield f"📋 即将为您生成授课讲稿：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield f"📋 即将为您生成授课讲稿：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
 
-        for update in self.speech_generator.generate_speech_stream(topic):
+        for update in self.speech_generator.generate_speech_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 self.memory.log_generation(topic, 'speech', filtered_data)
@@ -1011,11 +1015,11 @@ class MiniMaxAgent:
             else:
                 yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
 
-    def _create_quiz_with_ai(self, topic: str):
+    def _create_quiz_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成课堂测验"""
-        yield f"📋 即将为您生成课堂测验：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield f"📋 即将为您生成课堂测验：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
 
-        for update in self.quiz_generator.generate_quiz_stream(topic):
+        for update in self.quiz_generator.generate_quiz_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 self.memory.log_generation(topic, 'quiz', filtered_data)
@@ -1036,11 +1040,11 @@ class MiniMaxAgent:
             else:
                 yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
 
-    def _create_card_with_ai(self, topic: str):
+    def _create_card_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成知识卡片"""
-        yield f"📋 即将为您生成知识卡片：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield f"📋 即将为您生成知识卡片：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
 
-        for update in self.knowledge_card_generator.generate_card_stream(topic):
+        for update in self.knowledge_card_generator.generate_card_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 self.memory.log_generation(topic, 'knowledge_card', filtered_data)
