@@ -71,24 +71,15 @@ class ExerciseGenerator:
                 'message': f'🚀 开始生成习题集：{topic}'
             }
 
-            content = self._generate_exercise_content(topic)
-            result_data['content'] = content
-
-            yield {
-                'step': 'generate_content',
-                'progress': 60,
-                'status': 'running',
-                'data': {},
-                'message': '✅ 习题生成完成，正在保存...'
-            }
-
             safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
 
             if output_format == "docx":
+                content = self._generate_json_content(topic)
                 filename = f"习题集_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
-                self._save_as_docx(content, filepath, topic)
+                self._save_as_docx(content, filepath)
             else:
+                content = self._generate_markdown_content(topic)
                 filename = f"习题集_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
                 header = f"""---
@@ -120,24 +111,23 @@ type: exercise
                 'message': f'❌ 生成失败: {e}'
             }
 
-    def _generate_exercise_content(self, topic: str) -> str:
-        """调用 AI 生成习题内容"""
+    def _generate_markdown_content(self, topic: str) -> str:
+        """调用 AI 生成可读性强的 Markdown 格式"""
         prompt = f"""请为"{topic}"生成一份完整的习题集。
 
 要求：
 1. 包含三种题型：选择题、填空题、简答题
-2. 每种题型至少5-10道题
+2. 每种题型至少5道题
 3. 题目难度适中，覆盖核心知识点
-4. 包含答案（单独放在最后）
-5. 使用 Markdown 格式输出
+4. 直接返回 Markdown 格式，不要其他说明
 
 请按以下格式返回：
 
 # {topic} - 习题集
 
-## 一、选择题（每题X分，共X道）
+## 一、选择题
 
-**1. （难度：易/中/难）**
+**1.** 题目内容
 A. 选项1
 B. 选项2
 C. 选项3
@@ -146,32 +136,22 @@ D. 选项4
 
 ---
 
-**2. ...**
+**2.** 题目内容
+...
 
----
+## 二、填空题
 
-## 二、填空题（每题X分，共X道）
-
-**1. （难度：易/中/难）**
+**1.** 题目内容
 【答案：XXX】
 
 ---
 
-**2. ...**
+## 三、简答题
 
----
-
-## 三、简答题（每题X分，共X道）
-
-**1. （难度：易/中/难）**
+**1.** 题目内容
 【参考答案】
 - 要点1
 - 要点2
-- 要点3
-
----
-
-**2. ...**
 
 ---
 
@@ -180,7 +160,6 @@ D. 选项4
 ### 选择题答案
 1. A
 2. B
-3. C
 ...
 
 ### 填空题答案
@@ -188,212 +167,84 @@ D. 选项4
 2. XXX
 ...
 
-请直接返回 Markdown 内容，不要其他说明。"""
+请直接返回 Markdown 内容，不要开场白。"""
 
         return self._call_llm(prompt)
 
-    def _save_as_docx(self, content: str, filepath: str, topic: str):
-        """直接构建 docx 格式的习题集文档"""
-        from docx import Document
-        from docx.shared import Pt, Cm
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.enum.table import WD_TABLE_ALIGNMENT
-        from docx.oxml.ns import qn
-        from docx.oxml import OxmlElement
+    def _generate_json_content(self, topic: str) -> str:
+        """调用 AI 生成纯数据 JSON（格式由 docx-js 决定）"""
+        prompt = f"""请为"{topic}"生成一份完整的习题集。
 
-        doc = Document()
+要求：
+1. 包含三种题型：选择题、填空题、简答题
+2. 每种题型至少5道题
+3. 题目难度适中，覆盖核心知识点
+4. 直接返回 JSON 格式，不要其他内容
 
-        # 设置默认字体（微软雅黑，支持中文）
-        style = doc.styles['Normal']
-        style.font.name = '微软雅黑'
-        style.font.size = Pt(11)
-        style._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
+重要：answer 字段只包含纯答案，不要包含任何格式符号（如【】等）
+例如：选择题答案应该是 "A" 或 "B"，不是 "【答案：A】"
+填空题答案是具体的词或短语，不是 "【答案：XXX】"
 
-        # 页面边距
-        section = doc.sections[0]
-        section.top_margin = Cm(2)
-        section.bottom_margin = Cm(2)
-        section.left_margin = Cm(2.5)
-        section.right_margin = Cm(2.5)
+请按以下 JSON 格式返回：
 
-        # 解析 Markdown 内容
-        lines = content.split('\n')
-        current_section = None  # 当前题型：choice, fill, essay, answer
-        choice_questions = []   # 选择题列表
-        fill_questions = []    # 填空题列表
-        essay_questions = []    # 简答题列表
-        answers = {}           # 答案汇总
-        current_question = None
-        current_answer = None
+{{
+  "title": "{topic}",
+  "choiceQuestions": [
+    {{
+      "num": "1",
+      "text": "题目内容",
+      "options": ["A. 选项1", "B. 选项2", "C. 选项3", "D. 选项4"],
+      "answer": "A"
+    }}
+  ],
+  "fillQuestions": [
+    {{
+      "num": "1",
+      "text": "题目内容",
+      "answer": "答案"
+    }}
+  ],
+  "essayQuestions": [
+    {{
+      "num": "1",
+      "text": "题目内容",
+      "points": ["要点1", "要点2", "要点3"],
+      "answer": "参考答案内容"
+    }}
+  ]
+}}
 
-        # 解析内容
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('```'):
-                continue
+请直接返回 JSON，不要任何其他内容。"""
 
-            # 标题处理
-            if line.startswith('# '):
-                # 主标题 - 添加文档标题
-                p = doc.add_heading(line[2:], level=0)
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for run in p.runs:
-                    run.font.name = '微软雅黑'
-                    run.font.size = Pt(18)
-            elif line.startswith('## 一、选择题') or line.startswith('## 一，选择题'):
-                current_section = 'choice'
-            elif line.startswith('## 二、填空题') or line.startswith('## 二，填空题'):
-                current_section = 'fill'
-            elif line.startswith('## 三、简答题') or line.startswith('## 三，简答题'):
-                current_section = 'essay'
-            elif line.startswith('## 答案汇总') or line.startswith('## 答案'):
-                current_section = 'answer'
-            elif line.startswith('### 选择题答案') or line.startswith('### 选择题'):
-                current_section = 'answer_choice'
-            elif line.startswith('### 填空题答案') or line.startswith('### 填空题'):
-                current_section = 'answer_fill'
-            # 题目处理
-            elif line.startswith('**') and '**' in line[2:]:
-                # 提取题目编号
-                match = re.match(r'\*\*(\d+)\.', line)
-                if match:
-                    q_num = match.group(1)
-                    q_text = re.sub(r'\*\*\d+\.\s*', '', line).strip()
-                    q_text = q_text.replace('**', '')
-                    current_question = {'num': q_num, 'text': q_text, 'options': [], 'answer': ''}
-                    if current_section == 'choice':
-                        choice_questions.append(current_question)
-                    elif current_section == 'fill':
-                        fill_questions.append(current_question)
-                    elif current_section == 'essay':
-                        essay_questions.append(current_question)
-            # 选项处理
-            elif re.match(r'^[A-D][\.．]\s*', line):
-                if current_question and current_section == 'choice':
-                    option_text = re.sub(r'^[A-D][\.．]\s*', '', line)
-                    current_question['options'].append(line)
-            # 答案处理
-            elif line.startswith('【答案') or line.startswith('【参考答案'):
-                if current_question:
-                    answer_match = re.search(r'[【\[](答案|参考答案)[：:\]]\s*(.+)', line)
-                    if answer_match:
-                        current_question['answer'] = answer_match.group(2).strip()
-            # 要点列表（简答题答案要点）
-            elif line.startswith('- ') and current_section == 'essay' and current_question:
-                if 'points' not in current_question:
-                    current_question['points'] = []
-                current_question['points'].append(line[2:].strip())
+        return self._call_llm(prompt)
 
-        # ========== 构建文档 ==========
+    def _save_as_docx(self, json_str: str, filepath: str):
+        """使用 Node.js 直接构建 docx"""
+        import json
+        import subprocess
+        import tempfile
 
-        # 添加习题集标题
-        title = doc.add_heading(f'{topic} - 习题集', level=0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # 解析 JSON
+        exercise_data = json.loads(json_str)
 
-        # 添加元信息
-        meta = doc.add_paragraph()
-        meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = meta.add_run(f'生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        run.font.size = Pt(9)
-        run.font.color.rgb = None
+        # 写入临时 JSON 文件
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+            json.dump(exercise_data, f, ensure_ascii=False)
+            temp_json = f.name
 
-        # ========== 一、选择题 ==========
-        if choice_questions:
-            doc.add_heading('一、选择题', level=1)
-            for q in choice_questions:
-                # 题目
-                p = doc.add_paragraph()
-                run = p.add_run(f"{q['num']}. {q['text']}")
-                run.bold = True
-                run.font.size = Pt(11)
-
-                # 选项
-                for opt in q.get('options', []):
-                    doc.add_paragraph(opt, style='List Bullet')
-                # 答案
-                if q.get('answer'):
-                    p = doc.add_paragraph()
-                    run = p.add_run(f"【答案：{q['answer']}】")
-                    run.font.color.rgb = None
-                doc.add_paragraph()  # 空行
-
-        # ========== 二、填空题 ==========
-        if fill_questions:
-            doc.add_heading('二、填空题', level=1)
-            for q in fill_questions:
-                p = doc.add_paragraph()
-                run = p.add_run(f"{q['num']}. {q['text']}")
-                run.bold = True
-
-                if q.get('answer'):
-                    p = doc.add_paragraph()
-                    run = p.add_run(f"【答案：{q['answer']}】")
-                doc.add_paragraph()
-
-        # ========== 三、简答题 ==========
-        if essay_questions:
-            doc.add_heading('三、简答题', level=1)
-            for q in essay_questions:
-                p = doc.add_paragraph()
-                run = p.add_run(f"{q['num']}. {q['text']}")
-                run.bold = True
-
-                # 要点列表
-                if q.get('points'):
-                    for point in q['points']:
-                        doc.add_paragraph(point, style='List Bullet')
-
-                if q.get('answer'):
-                    p = doc.add_paragraph()
-                    run = p.add_run(f"【参考答案】")
-                    run.bold = True
-                    p = doc.add_paragraph()
-                    p.paragraph_format.left_indent = Cm(0.5)
-                    run = p.add_run(q['answer'])
-                doc.add_paragraph()
-
-        # ========== 答案汇总 ==========
-        doc.add_heading('答案汇总', level=1)
-
-        # 选择题答案表
-        if choice_questions:
-            doc.add_heading('选择题答案', level=2)
-            table = doc.add_table(rows=len(choice_questions)+1, cols=2)
-            table.style = 'Table Grid'
-            table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-            # 表头
-            hdr = table.rows[0].cells
-            hdr[0].text = '题号'
-            hdr[1].text = '答案'
-            for cell in hdr:
-                cell.paragraphs[0].runs[0].bold = True
-
-            # 数据行
-            for i, q in enumerate(choice_questions):
-                row = table.rows[i+1].cells
-                row[0].text = q['num']
-                row[1].text = q['answer']
-
-        # 填空题答案表
-        if fill_questions:
-            doc.add_heading('填空题答案', level=2)
-            table = doc.add_table(rows=len(fill_questions)+1, cols=2)
-            table.style = 'Table Grid'
-            table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-            hdr = table.rows[0].cells
-            hdr[0].text = '题号'
-            hdr[1].text = '答案'
-            for cell in hdr:
-                cell.paragraphs[0].runs[0].bold = True
-
-            for i, q in enumerate(fill_questions):
-                row = table.rows[i+1].cells
-                row[0].text = q['num']
-                row[1].text = q['answer']
-
-        doc.save(filepath)
+        try:
+            script_path = os.path.join(os.path.dirname(__file__), 'create_exercise_docx.js')
+            result = subprocess.run(
+                ['node', script_path, temp_json, filepath],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode != 0:
+                raise Exception(result.stderr or result.stdout)
+        finally:
+            if os.path.exists(temp_json):
+                os.unlink(temp_json)
 
     def _call_llm(self, prompt: str) -> str:
         """调用大语言模型"""
