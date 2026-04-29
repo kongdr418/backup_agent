@@ -106,7 +106,7 @@ curl -s -X POST http://127.0.0.1:5000/api/chat/stream -H "Content-Type: applicat
 ```bash
 # 1. 更新 task.json，passes: false → true
 # 2. 更新 progress.txt
-# 3. 提交
+# 3. 等待用户确认后提交
 git add .
 git commit -m "[任务描述] - completed"
 ```
@@ -115,38 +115,52 @@ git commit -m "[任务描述] - completed"
 - 只在所有步骤验证通过后才标记 `passes: true`
 - 永远不要删除或修改任务描述
 - **一个任务的所有内容必须在同一个 commit 中提交**
+- **必须等用户明确要求才执行 git commit，不要自动提交**
 
 ---
 
 ## 项目结构
 
 ```
-backup_agent_32/
-├── CLAUDE.md              # 本文件 - 工作规范
-├── task.json              # 任务列表
-├── progress.txt            # 进度日志
-├── app.py                 # Flask 主应用
-├── minimax_agent.py        # MiniMax Agent 核心
-├── lecture_generator.py    # 讲义生成器
-├── content_generator.py    # 社媒内容生成器
-├── ppt_generator.py        # PPT 生成器
-├── course_outline_generator.py  # 课程大纲
-├── speech_generator.py     # 讲稿
-├── exercise_generator.py    # 习题集
-├── quiz_generator.py        # 课堂测验
-├── knowledge_card_generator.py  # 知识卡片
-├── mindmap_generator.py     # 思维导图
-├── memory_manager.py       # 记忆管理
-├── generated_ppt/          # 生成的 PPT
-├── generated_outlines/     # 课程大纲
-├── generated_speeches/     # 讲稿
-├── generated_exercises/    # 习题集
-├── generated_quizzes/       # 课堂测验
-├── generated_cards/        # 知识卡片
-├── generated_mindmaps/     # 思维导图
-├── generated_content/      # 社媒内容
-├── memory/                 # 记忆系统
-└── ...
+backup_agent/
+├── CLAUDE.md                   # 本文件 - 工作规范
+├── task.json                   # 任务列表
+├── progress.txt                # 进度日志
+├── app.py                      # Flask 主应用
+├── minimax_agent.py            # MiniMax Agent 核心
+├── lecture_generator.py        # 讲义生成器
+├── content_generator.py        # 社媒内容生成器
+├── ppt_generator.py            # PPT 生成器
+├── ppt_preview.py              # PPT 预览生成器
+├── course_outline_generator.py # 课程大纲生成器
+├── speech_generator.py         # 讲稿生成器
+├── exercise_generator.py       # 习题集生成器
+├── quiz_generator.py           # 课堂测验生成器
+├── knowledge_card_generator.py # 知识卡片生成器
+├── mindmap_generator.py        # 思维导图生成器
+├── memory_manager.py           # 记忆管理
+├── create_exercise_docx.js     # 习题集 docx 生成器
+├── create_quiz_docx.js         # 课堂测验 docx 生成器
+├── create_card_docx.js         # 知识卡片 docx 生成器
+├── create_outline_docx.js      # 课程大纲 docx 生成器
+├── create_speech_docx.js        # 讲稿 docx 生成器
+├── requirements.txt            # Python 依赖
+├── package.json                # Node.js 依赖
+├── init.sh                     # 初始化脚本
+├── .env                        # 环境变量（不提交）
+├── .env.example                 # 环境变量模板
+├── generated_ppt/              # 生成的 PPT
+├── generated_outlines/         # 生成的课程大纲
+├── generated_speeches/         # 生成的讲稿
+├── generated_exercises/        # 生成的习题集
+├── generated_quizzes/          # 生成的课堂测验
+├── generated_cards/            # 生成的知识卡片
+├── generated_mindmaps/         # 生成的思维导图
+├── generated_content/          # 生成的社媒内容
+├── generated_lectures/         # 生成的讲义
+├── ppt_previews/              # PPT 预览文件
+├── memory/                    # 记忆系统
+└── node_modules/              # Node.js 依赖
 ```
 
 ---
@@ -222,4 +236,5 @@ backup_agent_32/
 5. **一个任务一个 commit** - 代码、progress.txt、task.json 同时提交
 6. **不删除任务** - 只翻转 passes 状态
 7. **阻塞时停止** - 需要人工时不要假装完成
-8. **推送前需用户确认** - 推送到 GitHub 前必须征得用户明确同意
+8. **提交前需用户确认** - 执行 git commit 前必须征得用户明确同意
+9. **推送前需用户确认** - 推送到 GitHub 前必须征得用户明确同意
