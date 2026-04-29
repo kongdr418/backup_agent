@@ -49,3 +49,9 @@ memory/sessions/*
 .env
 .env.local
 *.env
+
+# AI Work Rules (local only, do not share)
+CLAUDE.md
+progress.txt
+task.json
+memory/
