@@ -227,6 +227,44 @@ backup_agent/
 
 ---
 
+## AgentTeam 多 agent 协作
+
+### 团队架构
+
+```
+用户 → team-lead（主控）→ developer（功能开发）
+                      ↘ tester（测试验证）
+```
+
+### 团队成员
+
+| Agent | 职责 | 配置文件 |
+|-------|------|----------|
+| team-lead | 主控，协调任务分配 | 位于 ~/.claude/teams/backup-agent-team/ |
+| developer | 功能开发、代码实现、重构 | members[developer] |
+| tester | 功能测试、Bug 验证、回归测试 | members[tester] |
+
+### 协作流程
+
+1. 用户向 team-lead 下达任务
+2. team-lead 分配任务给合适的子 agent
+3. 子 agent 执行任务并通过 SendMessage 汇报结果
+4. team-lead 向用户反馈结果
+
+### 任务分配
+
+- **开发任务** → developer
+- **测试任务** → tester
+- **需要决策时** → team-lead（我）判断
+
+### 子 agent 通信
+
+- agent 间通过 SendMessage 工具通信
+- 消息会自动投送到目标 agent 的收件箱
+- 任务完成后必须向 team-lead 汇报
+
+---
+
 ## 关键规则
 
 1. **一次一个任务** - 专注完成一个任务
