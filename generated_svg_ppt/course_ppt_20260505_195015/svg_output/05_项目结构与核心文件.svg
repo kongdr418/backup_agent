@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <!-- 背景 -->
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+  
+  <!-- 装饰背景图形 -->
+  <circle cx="1100" cy="100" r="150" fill="#DBEAFE" fill-opacity="0.35"/>
+  <circle cx="80" cy="650" r="120" fill="#DBEAFE" fill-opacity="0.2"/>
+
+  <!-- 主标题 -->
+  <text x="60" y="110" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="36px" font-weight="bold" fill="#1E293B">项目结构与核心文件</text>
+
+  <!-- 左侧区域：文件树结构图 -->
+  <rect x="60" y="160" width="520" height="440" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="2"/>
+  <text x="80" y="195" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="18px" font-weight="bold" fill="#1E293B">项目文件结构</text>
+
+  <!-- 文件树连线 -->
+  <line x1="80" y1="220" x2="80" y2="570" stroke="#CBD5E1" stroke-width="2"/>
+  
+  <!-- 第1层：miniprogram -->
+  <line x1="80" y1="220" x2="100" y2="220" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="80" cy="220" r="3.5" fill="#CBD5E1"/>
+  <text x="110" y="225" font-family="Courier New, monospace" font-size="16px" font-weight="bold" fill="#1E293B">miniprogram/</text>
+
+  <!-- 第2层：pages -->
+  <line x1="100" y1="255" x2="120" y2="255" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="100" cy="255" r="3.5" fill="#CBD5E1"/>
+  <text x="130" y="260" font-family="Courier New, monospace" font-size="16px" font-weight="bold" fill="#1E293B">pages/</text>
+
+  <!-- 第3层：index -->
+  <line x1="120" y1="290" x2="140" y2="290" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="120" cy="290" r="3.5" fill="#CBD5E1"/>
+  <text x="150" y="295" font-family="Courier New, monospace" font-size="16px" font-weight="bold" fill="#1E293B">index/</text>
+
+  <!-- 第4层：index 文件 -->
+  <line x1="140" y1="325" x2="160" y2="325" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="140" cy="325" r="3.5" fill="#CBD5E1"/>
+  <text x="170" y="330" font-family="Courier New, monospace" font-size="16px" fill="#64748B">index.wxml</text>
+
+  <line x1="140" y1="360" x2="160" y2="360" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="140" cy="360" r="3.5" fill="#CBD5E1"/>
+  <text x="170" y="365" font-family="Courier New, monospace" font-size="16px" fill="#64748B">index.wxss</text>
+
+  <line x1="140" y1="395" x2="160" y2="395" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="140" cy="395" r="3.5" fill="#CBD5E1"/>
+  <text x="170" y="400" font-family="Courier New, monospace" font-size="16px" fill="#64748B">index.js</text>
+
+  <line x1="140" y1="430" x2="160" y2="430" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="140" cy="430" r="3.5" fill="#CBD5E1"/>
+  <text x="170" y="435" font-family="Courier New, monospace" font-size="16px" fill="#64748B">index.json</text>
+
+  <!-- 第1层应用文件：app.js -->
+  <line x1="80" y1="465" x2="100" y2="465" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="80" cy="465" r="3.5" fill="#CBD5E1"/>
+  <text x="110" y="470" font-family="Courier New, monospace" font-size="16px" fill="#64748B">app.js</text>
+
+  <!-- 第1层应用文件：app.json -->
+  <line x1="80" y1="500" x2="100" y2="500" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="80" cy="500" r="3.5" fill="#CBD5E1"/>
+  <text x="110" y="505" font-family="Courier New, monospace" font-size="16px" fill="#64748B">app.json</text>
+
+  <!-- 第1层应用文件：app.wxss -->
+  <line x1="80" y1="535" x2="100" y2="535" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="80" cy="535" r="3.5" fill="#CBD5E1"/>
+  <text x="110" y="540" font-family="Courier New, monospace" font-size="16px" fill="#64748B">app.wxss</text>
+
+  <!-- 第1层项目配置文件 -->
+  <line x1="80" y1="570" x2="100" y2="570" stroke="#CBD5E1" stroke-width="2"/>
+  <circle cx="80" cy="570" r="3.5" fill="#CBD5E1"/>
+  <text x="110" y="575" font-family="Courier New, monospace" font-size="16px" fill="#64748B">project.config.json</text>
+
+  <!-- 右侧区域：核心概念讲解卡片 -->
+  <!-- 卡片1：全局配置 -->
+  <rect x="640" y="160" width="560" height="120" rx="8" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <rect x="640" y="160" width="8" height="120" rx="4" fill="#2563EB"/>
+  <circle cx="670" cy="190" r="14" fill="#2563EB"/>
+  <text x="670" y="195" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="16px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="700" y="195" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="22px" font-weight="bold" fill="#1E293B">全局配置 app.json</text>
+  <text x="670" y="245" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="18px" fill="#64748B">定义页面路径、窗口样式、tabBar 等全局设置</text>
+
+  <!-- 卡片2：页面结构 -->
+  <rect x="640" y="300" width="560" height="120" rx="8" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <rect x="640" y="300" width="8" height="120" rx="4" fill="#3B82F6"/>
+  <circle cx="670" cy="330" r="14" fill="#3B82F6"/>
+  <text x="670" y="335" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="16px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="700" y="335" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="22px" font-weight="bold" fill="#1E293B">页面结构</text>
+  <text x="670" y="385" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="18px" fill="#64748B">每个页面由 .wxml、.wxss、.js、.json 四个文件组成</text>
+
+  <!-- 卡片3：数据绑定 -->
+  <rect x="640" y="440" width="560" height="120" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+  <rect x="640" y="440" width="8" height="120" rx="4" fill="#2563EB"/>
+  <circle cx="670" cy="470" r="14" fill="#2563EB"/>
+  <text x="670" y="475" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="16px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="700" y="475" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="22px" font-weight="bold" fill="#1E293B">数据绑定</text>
+  <text x="670" y="525" font-family="Courier New, monospace" font-size="18px" fill="#1E293B">通过 <tspan fill="#2563EB" font-weight="bold">{{}}</tspan> 将 JS 数据渲染到 WXML</text>
+
+  <!-- 页面页脚 -->
+  <text x="60" y="680" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="14px" fill="#94A3B8">5 / 8 · 项目结构与核心文件</text>
+</svg>

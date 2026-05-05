@@ -132,6 +132,30 @@ backup_agent/
 ├── content_generator.py        # 社媒内容生成器
 ├── ppt_generator.py            # PPT 生成器
 ├── ppt_preview.py              # PPT 预览生成器
+├── ppt_engine/                  # PPT SVG 引擎（基于 SVG 中间格式的多 Agent 生成）
+│   ├── README.md                # 模块说明
+│   ├── __init__.py
+│   ├── app.py                   # Flask 应用（独立运行）
+│   ├── config.py                # 配置（DeepSeek API、超时等）
+│   ├── providers/               # LLM 提供者
+│   │   ├── __init__.py
+│   │   ├── base.py             # 基类
+│   │   └── deepseek.py         # DeepSeek 实现
+│   ├── pipeline/                # 生成流水线
+│   │   ├── __init__.py
+│   │   ├── content_planner.py  # 内容规划 Agent
+│   │   ├── design_strategist.py # 设计策略 Agent
+│   │   ├── svg_executor.py     # SVG 执行器（含 Critic 校验）
+│   │   └── svg_finalize.py     # SVG 后处理
+│   ├── export/                  # 导出模块
+│   │   ├── __init__.py
+│   │   └── pptx_exporter.py    # SVG → PPTX 导出
+│   ├── sse/                     # SSE 事件流
+│   │   ├── __init__.py
+│   │   └── bridge.py           # SSE 桥接器
+│   └── utils/                   # 工具函数
+│       ├── __init__.py
+│       └── retry.py            # 重试逻辑
 ├── course_outline_generator.py # 课程大纲生成器
 ├── speech_generator.py         # 讲稿生成器
 ├── exercise_generator.py       # 习题集生成器
@@ -159,6 +183,7 @@ backup_agent/
 ├── generated_content/          # 生成的社媒内容
 ├── generated_lectures/         # 生成的讲义
 ├── ppt_previews/              # PPT 预览文件
+├── generated_svg_ppt/        # 生成的 SVG PPT（ppt_engine 输出）
 ├── memory/                    # 记忆系统
 └── node_modules/              # Node.js 依赖
 ```

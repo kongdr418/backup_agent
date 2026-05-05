@@ -1,0 +1,42 @@
+[
+  {
+    "slide": 1,
+    "svg": "01_微信小程序开发入门.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 2,
+    "svg": "02_课程大纲.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 3,
+    "svg": "03_什么是微信小程序.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 4,
+    "svg": "04_开发环境搭建.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 5,
+    "svg": "05_项目结构与核心文件.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 6,
+    "svg": "06_开发流程演示.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 7,
+    "svg": "07_常用组件与_api.svg",
+    "mode": "native"
+  },
+  {
+    "slide": 8,
+    "svg": "08_总结与_qa.svg",
+    "mode": "native"
+  }
+]

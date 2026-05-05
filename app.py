@@ -890,6 +890,184 @@ def get_video_audio(filename):
     return jsonify({'audio': None})
 
 
+# ==================== SVG PPT 端点 ====================
+
+@app.route('/api/ppt-svg/generate', methods=['POST'])
+def ppt_svg_generate():
+    """SVG PPT 流式生成接口（SSE）"""
+    data = request.json
+    topic = data.get('topic', '').strip()
+    language = data.get('language', 'zh')
+    num_slides = data.get('num_slides')
+    style = data.get('style', 'education')
+    detail_level = data.get('detail_level', 'normal')
+    model = data.get('model', 'deepseek-v4-flash')
+    api_key = data.get('api_key')
+
+    if not topic:
+        return jsonify({'error': '课程主题不能为空'}), 400
+
+    def generate():
+        from ppt_engine.pipeline import PPTPipeline
+        from ppt_engine.sse_bridge import SSEBridge
+
+        pipeline = PPTPipeline()
+        bridge = SSEBridge()
+        bridge.run(pipeline.generate(
+            topic,
+            model=model,
+            api_key=api_key,
+            language=language,
+            num_slides=num_slides,
+            style=style,
+            detail_level=detail_level,
+        ))
+
+        try:
+            for event in bridge.events():
+                # Forward SSE heartbeat comments directly
+                if isinstance(event, str):
+                    yield event
+                    continue
+
+                event_data = {
+                    'type': f'ppt_svg_{event.status}',
+                    'stage': event.stage,
+                    'message': event.message,
+                    'progress': event.progress,
+                }
+                if event.data:
+                    if 'svg' in event.data:
+                        event_data['slide'] = {
+                            'page': event.data['page'],
+                            'svg': event.data['svg'],
+                        }
+                    if 'output_path' in event.data:
+                        event_data['output_path'] = event.data['output_path']
+                    if 'job_id' in event.data:
+                        event_data['job_id'] = event.data['job_id']
+                    if 'total_slides' in event.data:
+                        event_data['total_slides'] = event.data['total_slides']
+                    if 'slide_count' in event.data:
+                        event_data['slide_count'] = event.data['slide_count']
+                    if 'pptx_filename' in event.data:
+                        event_data['pptx_filename'] = event.data['pptx_filename']
+                    if 'error' in event.data:
+                        event_data['error'] = event.data['error']
+                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'ppt_svg_error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['X-Accel-Buffering'] = 'no'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
+
+@app.route('/api/ppt-svg/preview/<job_id>/<int:slide_num>', methods=['GET'])
+def ppt_svg_preview(job_id, slide_num):
+    """获取指定页的 SVG 内容"""
+    import glob
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    svg_dir = os.path.join(base_dir, 'svg_final')
+    if not os.path.exists(svg_dir):
+        svg_dir = os.path.join(base_dir, 'svg_output')
+    if not os.path.exists(svg_dir):
+        return jsonify({'error': '未找到生成结果'}), 404
+
+    svg_files = sorted(glob.glob(os.path.join(svg_dir, '*.svg')))
+    if slide_num < 1 or slide_num > len(svg_files):
+        return jsonify({'error': f'页码 {slide_num} 超出范围 (1-{len(svg_files)})'}), 404
+
+    svg_path = svg_files[slide_num - 1]
+    with open(svg_path, 'r', encoding='utf-8') as f:
+        svg_content = f.read()
+
+    return jsonify({
+        'job_id': job_id,
+        'page': slide_num,
+        'total_pages': len(svg_files),
+        'svg': svg_content,
+        'filename': os.path.basename(svg_path),
+    })
+
+
+@app.route('/api/ppt-svg/preview-all/<job_id>', methods=['GET'])
+def ppt_svg_preview_all(job_id):
+    """获取所有页的 SVG 内容"""
+    import glob
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    svg_dir = os.path.join(base_dir, 'svg_final')
+    if not os.path.exists(svg_dir):
+        svg_dir = os.path.join(base_dir, 'svg_output')
+    if not os.path.exists(svg_dir):
+        return jsonify({'error': '未找到生成结果'}), 404
+
+    svg_files = sorted(glob.glob(os.path.join(svg_dir, '*.svg')))
+    slides = []
+    for i, svg_path in enumerate(svg_files, 1):
+        with open(svg_path, 'r', encoding='utf-8') as f:
+            slides.append({
+                'page': i,
+                'svg': f.read(),
+                'filename': os.path.basename(svg_path),
+            })
+
+    return jsonify({
+        'job_id': job_id,
+        'total_pages': len(slides),
+        'slides': slides,
+    })
+
+
+@app.route('/api/ppt-svg/download/<job_id>', methods=['GET'])
+def ppt_svg_download(job_id):
+    """下载生成的 PPTX 文件"""
+    import glob
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    exports_dir = os.path.join(base_dir, 'exports')
+    if not os.path.exists(exports_dir):
+        return jsonify({'error': '未找到导出文件'}), 404
+
+    pptx_files = glob.glob(os.path.join(exports_dir, '*.pptx'))
+    if not pptx_files:
+        return jsonify({'error': 'PPTX 文件不存在'}), 404
+
+    pptx_path = pptx_files[0]
+    from flask import send_file
+    return send_file(
+        pptx_path,
+        as_attachment=True,
+        download_name=os.path.basename(pptx_path),
+        mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    )
+
+
+@app.route('/api/ppt-svg/list', methods=['GET'])
+def ppt_svg_list():
+    """列出所有已生成的 SVG PPT"""
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt')
+    if not os.path.exists(base_dir):
+        return jsonify({'jobs': []})
+
+    jobs = []
+    for job_dir in sorted(os.listdir(base_dir), reverse=True):
+        meta_path = os.path.join(base_dir, job_dir, 'metadata.json')
+        if os.path.exists(meta_path):
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            exports_dir = os.path.join(base_dir, job_dir, 'exports')
+            has_pptx = os.path.exists(exports_dir) and any(
+                f.endswith('.pptx') for f in os.listdir(exports_dir)
+            ) if os.path.exists(exports_dir) else False
+            meta['has_pptx'] = has_pptx
+            jobs.append(meta)
+
+    return jsonify({'jobs': jobs})
+
+
 if __name__ == '__main__':
     app_logger.info('=' * 60)
     app_logger.info('🤖 MiniMax Agent API 服务启动中...')

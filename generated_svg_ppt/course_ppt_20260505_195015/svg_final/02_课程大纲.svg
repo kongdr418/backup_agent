@@ -1,0 +1,79 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <defs>
+    
+    <polygon id="arrow" points="0,0 14,-7 14,7" fill="#3B82F6" />
+  </defs>
+
+  
+  <rect width="1280" height="720" fill="#FFFFFF" />
+
+  
+  <circle cx="200" cy="650" r="120" fill="#DBEAFE" fill-opacity="0.4" />
+  <circle cx="1100" cy="100" r="100" fill="#DBEAFE" fill-opacity="0.3" />
+
+  
+  <text x="60" y="110" font-family="Microsoft YaHei" font-size="36px" font-weight="bold" fill="#1E293B">课程大纲</text>
+
+  
+  <g transform="translate(0, 0)">
+    
+    
+    
+    
+    
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M160,280 H270 A10,10 0 0 1 280,290 V330 A10,10 0 0 1 270,340 H160 A10,10 0 0 1 150,330 V290 A10,10 0 0 1 160,280 Z" />
+    <circle cx="175" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="175" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">1</text>
+    <text x="195" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">什么是</text>
+
+    
+    <use href="#arrow" x="290" y="306" />
+
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M330,280 H440 A10,10 0 0 1 450,290 V330 A10,10 0 0 1 440,340 H330 A10,10 0 0 1 320,330 V290 A10,10 0 0 1 330,280 Z" />
+    <circle cx="345" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="345" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">2</text>
+    <text x="365" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">环境搭建</text>
+
+    
+    <use href="#arrow" x="460" y="306" />
+
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M500,280 H610 A10,10 0 0 1 620,290 V330 A10,10 0 0 1 610,340 H500 A10,10 0 0 1 490,330 V290 A10,10 0 0 1 500,280 Z" />
+    <circle cx="515" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="515" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">3</text>
+    <text x="535" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">项目结构</text>
+
+    
+    <use href="#arrow" x="630" y="306" />
+
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M670,280 H780 A10,10 0 0 1 790,290 V330 A10,10 0 0 1 780,340 H670 A10,10 0 0 1 660,330 V290 A10,10 0 0 1 670,280 Z" />
+    <circle cx="685" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="685" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">4</text>
+    <text x="705" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">开发流程</text>
+
+    
+    <use href="#arrow" x="800" y="306" />
+
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M840,280 H950 A10,10 0 0 1 960,290 V330 A10,10 0 0 1 950,340 H840 A10,10 0 0 1 830,330 V290 A10,10 0 0 1 840,280 Z" />
+    <circle cx="855" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="855" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">5</text>
+    <text x="875" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">组件API</text>
+
+    
+    <use href="#arrow" x="970" y="306" />
+
+    
+    <path fill="#DBEAFE" stroke="#2563EB" stroke-width="2" d="M1010,280 H1120 A10,10 0 0 1 1130,290 V330 A10,10 0 0 1 1120,340 H1010 A10,10 0 0 1 1000,330 V290 A10,10 0 0 1 1010,280 Z" />
+    <circle cx="1025" cy="310" r="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.5" />
+    <text x="1025" y="315" font-family="Arial" font-size="16px" font-weight="bold" fill="#2563EB" text-anchor="middle">6</text>
+    <text x="1045" y="316" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">总结</text>
+  </g>
+
+  
+  <text x="640" y="440" font-family="Microsoft YaHei" font-size="16px" fill="#64748B" text-anchor="middle">六步走，全面掌握小程序开发</text>
+</svg>

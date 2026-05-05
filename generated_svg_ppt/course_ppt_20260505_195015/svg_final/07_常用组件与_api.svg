@@ -1,0 +1,76 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <defs>
+    <g id="icon-mouse-click">
+      <path d="M3 3l7.5 18l3.5 -6.5l6.5 -3.5z" fill="#2563EB" />
+    </g>
+    <g id="icon-bug">
+      <path d="M12 4a4 4 0 0 1 4 4v2a4 4 0 0 1 -8 0v-2a4 4 0 0 1 4 -4zm-5 5h-2v2h2v1a5 5 0 0 0 10 0v-1h2v-2h-2v-1a5 5 0 0 0 -10 0v1z" fill="#2563EB" />
+      <circle cx="9" cy="12" r="1" fill="#FFFFFF" />
+      <circle cx="15" cy="12" r="1" fill="#FFFFFF" />
+    </g>
+  </defs>
+
+  
+  <rect width="1280" height="720" fill="#FFFFFF" />
+  <circle cx="1100" cy="100" r="160" fill="#DBEAFE" fill-opacity="0.3" />
+  <circle cx="80" cy="650" r="120" fill="#DBEAFE" fill-opacity="0.2" />
+
+  
+  <path fill="#2563EB" d="M63,80 H63 A3,3 0 0 1 66,83 V113 A3,3 0 0 1 63,116 H63 A3,3 0 0 1 60,113 V83 A3,3 0 0 1 63,80 Z" />
+  <text x="80" y="106" font-family="Microsoft YaHei" font-size="36px" font-weight="bold" fill="#1E293B">开发流程演示</text>
+
+  
+  <line x1="82" y1="224" x2="82" y2="562" stroke="#E2E8F0" stroke-width="2" />
+
+  
+  <path fill="#1E40AF" d="M82,180 H82 A22,22 0 0 1 104,202 V202 A22,22 0 0 1 82,224 H82 A22,22 0 0 1 60,202 V202 A22,22 0 0 1 82,180 Z" />
+  <path fill="#1E40AF" d="M82,300 H82 A22,22 0 0 1 104,322 V322 A22,22 0 0 1 82,344 H82 A22,22 0 0 1 60,322 V322 A22,22 0 0 1 82,300 Z" />
+  <path fill="#1E40AF" d="M82,420 H82 A22,22 0 0 1 104,442 V442 A22,22 0 0 1 82,464 H82 A22,22 0 0 1 60,442 V442 A22,22 0 0 1 82,420 Z" />
+  <path fill="#1E40AF" d="M82,540 H82 A22,22 0 0 1 104,562 V562 A22,22 0 0 1 82,584 H82 A22,22 0 0 1 60,562 V562 A22,22 0 0 1 82,540 Z" />
+
+  
+  <text x="82" y="208" font-family="Arial" font-size="22px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">1</text>
+  <text x="120" y="208" font-family="Microsoft YaHei" font-size="20px" font-weight="bold" fill="#1E293B">创建小程序页面</text>
+  <text x="120" y="236" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">在 pages 目录下新建文件夹和四个核心文件</text>
+
+  
+  <text x="82" y="328" font-family="Arial" font-size="22px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="120" y="328" font-family="Microsoft YaHei" font-size="20px" font-weight="bold" fill="#1E293B">编辑 WXML 与 WXSS</text>
+  <text x="120" y="356" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">WXML 搭建视图结构，WXSS 控制页面样式</text>
+
+  
+  <text x="82" y="448" font-family="Arial" font-size="22px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="120" y="448" font-family="Microsoft YaHei" font-size="20px" font-weight="bold" fill="#1E293B">编写 JS 逻辑层</text>
+  <text x="120" y="476" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">在 JS 文件中定义 data 和事件处理函数</text>
+
+  
+  <text x="82" y="568" font-family="Arial" font-size="22px" font-weight="bold" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="120" y="568" font-family="Microsoft YaHei" font-size="20px" font-weight="bold" fill="#1E293B">编译与真机调试</text>
+  <text x="120" y="596" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">点击编译预览效果，使用真机调试测试 API</text>
+
+  
+  <path fill="#F8FAFC" stroke="#E2E8F0" stroke-width="2" d="M716,180 H1204 A16,16 0 0 1 1220,196 V604 A16,16 0 0 1 1204,620 H716 A16,16 0 0 1 700,604 V196 A16,16 0 0 1 716,180 Z" />
+  <text x="740" y="225" font-family="Microsoft YaHei" font-size="22px" font-weight="bold" fill="#1E293B">开发工具提示</text>
+  <line x1="740" y1="245" x2="1180" y2="245" stroke="#E2E8F0" stroke-width="1.5" />
+
+  
+  <path fill="#DBEAFE" d="M752,280 H776 A12,12 0 0 1 788,292 V316 A12,12 0 0 1 776,328 H752 A12,12 0 0 1 740,316 V292 A12,12 0 0 1 752,280 Z" />
+  <use href="#icon-mouse-click" x="752" y="292" width="24" height="24" />
+  <text x="800" y="308" font-family="Microsoft YaHei" font-size="18px" font-weight="bold" fill="#1E293B">编译预览 (Ctrl + R)</text>
+  <text x="800" y="332" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">快速查看页面效果，及时调整布局</text>
+
+  
+  <path fill="#DBEAFE" d="M752,370 H776 A12,12 0 0 1 788,382 V406 A12,12 0 0 1 776,418 H752 A12,12 0 0 1 740,406 V382 A12,12 0 0 1 752,370 Z" />
+  <use href="#icon-bug" x="752" y="382" width="24" height="24" />
+  <text x="800" y="398" font-family="Microsoft YaHei" font-size="18px" font-weight="bold" fill="#1E293B">真机调试</text>
+  <text x="800" y="422" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">在微信客户端真实环境测试 API</text>
+
+  
+  <path fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" d="M748,500 H1172 A8,8 0 0 1 1180,508 V572 A8,8 0 0 1 1172,580 H748 A8,8 0 0 1 740,572 V508 A8,8 0 0 1 748,500 Z" />
+  <text x="760" y="530" font-family="Microsoft YaHei" font-size="16px" fill="#1E293B">💡 提示：真机调试需要扫码授权</text>
+  <text x="760" y="556" font-family="Microsoft YaHei" font-size="16px" fill="#64748B">确保手机与电脑在同一网络下</text>
+
+  
+  <text x="60" y="680" font-family="Microsoft YaHei" font-size="14px" fill="#64748B">6 / 8 · 开发流程演示</text>
+</svg>

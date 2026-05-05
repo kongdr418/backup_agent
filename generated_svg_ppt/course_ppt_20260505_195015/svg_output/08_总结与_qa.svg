@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <defs>
+    <g id="icon-question-mark">
+      <path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10s10-4.49 10-10S17.51 2 12 2zm0 16.25a1.25 1.25 0 110-2.5a1.25 1.25 0 010 2.5zm1.62-5.15c-.44.42-.99.9-1.12 1.4h-1c.14-1.15.9-1.85 1.42-2.34c.57-.56 1.08-1.06 1.08-1.91c0-1.12-.82-1.75-1.96-1.75c-1.12 0-1.96.63-1.96 1.75H8.06c0-2.12 1.65-3.5 3.94-3.5c2.26 0 3.94 1.36 3.94 3.5c0 1.35-.77 1.99-1.38 2.51z" fill="#2563EB"/>
+    </g>
+    <g id="icon-hand-wave">
+      <path d="M9 3a2 2 0 0 0 -2 2v5.5a1.5 1.5 0 0 1 -3 0v-1.5a1 1 0 0 0 -2 0v4.5a6 6 0 0 0 12 0v-8.5a2 2 0 0 0 -2 -2z" fill="#2563EB"/>
+      <path d="M17 8v3a5 5 0 0 1 -5 5h-2" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round"/>
+      <path d="M20 11v1a3 3 0 0 1 -3 3" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round"/>
+    </g>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+  <circle cx="1200" cy="100" r="180" fill="#DBEAFE" fill-opacity="0.4"/>
+  <circle cx="60" cy="680" r="140" fill="#DBEAFE" fill-opacity="0.25"/>
+
+  <!-- 标题区域 -->
+  <rect x="60" y="80" width="6" height="36" rx="3" fill="#2563EB"/>
+  <text x="80" y="106" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="32px" font-weight="bold" fill="#1E293B">总结与 Q&amp;A</text>
+
+  <!-- 左侧：总结列表 -->
+  <circle cx="100" cy="190" r="6" fill="#2563EB"/>
+  <text x="120" y="196" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="20px" fill="#1E293B">小程序 = 轻量、高效、生态丰富</text>
+
+  <circle cx="100" cy="250" r="6" fill="#2563EB"/>
+  <text x="120" y="256" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="20px" fill="#1E293B">核心：理解 <tspan font-weight="bold">双线程架构</tspan> 和 <tspan font-weight="bold">数据驱动</tspan></text>
+
+  <circle cx="100" cy="310" r="6" fill="#2563EB"/>
+  <text x="120" y="316" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="20px" fill="#1E293B">下一步：学习云开发、分包优化、插件使用</text>
+
+  <!-- 结语框 -->
+  <rect x="80" y="400" width="600" height="100" rx="12" fill="#DBEAFE"/>
+  <text x="380" y="445" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="22px" font-weight="bold" fill="#1E293B" text-anchor="middle">感谢聆听，欢迎提问探讨！</text>
+  <text x="380" y="475" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="16px" fill="#64748B" text-anchor="middle">期待你用小程序创造更多价值</text>
+
+  <!-- 右侧 Q&A 面板 -->
+  <rect x="740" y="160" width="480" height="340" rx="16" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="2"/>
+
+  <!-- 图标 1：问号 -->
+  <circle cx="860" cy="260" r="70" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <g transform="translate(836, 236) scale(2)">
+    <use href="#icon-question-mark"/>
+  </g>
+
+  <!-- 图标 2：挥手 -->
+  <circle cx="1060" cy="260" r="70" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <g transform="translate(1036, 236) scale(2)">
+    <use href="#icon-hand-wave"/>
+  </g>
+
+  <!-- 面板底部文本 -->
+  <text x="980" y="380" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="24px" font-weight="bold" fill="#1E293B" text-anchor="middle">Q &amp; A</text>
+  <text x="980" y="410" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="16px" fill="#64748B" text-anchor="middle">有任何问题，欢迎随时交流</text>
+
+  <!-- 页脚 -->
+  <text x="60" y="680" font-family="Inter, Arial, Helvetica Neue, sans-serif" font-size="14px" fill="#64748B">8 / 8 · 总结与 Q&amp;A</text>
+</svg>
