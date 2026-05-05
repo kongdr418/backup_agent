@@ -9,7 +9,7 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
-DEFAULT_MAX_ATTEMPTS = 4
+DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BASE_DELAY = 2.0
 DEFAULT_MAX_DELAY = 60.0
 

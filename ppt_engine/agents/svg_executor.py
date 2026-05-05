@@ -18,7 +18,7 @@ from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "svg_executor.md"
 
 MAX_REPAIR_ATTEMPTS = 2
-MAX_SVG_EXTRACTION_ATTEMPTS = 3
+MAX_SVG_EXTRACTION_ATTEMPTS = 2
 
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
 
@@ -155,7 +155,9 @@ async def _generate_single_page(
     for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
         if svg_content:
             break
-        conversation.append(LLMMessage.assistant(response.content))
+        # Don't append the full failed response — use a short summary instead
+        # to keep conversation context lean and reduce token processing time.
+        conversation.append(LLMMessage.assistant("[SVG extraction failed]"))
         conversation.append(
             LLMMessage.user(
                 _build_extraction_retry_prompt(
@@ -173,13 +175,10 @@ async def _generate_single_page(
         svg_content = _extract_svg(response.content)
 
     if not svg_content:
-        conversation.append(LLMMessage.assistant(response.content))
         raise RuntimeError(
             f"Failed to generate parseable SVG for page {page_num}/{total_pages} "
             f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
         )
-
-    conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
 
     best_svg = svg_content
     for attempt in range(2, MAX_REPAIR_ATTEMPTS + 2):
@@ -191,27 +190,29 @@ async def _generate_single_page(
             best_svg = svg_content
             break
 
-        conversation.append(
+        # Build a clean repair conversation instead of accumulating history.
+        # This keeps context focused and avoids token bloat from prior SVGs.
+        repair_conversation = [
+            conversation[0],  # system prompt
+            conversation[1],  # original user prompt with design_spec
             LLMMessage.user(
-                report.to_prompt_block()
+                "The following SVG has violations that must be fixed.\n\n"
+                f"```svg\n{svg_content}\n```\n\n"
+                + report.to_prompt_block()
                 + "\n\nReturn the complete corrected SVG only, "
                 "wrapped in a ```svg code block."
-            )
-        )
+            ),
+        ]
         repair_temp = max(0.1, 0.3 - 0.1 * (attempt - 1))
         response = await llm.chat(
-            conversation, model, temperature=repair_temp, max_tokens=16384
+            repair_conversation, model, temperature=repair_temp, max_tokens=16384
         )
 
         repaired = _extract_svg(response.content)
         if repaired:
             svg_content = repaired
             best_svg = repaired
-            conversation.append(
-                LLMMessage.assistant(f"```svg\n{repaired}\n```")
-            )
         else:
-            conversation.append(LLMMessage.assistant(response.content))
             break
 
     svg_path = svg_output_dir / f"{page_num:02d}_{page_name}.svg"

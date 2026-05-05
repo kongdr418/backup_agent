@@ -98,4 +98,4 @@ def get_deepseek_api_key() -> str | None:
 
 
 # SVG generation concurrency
-SVG_MAX_CONCURRENCY = 2
+SVG_MAX_CONCURRENCY = 4
