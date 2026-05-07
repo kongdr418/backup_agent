@@ -55,3 +55,12 @@ CLAUDE.md
 progress.txt
 task.json
 memory/
+
+# Claude Code (local only)
+.claude/
+
+# Generated SVG PPT (local output)
+generated_svg_ppt/
+
+# Test output
+test_output.txt
