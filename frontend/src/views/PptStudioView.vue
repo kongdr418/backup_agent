@@ -56,6 +56,7 @@
       :jobs="store.jobs"
       :loading="store.jobsLoading"
       @open="onOpenJob"
+      @delete="onDeleteJob"
     />
   </div>
 </template>
@@ -181,6 +182,15 @@ async function onOpenJob(jobId: string) {
     message.success(`已加载 ${data.total_pages} 页`)
   } catch (e) {
     message.error(e instanceof Error ? e.message : '加载失败')
+  }
+}
+
+async function onDeleteJob(jobId: string) {
+  try {
+    await store.deleteJob(jobId)
+    message.success('已删除')
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : '删除失败')
   }
 }
 </script>

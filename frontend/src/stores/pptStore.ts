@@ -77,6 +77,14 @@ export const usePptStore = defineStore(
       }
     }
 
+    async function deleteJob(jobId: string) {
+      await pptApi.deletePptJob(jobId)
+      jobs.value = jobs.value.filter((j) => j.job_id !== jobId)
+      if (gen.value.jobId === jobId) {
+        resetGen()
+      }
+    }
+
     return {
       params,
       gen,
@@ -89,6 +97,7 @@ export const usePptStore = defineStore(
       setAbort,
       cancel,
       refreshJobs,
+      deleteJob,
     }
   },
   {

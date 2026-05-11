@@ -30,18 +30,27 @@
               </div>
               <div class="mt-1.5 text-[10.5px] text-ink-4 font-mono truncate">{{ job.job_id }}</div>
             </div>
-            <a
-              v-if="job.has_pptx"
-              :href="downloadUrl(job.job_id)"
-              :download="job.pptx_filename"
-              target="_blank"
-              rel="noopener"
-              class="shrink-0 px-2 h-7 rounded-md text-[11px] border border-line text-ink-2 hover:bg-bg-base inline-flex items-center gap-1 transition-colors"
-              @click.stop
-            >
-              <Download class="w-3 h-3" />
-              下载
-            </a>
+            <div class="shrink-0 flex items-center gap-1">
+              <a
+                v-if="job.has_pptx"
+                :href="downloadUrl(job.job_id)"
+                :download="job.pptx_filename"
+                target="_blank"
+                rel="noopener"
+                class="px-2 h-7 rounded-md text-[11px] border border-line text-ink-2 hover:bg-bg-base inline-flex items-center gap-1 transition-colors"
+                @click.stop
+              >
+                <Download class="w-3 h-3" />
+                下载
+              </a>
+              <button
+                class="w-7 h-7 rounded-md border border-line text-ink-3 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 inline-flex items-center justify-center transition-colors"
+                title="删除"
+                @click.stop="$emit('delete', job.job_id)"
+              >
+                <Trash2 class="w-3 h-3" />
+              </button>
+            </div>
           </div>
         </button>
       </div>
@@ -52,7 +61,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
-import { FolderOpen, Download } from 'lucide-vue-next'
+import { FolderOpen, Download, Trash2 } from 'lucide-vue-next'
 import type { PptJob } from '@/types'
 import { pptDownloadUrl } from '@/api/pptSvg'
 
@@ -65,6 +74,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:show': [v: boolean]
   open: [jobId: string]
+  delete: [jobId: string]
 }>()
 
 const visible = computed({
