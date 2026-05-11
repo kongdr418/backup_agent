@@ -85,6 +85,12 @@ export const usePptStore = defineStore(
       }
     }
 
+    async function clearAllJobs() {
+      await pptApi.clearAllPptJobs()
+      jobs.value = []
+      resetGen()
+    }
+
     return {
       params,
       gen,
@@ -98,6 +104,7 @@ export const usePptStore = defineStore(
       cancel,
       refreshJobs,
       deleteJob,
+      clearAllJobs,
     }
   },
   {

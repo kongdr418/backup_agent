@@ -57,6 +57,7 @@
       :loading="store.jobsLoading"
       @open="onOpenJob"
       @delete="onDeleteJob"
+      @clear-all="onClearAllJobs"
     />
   </div>
 </template>
@@ -64,7 +65,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { Wand2, History } from 'lucide-vue-next'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 
 import ParamPanel from '@/components/ppt/ParamPanel.vue'
 import PreviewStage from '@/components/ppt/PreviewStage.vue'
@@ -78,6 +79,7 @@ import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 const store = usePptStore()
 const { generate } = usePptStream()
 const message = useMessage()
+const dialog = useDialog()
 
 const activeIdx = ref(0)
 const historyOpen = ref(false)
@@ -192,5 +194,22 @@ async function onDeleteJob(jobId: string) {
   } catch (e) {
     message.error(e instanceof Error ? e.message : '删除失败')
   }
+}
+
+function onClearAllJobs() {
+  dialog.warning({
+    title: '清空全部',
+    content: '将删除全部 SVG PPT 历史，操作不可恢复。',
+    positiveText: '清空',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await store.clearAllJobs()
+        message.success('已清空')
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '清空失败')
+      }
+    },
+  })
 }
 </script>

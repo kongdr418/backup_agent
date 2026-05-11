@@ -44,3 +44,7 @@ export async function listPptJobs() {
 export async function deletePptJob(jobId: string) {
   await client.delete(`/api/ppt-svg/${encodeURIComponent(jobId)}`)
 }
+
+export async function clearAllPptJobs() {
+  await client.post('/api/ppt-svg/clear-all', { confirm: true })
+}

@@ -101,7 +101,7 @@ const allFiles = computed<GeneratedFile[]>(() => [...fileStore.files, ...svgPptF
 const categories = [
   { value: 'all', label: '全部' },
   { value: 'svg_ppt', label: 'SVG PPT (新)' },
-  { value: 'ppt', label: 'PPT (旧)' },
+  // { value: 'ppt', label: 'PPT (旧)' },
   { value: 'lecture', label: '讲义' },
   { value: 'outline', label: '课程大纲' },
   { value: 'speech', label: '讲稿' },

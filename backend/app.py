@@ -773,26 +773,38 @@ def clear_all_files():
     allowed_dirs = [
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
-        'generated_quizzes', 'generated_cards', 'generated_mindmaps'
+        'generated_quizzes', 'generated_cards', 'generated_mindmaps',
+        'generated_svg_ppt'
     ]
     deleted_count = 0
     errors = []
 
     for dir_name in allowed_dirs:
-        dir_path = os.path.join(GENERATORS_DIR, dir_name)
+        if dir_name == 'generated_svg_ppt':
+            # SVG PPT 在 BACKEND_DIR 下，不在 generators 子目录
+            dir_path = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+        else:
+            dir_path = os.path.join(GENERATORS_DIR, dir_name)
         if os.path.exists(dir_path):
             try:
-                # 递归遍历所有文件和子目录
-                for root, dirs, files in os.walk(dir_path):
-                    for f in files:
-                        file_path = os.path.join(root, f)
-                        # 安全检查：确保文件在允许的目录中
-                        if os.path.isfile(file_path):
-                            try:
-                                os.remove(file_path)
-                                deleted_count += 1
-                            except Exception as e:
-                                errors.append(f'删除 {file_path} 失败: {e}')
+                if dir_name == 'generated_svg_ppt':
+                    # SVG PPT 以 job 目录存储，需要删整个目录
+                    for job_id in os.listdir(dir_path):
+                        job_path = os.path.join(dir_path, job_id)
+                        abs_job = os.path.abspath(job_path)
+                        if os.path.isdir(abs_job) and abs_job.startswith(os.path.abspath(dir_path)):
+                            shutil.rmtree(abs_job)
+                            deleted_count += 1
+                else:
+                    for root, dirs, files in os.walk(dir_path):
+                        for f in files:
+                            file_path = os.path.join(root, f)
+                            if os.path.isfile(file_path):
+                                try:
+                                    os.remove(file_path)
+                                    deleted_count += 1
+                                except Exception as e:
+                                    errors.append(f'删除 {file_path} 失败: {e}')
             except Exception as e:
                 errors.append(f'清空目录 {dir_path} 失败: {e}')
 
@@ -1187,6 +1199,32 @@ def ppt_svg_delete(job_id):
         return jsonify({'success': True, 'message': '已删除'})
     except Exception as e:
         request_logger.error(f'[PPT-SVG] 删除任务失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ppt-svg/clear-all', methods=['POST'])
+def ppt_svg_clear_all():
+    """清空所有 SVG PPT 历史"""
+    data = request.json or {}
+    confirm = data.get('confirm', False)
+    if not confirm:
+        return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
+
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt')
+    if not os.path.exists(base_dir):
+        return jsonify({'success': True, 'message': '已清空'})
+
+    try:
+        for job_id in os.listdir(base_dir):
+            job_path = os.path.join(base_dir, job_id)
+            abs_base = os.path.abspath(base_dir)
+            abs_job = os.path.abspath(job_path)
+            if abs_job.startswith(abs_base) and os.path.isdir(abs_job):
+                shutil.rmtree(abs_job)
+        request_logger.info('[PPT-SVG] 已清空所有 SVG PPT 历史')
+        return jsonify({'success': True, 'message': '已清空'})
+    except Exception as e:
+        request_logger.error(f'[PPT-SVG] 清空失败: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

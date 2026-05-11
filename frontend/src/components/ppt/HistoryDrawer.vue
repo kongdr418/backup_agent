@@ -1,6 +1,18 @@
 <template>
   <n-drawer v-model:show="visible" :width="420" placement="right">
     <n-drawer-content title="历史记录" closable>
+      <template #header>
+        <div class="flex items-center justify-between w-full pr-4">
+          <span>历史记录</span>
+          <button
+            v-if="jobs.length > 0"
+            class="text-[12px] text-rose-500 hover:text-rose-600 transition-colors"
+            @click.stop="$emit('clear-all')"
+          >
+            清空全部
+          </button>
+        </div>
+      </template>
       <div class="space-y-2">
         <div v-if="loading" class="text-center text-[12px] text-ink-3 py-6">
           加载中...
@@ -75,6 +87,7 @@ const emit = defineEmits<{
   'update:show': [v: boolean]
   open: [jobId: string]
   delete: [jobId: string]
+  'clear-all': []
 }>()
 
 const visible = computed({

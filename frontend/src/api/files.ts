@@ -15,7 +15,7 @@ export async function renameFile(path: string, newName: string) {
 }
 
 export async function clearAllFiles() {
-  await client.post('/api/files/clear', {})
+  await client.post('/api/files/clear', { confirm: true })
 }
 
 export async function readFile(path: string) {

@@ -54,7 +54,7 @@
       </div>
 
       <div class="text-[11px] text-ink-4 mt-1.5 text-center">
-        Enter 发送 · Shift+Enter 换行 · 输入「制作PPT：主题」可触发旧版 PPT 流程
+        Enter 发送 · Shift+Enter 换行
       </div>
     </div>
   </div>

@@ -62,7 +62,7 @@
               v-if="messages.length === 0"
               :icon="Sparkles"
               title="开始一段新对话"
-              description="输入主题,生成讲义、习题、思维导图、图文或短视频脚本。也可输入「制作PPT：主题」走旧版 PPT 流程。"
+              description="输入主题，生成讲义、习题、思维导图、图文或短视频脚本。"
             />
 
             <ChatMessage
