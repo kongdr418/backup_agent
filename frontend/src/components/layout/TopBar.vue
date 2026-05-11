@@ -3,9 +3,7 @@
     <div class="topbar-inner">
       <!-- Logo -->
       <router-link to="/" class="logo-cell">
-        <div class="logo-dot">
-          <Sparkles class="w-[14px] h-[14px]" />
-        </div>
+        <img src="@/assets/logo.svg" alt="智课源" class="h-9 w-auto" />
         <span class="logo-text">智课源</span>
       </router-link>
 
@@ -48,7 +46,6 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Sparkles,
   LayoutDashboard,
   MessageSquare,
   Presentation,
