@@ -55,6 +55,7 @@ def get_memory_manager():
     return _memory_manager
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 
 app = Flask(__name__)
 CORS(app)
@@ -459,7 +460,7 @@ def get_files():
     files = []
 
     # 扫描 PPT 文件
-    ppt_dir = os.path.join(BACKEND_DIR, "generated_ppt")
+    ppt_dir = os.path.join(GENERATORS_DIR, "generated_ppt")
     if os.path.exists(ppt_dir):
         for f in os.listdir(ppt_dir):
             if f.endswith('.pptx') and not f.startswith('~$'):
@@ -478,7 +479,7 @@ def get_files():
                 })
 
     # 扫描讲义文件
-    lecture_dir = os.path.join(BACKEND_DIR, "generated_lectures")
+    lecture_dir = os.path.join(GENERATORS_DIR, "generated_lectures")
     if os.path.exists(lecture_dir):
         for f in os.listdir(lecture_dir):
             if f.endswith('.md'):
@@ -497,7 +498,7 @@ def get_files():
                 })
 
     # 扫描课程大纲文件
-    outline_dir = os.path.join(BACKEND_DIR, "generated_outlines")
+    outline_dir = os.path.join(GENERATORS_DIR, "generated_outlines")
     if os.path.exists(outline_dir):
         for f in os.listdir(outline_dir):
             if f.endswith(('.md', '.docx')):
@@ -516,7 +517,7 @@ def get_files():
                 })
 
     # 扫描讲稿文件
-    speech_dir = os.path.join(BACKEND_DIR, "generated_speeches")
+    speech_dir = os.path.join(GENERATORS_DIR, "generated_speeches")
     if os.path.exists(speech_dir):
         for f in os.listdir(speech_dir):
             if f.endswith(('.md', '.docx')):
@@ -535,7 +536,7 @@ def get_files():
                 })
 
     # 扫描习题集文件
-    exercise_dir = os.path.join(BACKEND_DIR, "generated_exercises")
+    exercise_dir = os.path.join(GENERATORS_DIR, "generated_exercises")
     if os.path.exists(exercise_dir):
         for f in os.listdir(exercise_dir):
             if f.endswith(('.md', '.docx')):
@@ -554,7 +555,7 @@ def get_files():
                 })
 
     # 扫描课堂测验文件
-    quiz_dir = os.path.join(BACKEND_DIR, "generated_quizzes")
+    quiz_dir = os.path.join(GENERATORS_DIR, "generated_quizzes")
     if os.path.exists(quiz_dir):
         for f in os.listdir(quiz_dir):
             if f.endswith(('.md', '.docx')):
@@ -573,7 +574,7 @@ def get_files():
                 })
 
     # 扫描知识卡片文件
-    card_dir = os.path.join(BACKEND_DIR, "generated_cards")
+    card_dir = os.path.join(GENERATORS_DIR, "generated_cards")
     if os.path.exists(card_dir):
         for f in os.listdir(card_dir):
             if f.endswith(('.md', '.docx')):
@@ -592,7 +593,7 @@ def get_files():
                 })
 
     # 扫描思维导图文件
-    mindmap_dir = os.path.join(BACKEND_DIR, "generated_mindmaps")
+    mindmap_dir = os.path.join(GENERATORS_DIR, "generated_mindmaps")
     if os.path.exists(mindmap_dir):
         for f in os.listdir(mindmap_dir):
             if f.endswith('.md'):
@@ -611,7 +612,7 @@ def get_files():
                 })
 
     # 扫描图文内容文本文件
-    content_text_dir = os.path.join(BACKEND_DIR, "generated_content/text")
+    content_text_dir = os.path.join(GENERATORS_DIR, "generated_content/text")
     if os.path.exists(content_text_dir):
         for f in os.listdir(content_text_dir):
             if f.endswith('.md'):
@@ -632,7 +633,7 @@ def get_files():
                 })
 
     # 扫描音频文件
-    content_audio_dir = os.path.join(BACKEND_DIR, "generated_content/audio")
+    content_audio_dir = os.path.join(GENERATORS_DIR, "generated_content/audio")
     if os.path.exists(content_audio_dir):
         for f in os.listdir(content_audio_dir):
             if f.endswith('.wav'):
@@ -651,7 +652,7 @@ def get_files():
                 })
 
     # 扫描图片文件
-    content_image_dir = os.path.join(BACKEND_DIR, "generated_content/images")
+    content_image_dir = os.path.join(GENERATORS_DIR, "generated_content/images")
     if os.path.exists(content_image_dir):
         for f in os.listdir(content_image_dir):
             if f.endswith(('.jpeg', '.jpg', '.png')):
@@ -688,7 +689,7 @@ def delete_file():
         return jsonify({'success': False, 'error': '文件不存在'}), 404
 
     # 安全检查：确保文件在允许的目录中
-    allowed_dirs = [os.path.join(BACKEND_DIR, d) for d in [
+    allowed_dirs = [os.path.join(GENERATORS_DIR, d) for d in [
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
@@ -725,7 +726,7 @@ def rename_file():
         return jsonify({'success': False, 'error': '无效的文件名'}), 400
 
     # 安全检查
-    allowed_dirs = [os.path.join(BACKEND_DIR, d) for d in [
+    allowed_dirs = [os.path.join(GENERATORS_DIR, d) for d in [
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
@@ -777,7 +778,7 @@ def clear_all_files():
     errors = []
 
     for dir_name in allowed_dirs:
-        dir_path = os.path.join(BACKEND_DIR, dir_name)
+        dir_path = os.path.join(GENERATORS_DIR, dir_name)
         if os.path.exists(dir_path):
             try:
                 # 递归遍历所有文件和子目录

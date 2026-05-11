@@ -29,18 +29,17 @@ node_modules/
 flask_server.log
 
 # Generated files (keep the directories, ignore contents)
-backend/generated_ppt/*
-backend/generated_lectures/*
-backend/generated_outlines/*
-backend/generated_speeches/*
-backend/generated_exercises/*
-backend/generated_quizzes/*
-backend/generated_cards/*
-backend/generated_mindmaps/*
-backend/generated_content/text/*
-backend/generated_content/audio/*
-backend/generated_content/images/*
-backend/ppt_previews/*
+backend/generators/generated_ppt/*
+backend/generators/generated_lectures/*
+backend/generators/generated_outlines/*
+backend/generators/generated_speeches/*
+backend/generators/generated_exercises/*
+backend/generators/generated_quizzes/*
+backend/generators/generated_cards/*
+backend/generators/generated_mindmaps/*
+backend/generators/generated_content/text/*
+backend/generators/generated_content/audio/*
+backend/generators/generated_content/images/*
 
 # Memory (optional - comment out if you want to keep memory)
 memory/sessions/*
