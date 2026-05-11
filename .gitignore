@@ -29,18 +29,18 @@ node_modules/
 flask_server.log
 
 # Generated files (keep the directories, ignore contents)
-generated_ppt/*
-generated_lectures/*
-generated_outlines/*
-generated_speeches/*
-generated_exercises/*
-generated_quizzes/*
-generated_cards/*
-generated_mindmaps/*
-generated_content/text/*
-generated_content/audio/*
-generated_content/images/*
-ppt_previews/*
+backend/generated_ppt/*
+backend/generated_lectures/*
+backend/generated_outlines/*
+backend/generated_speeches/*
+backend/generated_exercises/*
+backend/generated_quizzes/*
+backend/generated_cards/*
+backend/generated_mindmaps/*
+backend/generated_content/text/*
+backend/generated_content/audio/*
+backend/generated_content/images/*
+backend/ppt_previews/*
 
 # Memory (optional - comment out if you want to keep memory)
 memory/sessions/*
@@ -60,7 +60,7 @@ memory/
 .claude/
 
 # Generated SVG PPT (local output)
-generated_svg_ppt/
+backend/generated_svg_ppt/
 
 # Backend (local only)
 backend/node_modules/
@@ -68,14 +68,10 @@ backend/__pycache__/
 backend/*.pyc
 backend/flask_server.log
 
+# Frontend (local only)
+frontend/node_modules/
+frontend/.env
+frontend/generated_*
+
 # Test output
 test_output.txt
-test_complex.json
-test_input.json
-test_mindmap.json
-
-# Mindmap render
-mindmap_render.js
-
-# HTML test file
-test_ppt_svg.html
