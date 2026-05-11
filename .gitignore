@@ -62,6 +62,12 @@ memory/
 # Generated SVG PPT (local output)
 generated_svg_ppt/
 
+# Backend (local only)
+backend/node_modules/
+backend/__pycache__/
+backend/*.pyc
+backend/flask_server.log
+
 # Test output
 test_output.txt
 test_complex.json
