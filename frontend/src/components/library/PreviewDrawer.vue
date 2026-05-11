@@ -1,0 +1,184 @@
+<template>
+  <n-drawer v-model:show="visible" :width="720" placement="right">
+    <n-drawer-content :title="file?.name || '预览'" closable>
+      <template v-if="file">
+        <!-- Meta info bar -->
+        <div class="meta-bar">
+          <div class="meta-item">
+            <span class="meta-label">类型</span>
+            <span class="meta-value">{{ file.type_label }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">大小</span>
+            <span class="meta-value">{{ file.size_formatted }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">时间</span>
+            <span class="meta-value">{{ file.created }}</span>
+          </div>
+        </div>
+
+        <!-- Image preview -->
+        <ImagePreview
+          v-if="file.type === 'content_image'"
+          :src="imageUrl(file.name)"
+          :name="file.name"
+        />
+
+        <!-- Audio preview -->
+        <AudioPreview
+          v-else-if="file.type === 'content_audio'"
+          :src="audioUrl(file.name)"
+          :name="file.name"
+        />
+
+        <!-- SVG PPT -->
+        <PptThumbnailPreview
+          v-else-if="file.type === 'svg_ppt'"
+          :job-id="svgJobId"
+          :name="file.name"
+        />
+
+        <!-- Legacy PPT (download only) -->
+        <DownloadCard
+          v-else-if="file.type === 'ppt'"
+          :name="file.name"
+          :path="file.path"
+          type="ppt"
+          :size="file.size_formatted"
+          :date="file.created"
+          :download-url="pptDirectUrl(file.path)"
+        />
+
+        <!-- DOCX -->
+        <DocxPreview
+          v-else-if="fileExtension === 'docx'"
+          :path="file.path"
+          :name="file.name"
+        />
+
+        <!-- JSON -->
+        <JsonPreview
+          v-else-if="fileExtension === 'json'"
+          :path="file.path"
+        />
+
+        <!-- Markdown / text -->
+        <MarkdownPreview
+          v-else-if="isTextFile"
+          :path="file.path"
+        />
+
+        <!-- Mindmap (special handling) -->
+        <MindmapPreview
+          v-else-if="file.type === 'mindmap' && fileExtension === 'md'"
+          :path="file.path"
+        />
+
+        <!-- Fallback: download card -->
+        <DownloadCard
+          v-else
+          :name="file.name"
+          :path="file.path"
+          :type="file.type"
+          :size="file.size_formatted"
+          :date="file.created"
+          :download-url="downloadHref"
+        />
+      </template>
+    </n-drawer-content>
+  </n-drawer>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch, defineAsyncComponent } from 'vue'
+import { NDrawer, NDrawerContent } from 'naive-ui'
+import type { GeneratedFile } from '@/types'
+import { graphicImageUrl, videoAudioUrl } from '@/api/preview'
+import { pptDownloadUrl as pptSvgDownloadUrl } from '@/api/pptSvg'
+import { fileDownloadUrl } from '@/api/files'
+
+// Lazy-loaded preview sub-components
+const ImagePreview = defineAsyncComponent(() => import('./preview/ImagePreview.vue'))
+const AudioPreview = defineAsyncComponent(() => import('./preview/AudioPreview.vue'))
+const MarkdownPreview = defineAsyncComponent(() => import('./preview/MarkdownPreview.vue'))
+const DocxPreview = defineAsyncComponent(() => import('./preview/DocxPreview.vue'))
+const MindmapPreview = defineAsyncComponent(() => import('./preview/MindmapPreview.vue'))
+const JsonPreview = defineAsyncComponent(() => import('./preview/JsonPreview.vue'))
+const DownloadCard = defineAsyncComponent(() => import('./preview/DownloadCard.vue'))
+const PptThumbnailPreview = defineAsyncComponent(() => import('./preview/PptThumbnailPreview.vue'))
+
+const props = defineProps<{ show: boolean; file?: GeneratedFile | null }>()
+const emit = defineEmits<{ 'update:show': [v: boolean] }>()
+
+const visible = computed({ get: () => props.show, set: (v) => emit('update:show', v) })
+
+const svgJobId = ref('')
+
+const isTextFile = computed(() => {
+  if (!props.file) return false
+  const name = props.file.name.toLowerCase()
+  return name.endsWith('.md') || name.endsWith('.txt')
+})
+
+const fileExtension = computed(() => {
+  if (!props.file) return ''
+  return props.file.name.split('.').pop()?.toLowerCase() || ''
+})
+
+const downloadHref = computed(() => {
+  if (!props.file) return '#'
+  return fileDownloadUrl(props.file.path)
+})
+
+watch(
+  () => props.file,
+  (f) => {
+    svgJobId.value = ''
+    if (!f) return
+    if (f.type === 'svg_ppt') {
+      svgJobId.value = (f.id || '').replace(/^svg_ppt_/, '')
+    }
+  },
+  { immediate: true },
+)
+
+function imageUrl(name: string) {
+  return graphicImageUrl(name)
+}
+function audioUrl(name: string) {
+  return videoAudioUrl(name)
+}
+function pptDirectUrl(path: string) {
+  return `/${path.replace(/\\/g, '/')}`
+}
+</script>
+
+<style scoped>
+.meta-bar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: rgb(var(--bg-subtle-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  font-size: 12px;
+}
+
+.meta-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.meta-label {
+  color: rgb(var(--ink-4-rgb));
+}
+
+.meta-value {
+  color: rgb(var(--ink-2-rgb));
+  font-weight: 500;
+}
+</style>

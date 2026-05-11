@@ -1,0 +1,357 @@
+<template>
+  <div class="chat-shell">
+    <!-- Session list (glass sidebar) -->
+    <aside class="w-60 shrink-0 glass-sidebar flex flex-col">
+      <div class="px-3 pt-3 pb-2">
+        <button class="new-chat-btn" @click="newChat">
+          <Plus class="w-3.5 h-3.5" />
+          新对话
+        </button>
+      </div>
+
+      <div class="px-2 py-1 text-[10.5px] text-ink-4 uppercase tracking-wider font-medium">
+        会话历史
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+        <div
+          v-if="sessionStore.sessions.length === 0"
+          class="text-[12px] text-ink-4 px-2 py-4 text-center"
+        >
+          暂无对话
+        </div>
+
+        <div
+          v-for="s in sessionStore.sessions"
+          :key="s.id"
+          class="session-item"
+          :class="sessionStore.currentSessionId === s.id ? 'is-active' : ''"
+          @click="switchTo(s.id)"
+        >
+          <MessageSquare class="w-3.5 h-3.5 shrink-0 mr-2 text-ink-3" />
+          <span class="flex-1 truncate">{{ s.name }}</span>
+          <button
+            class="session-action"
+            @click.stop="startRename(s.id, s.name)"
+            title="重命名"
+          >
+            <Pencil class="w-3 h-3" />
+          </button>
+          <button
+            v-if="sessionStore.sessions.length > 1"
+            class="session-action danger"
+            @click.stop="askDelete(s.id, s.name)"
+            title="删除"
+          >
+            <Trash2 class="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main + Document split-grid -->
+    <div
+      class="main-grid"
+      :class="chatView.isSplit ? 'is-split' : ''"
+    >
+      <!-- Chat column -->
+      <div class="chat-column">
+        <div ref="scrollEl" class="chat-scroll" :class="chatView.isSplit ? 'is-split' : ''">
+          <div class="chat-stream">
+            <EmptyState
+              v-if="messages.length === 0"
+              :icon="Sparkles"
+              title="开始一段新对话"
+              description="输入主题,生成讲义、习题、思维导图、图文或短视频脚本。也可输入「制作PPT：主题」走旧版 PPT 流程。"
+            />
+
+            <ChatMessage
+              v-for="m in messages"
+              :key="m.id"
+              :message="m"
+            />
+          </div>
+        </div>
+
+        <ChatInput :is-loading="isLoading" @send="onSend" @cancel="cancel" />
+      </div>
+
+      <!-- Document viewer column (only when split) -->
+      <div v-if="chatView.isSplit" class="doc-column">
+        <DocumentViewer
+          :kind="expandedMessage?.type"
+          :data="expandedMessage?.data"
+          :markdown-content="
+            expandedMessage?.type === 'markdown' || expandedMessage?.type === 'text'
+              ? expandedMessage?.content
+              : ''
+          "
+          @close="chatView.collapse()"
+        />
+      </div>
+    </div>
+
+    <!-- Rename dialog -->
+    <n-modal
+      v-model:show="renameShow"
+      preset="dialog"
+      title="重命名对话"
+      positive-text="确认"
+      negative-text="取消"
+      @positive-click="confirmRename"
+    >
+      <n-input v-model:value="renameValue" placeholder="新名称" @keyup.enter="confirmRename" />
+    </n-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { NModal, NInput, useDialog } from 'naive-ui'
+import { Plus, MessageSquare, Pencil, Trash2, Sparkles } from 'lucide-vue-next'
+import { useSessionStore } from '@/stores/sessionStore'
+import { useChatStore } from '@/stores/chatStore'
+import { useChatViewStore } from '@/stores/chatViewStore'
+import { useChat } from '@/composables/useChat'
+import ChatInput from '@/components/chat/ChatInput.vue'
+import ChatMessage from '@/components/chat/ChatMessage.vue'
+import DocumentViewer from '@/components/chat/DocumentViewer.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+
+const sessionStore = useSessionStore()
+const chatStore = useChatStore()
+const chatView = useChatViewStore()
+const { messages, isLoading, sendMessage, cancel } = useChat()
+const dialog = useDialog()
+
+const scrollEl = ref<HTMLElement | null>(null)
+
+// 当前展开的消息
+const expandedMessage = computed(() => {
+  if (!chatView.expandedMessageId) return null
+  return messages.value.find((m) => m.id === chatView.expandedMessageId) || null
+})
+
+onMounted(() => {
+  chatView.init()
+  if (sessionStore.sessions.length === 0) {
+    sessionStore.createSession()
+  } else if (!sessionStore.currentSessionId) {
+    sessionStore.switchSession(sessionStore.sessions[0].id)
+  }
+})
+
+// 消息变多时滚到底
+watch(
+  () => messages.value.length,
+  () => nextTick(scrollToBottom),
+  { immediate: true },
+)
+watch(
+  () => messages.value[messages.value.length - 1]?.content,
+  () => {
+    // 只有非分栏时跟随底部
+    if (!chatView.isSplit) nextTick(scrollToBottom)
+  },
+)
+
+// 退出分栏时还原 scrollTop
+watch(
+  () => chatView.isSplit,
+  (isSplit) => {
+    if (!isSplit && scrollEl.value) {
+      const top = chatView.lastScrollTop || 0
+      nextTick(() => scrollEl.value?.scrollTo({ top, behavior: 'smooth' }))
+    }
+  },
+)
+
+function scrollToBottom() {
+  scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior: 'smooth' })
+}
+
+function newChat() {
+  sessionStore.createSession()
+  chatView.collapse()
+}
+
+function switchTo(id: string) {
+  sessionStore.switchSession(id)
+}
+
+const renameShow = ref(false)
+const renameValue = ref('')
+const renameTargetId = ref('')
+
+function startRename(id: string, name: string) {
+  renameTargetId.value = id
+  renameValue.value = name
+  renameShow.value = true
+}
+
+function confirmRename() {
+  const v = renameValue.value.trim()
+  if (v) sessionStore.renameSession(renameTargetId.value, v)
+  renameShow.value = false
+}
+
+function askDelete(id: string, name: string) {
+  dialog.warning({
+    title: '删除对话',
+    content: `确定删除「${name}」?该对话的全部消息将被清空,操作不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      chatStore.dropSession(id)
+      sessionStore.deleteSession(id)
+    },
+  })
+}
+
+async function onSend(text: string) {
+  await sendMessage(text)
+}
+
+const _ = computed(() => isLoading.value)
+</script>
+
+<style scoped>
+.chat-shell {
+  height: 100%;
+  display: flex;
+  min-width: 0;
+}
+
+/* ============ Session sidebar ============ */
+.new-chat-btn {
+  width: 100%;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  background: rgb(var(--accent-rgb));
+  color: white;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+  transition: all 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 2px 8px -2px rgb(var(--accent-rgb) / 0.4);
+}
+.new-chat-btn:hover {
+  background: rgb(var(--accent-hover-rgb));
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgb(var(--ink-2-rgb));
+  transition: background-color 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+}
+.session-item:hover {
+  background: rgb(var(--bg-subtle-rgb) / 0.7);
+  color: rgb(var(--ink-1-rgb));
+}
+.session-item.is-active {
+  background: rgb(var(--accent-rgb) / 0.10);
+  color: rgb(var(--ink-1-rgb));
+  font-weight: 500;
+}
+.session-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  background: rgb(var(--accent-rgb));
+  border-radius: 0 3px 3px 0;
+}
+
+.session-action {
+  opacity: 0;
+  padding: 3px;
+  border-radius: 5px;
+  background: transparent;
+  border: none;
+  color: rgb(var(--ink-3-rgb));
+  cursor: pointer;
+  margin-left: 2px;
+  transition: all 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.session-item:hover .session-action {
+  opacity: 1;
+}
+.session-action:hover {
+  background: rgb(var(--bg-base-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+.session-action.danger:hover {
+  background: rgb(var(--danger-rgb) / 0.12);
+  color: rgb(var(--danger-rgb));
+}
+
+/* ============ Main grid (chat + document) ============ */
+.main-grid {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  transition: grid-template-columns 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+}
+.main-grid.is-split {
+  grid-template-columns: 2fr 3fr;
+}
+
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.chat-stream {
+  max-width: 1024px;  /* max-w-5xl */
+  margin: 0 auto;
+  padding: 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* 分栏模式收紧 */
+.chat-scroll.is-split .chat-stream {
+  max-width: 640px;
+  padding: 24px 24px;
+  gap: 20px;
+}
+
+.doc-column {
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  animation: doc-enter 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes doc-enter {
+  0% { opacity: 0; transform: translateX(20px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+</style>

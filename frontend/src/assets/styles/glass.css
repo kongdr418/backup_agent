@@ -1,0 +1,50 @@
+/* ==================================================================
+   Glass / Backdrop Filter — 跨浏览器一致(Chrome 76+ / Edge 79+ /
+   Firefox 103+ / Safari 9+),不依赖任何浏览器专属滤镜。
+   ================================================================== */
+
+/* 默认兜底:不支持 backdrop-filter 的浏览器(IE11 / 老 Android WebView) */
+.glass-chrome,
+.glass-sidebar,
+.glass-elevated {
+  background: rgb(var(--glass-chrome-bg));
+}
+
+/* 启用玻璃 — 支持任一前缀即可 */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass-chrome {
+    background: rgb(var(--glass-chrome-bg) / var(--glass-chrome-a));
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid rgb(var(--glass-border-rgb) / var(--glass-border-a));
+  }
+
+  .glass-sidebar {
+    background: rgb(var(--glass-sidebar-bg) / var(--glass-sidebar-a));
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+    border-right: 1px solid rgb(var(--glass-border-rgb) / var(--glass-border-a));
+  }
+
+  .glass-elevated {
+    background: rgb(var(--glass-elevated-bg) / var(--glass-elevated-a));
+    -webkit-backdrop-filter: saturate(180%) blur(28px);
+    backdrop-filter: saturate(180%) blur(28px);
+    border: 1px solid rgb(var(--glass-border-rgb) / var(--glass-border-a));
+  }
+
+  /* 输入框 / Chip 用的轻薄玻璃 */
+  .glass-thin {
+    background: rgb(var(--bg-surface-rgb) / 0.65);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    backdrop-filter: saturate(160%) blur(12px);
+    border: 1px solid rgb(var(--glass-border-rgb) / var(--glass-border-a));
+  }
+}
+
+/* 高光 — 模块 hue 在玻璃上的应用 */
+.glass-hue-chat { box-shadow: inset 0 1px 0 rgb(var(--hue-chat-rgb) / 0.20); }
+.glass-hue-ppt { box-shadow: inset 0 1px 0 rgb(var(--hue-ppt-rgb) / 0.20); }
+.glass-hue-library { box-shadow: inset 0 1px 0 rgb(var(--hue-library-rgb) / 0.20); }
+.glass-hue-memory { box-shadow: inset 0 1px 0 rgb(var(--hue-memory-rgb) / 0.20); }
+.glass-hue-settings { box-shadow: inset 0 1px 0 rgb(var(--hue-settings-rgb) / 0.20); }

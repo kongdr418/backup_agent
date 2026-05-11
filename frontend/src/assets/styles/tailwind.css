@@ -1,0 +1,199 @@
+/* ==================================================================
+   Tailwind Entry — Apple 2026 / 双主题 / 玻璃化
+   token 必须在 @tailwind 之前导入,glass / mesh 在之后
+   ================================================================== */
+@import './tokens.css';
+@import './glass.css';
+@import './mesh.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==================================================================
+   Web Fonts — MiSans 自托管 (License: 小米 MiSans 协议,免费商用,需注明)
+   ================================================================== */
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/MiSans-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/MiSans-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/MiSans-Semibold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/MiSans-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ==================================================================
+   Base Layer — 全局重置 + body 字体 + 滚动条
+   ================================================================== */
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  /* Naive UI wrapper divs don't inherit height — force flex column chain */
+  #app {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #app > .n-config-provider,
+  #app > .n-config-provider > .n-message-provider,
+  #app > .n-config-provider > .n-message-provider > .n-dialog-provider {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body {
+    @apply bg-bg-base text-ink-1 font-sans antialiased;
+    font-feature-settings: 'tnum', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 主题切换瞬时,无过渡(避免初次渲染白闪) */
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition: background-color 220ms var(--ease-spring),
+                border-color 220ms var(--ease-spring),
+                color 220ms var(--ease-spring) !important;
+  }
+
+  /* 滚动条 */
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgb(var(--ink-4-rgb) / 0.40);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--ink-3-rgb) / 0.55);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--ink-4-rgb) / 0.40) transparent;
+  }
+
+  /* Focus ring(可访问性 — 不能去掉) */
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent-rgb));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ==================================================================
+   Components — 复用类
+   ================================================================== */
+@layer components {
+  .surface-card {
+    @apply bg-bg-surface border border-line rounded-card shadow-card;
+  }
+
+  .surface-card-hover {
+    @apply transition-shadow hover:shadow-card-hover;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-ink-2 transition-colors;
+  }
+
+  .nav-link:hover {
+    @apply bg-bg-subtle text-ink-1;
+  }
+
+  .nav-link.is-active {
+    @apply text-ink-1 font-medium;
+    background: rgb(var(--accent-rgb) / 0.10);
+  }
+
+  /* 主调按钮 */
+  .btn-accent {
+    @apply inline-flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg text-[13px] font-medium text-white transition-all;
+    background: rgb(var(--accent-rgb));
+  }
+  .btn-accent:hover { background: rgb(var(--accent-hover-rgb)); }
+  .btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* 次级按钮(透明 / 中性) */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 h-9 rounded-lg text-[13px] text-ink-2 transition-colors;
+  }
+  .btn-ghost:hover {
+    @apply bg-bg-subtle text-ink-1;
+  }
+
+  /* Pill / chip */
+  .chip {
+    @apply inline-flex items-center gap-1.5 h-7 px-3 rounded-pill text-[12px] text-ink-2 border border-line transition-colors;
+    background: rgb(var(--bg-surface-rgb) / 0.7);
+  }
+  .chip:hover {
+    @apply text-ink-1;
+    border-color: rgb(var(--accent-rgb) / 0.50);
+  }
+  .chip.is-active {
+    background: rgb(var(--accent-rgb));
+    @apply text-white border-transparent;
+  }
+}
+
+/* ==================================================================
+   Naive UI 主题对接修补 — n-config-provider 不能完全靠 var()
+   这里只补一些静态修补,主色仍由 themeOverrides 走 JS computed
+   ================================================================== */
+.n-drawer-content {
+  background: rgb(var(--bg-surface-rgb)) !important;
+  color: rgb(var(--ink-1-rgb)) !important;
+}
+
+.n-message {
+  background: rgb(var(--bg-surface-rgb)) !important;
+  color: rgb(var(--ink-1-rgb)) !important;
+  border: 1px solid rgb(var(--line-rgb)) !important;
+}
+
+.n-modal-mask {
+  background: rgb(0 0 0 / 0.40) !important;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
