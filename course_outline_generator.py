@@ -12,7 +12,7 @@ from typing import Generator, Dict, Optional
 class CourseOutlineGenerator:
     """课程大纲生成器"""
 
-    def __init__(self, output_dir: str = "generated_outlines"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_outlines")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 

@@ -287,9 +287,8 @@ async def generate_svg_pages(
         async with semaphore:
             return await coro
 
-    # Execute all tasks; first exception propagates (strategy A)
-    results = await asyncio.gather(*[_run_with_sem(c) for c in coros])
-
-    # Sort by page number and yield in order
-    for page_num, svg_content in sorted(results, key=lambda x: x[0]):
+    # Execute concurrently; yield each page as soon as it completes
+    tasks = [asyncio.create_task(_run_with_sem(c)) for c in coros]
+    for task in asyncio.as_completed(tasks):
+        page_num, svg_content = await task
         yield page_num, svg_content

@@ -12,7 +12,7 @@ from typing import Generator, Optional
 class SpeechGenerator:
     """讲稿生成器"""
 
-    def __init__(self, output_dir: str = "generated_speeches"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_speeches")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 

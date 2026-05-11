@@ -158,7 +158,7 @@ class PPTPipeline:
                 progress = page_progress_base + (completed_pages / slide_count) * page_progress_range
                 yield PipelineEvent(
                     "svg_generation", "progress",
-                    f"第 {page_num}/{slide_count} 页生成完成",
+                    f"第{page_num}页生成完成",
                     progress,
                     {
                         "page": page_num,

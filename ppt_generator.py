@@ -13,7 +13,7 @@ from datetime import datetime
 class PPTGenerator:
     """PPT 生成器 - 使用 pptxgenjs 创建演示文稿"""
     
-    def __init__(self, output_dir: str = "generated_ppt"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_ppt")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
     

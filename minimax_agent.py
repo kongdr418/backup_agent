@@ -22,6 +22,8 @@ from quiz_generator import QuizGenerator
 from knowledge_card_generator import KnowledgeCardGenerator
 from mindmap_generator import MindmapGenerator
 
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 class MiniMaxAgent:
     """MiniMax 大模型 Agent"""
@@ -339,10 +341,10 @@ class MiniMaxAgent:
     def _list_ppts(self) -> str:
         """列出所有生成的 PPT"""
         import os
-        ppt_dir = "generated_ppt"
+        ppt_dir = os.path.join(BACKEND_DIR, "generated_ppt")
         if not os.path.exists(ppt_dir):
             return "还没有生成任何 PPT 文件。"
-        
+
         # 过滤掉临时文件（以 ~$ 开头）
         ppt_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
         if not ppt_files:
@@ -690,10 +692,10 @@ class MiniMaxAgent:
         # 尝试提取文件名
         match = re.search(r'预览[Pp][Pp][Tt][:：]?\s*(.+)', message)
         
-        ppt_dir = "generated_ppt"
+        ppt_dir = os.path.join(BACKEND_DIR, "generated_ppt")
         if not os.path.exists(ppt_dir):
             return "还没有生成任何 PPT 文件。"
-        
+
         # 过滤掉临时文件（以 ~$ 开头）
         ppt_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
         if not ppt_files:
@@ -786,14 +788,7 @@ class MiniMaxAgent:
         """
         if content_type == 'video_script':
             # 短视频脚本：脚本 + AI配音
-            outline_msg = f"📋 即将为您生成短视频脚本：<br><br>"
-            outline_msg += f"主题：{topic}<br>"
-            outline_msg += f"<br>将生成：<br>"
-            outline_msg += "  1. 📝 短视频脚本（抖音/B站/视频号）<br>"
-            outline_msg += "  2. 🔊 AI 配音音频<br><br>"
-            outline_msg += "⏳ 正在生成中，请稍候...<br>"
-            outline_msg += "=" * 50
-            yield outline_msg
+            yield self._init_progress('video', '即将生成短视频脚本', topic, 'md')
 
             # 从设置中获取 style
             mimo_style = self.content_generator.settings.get('mimo_style', '')
@@ -829,23 +824,25 @@ class MiniMaxAgent:
                         self._generation_history.pop(0)
                     yield result_data
                 elif update.get('status') == 'error':
-                    yield f"<br>❌ 生成失败: {update['message']}"
+                    yield self._err_event('video', update.get('message', '生成失败'))
                 else:
-                    yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                    yield self._step_progress('video', update)
         else:
             # 图文内容：小红书文案 + 封面图
-            outline_msg = f"📋 即将为您生成图文内容：<br><br>"
-            outline_msg += f"主题：{topic}<br>"
-            outline_msg += f"<br>将生成：<br>"
-            outline_msg += "  1. 📕 小红书爆款文案<br>"
-            outline_msg += "  2. 🎨 AI 封面图<br><br>"
-            outline_msg += "⏳ 正在生成中，请稍候...<br>"
-            outline_msg += "=" * 50
-            yield outline_msg
+            yield self._init_progress('graphic', '即将生成图文内容', topic, 'md')
 
             for update in self.content_generator.generate_graphic_content_stream(topic):
                 # 优先检查特殊步骤（大数据传输），因为这些的 status 也是 'running'
-                if update.get('step') == 'image_data' and update.get('data', {}).get('type') == 'graphic_image_data':
+                if update.get('step') == 'text_complete':
+                    # 文案生成完成，发送文案数据供前端展示
+                    xiaohongshu = update.get('data', {}).get('xiaohongshu', '')
+                    if xiaohongshu:
+                        yield {
+                            'type': 'graphic_text_data',
+                            'xiaohongshu': xiaohongshu
+                        }
+                    yield self._step_progress('graphic', update)
+                elif update.get('step') == 'image_data' and update.get('data', {}).get('type') == 'graphic_image_data':
                     # 图片数据单独发送
                     print(f"[DEBUG] 检测到图片数据步骤，base64长度: {len(update['data'].get('image_base64', ''))}")
                     yield {
@@ -874,17 +871,19 @@ class MiniMaxAgent:
                         self._generation_history.pop(0)
                     yield result_data
                 elif update.get('status') == 'error':
-                    yield f"<br>❌ 生成失败: {update['message']}"
+                    yield self._err_event('graphic', update.get('message', '生成失败'))
                 else:
-                    yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                    yield self._step_progress('graphic', update)
 
-    def _create_lecture_with_ai(self, topic: str) -> str:
+    def _create_lecture_with_ai(self, topic: str):
         """
-        使用 AI 生成课程讲义
+        使用 AI 生成课程讲义 (generator)
         """
+        yield self._init_progress('lecture', '即将生成讲义', topic, 'md')
+
         # 构建提示词
         prompt = self.lecture_generator.generate_lecture_prompt(topic)
-        
+
         try:
             # 调用 AI 生成讲义
             response = requests.post(
@@ -902,51 +901,84 @@ class MiniMaxAgent:
             response.raise_for_status()
             result = response.json()
             ai_response = result["choices"][0]["message"]["content"]
-            
+
             # 提取 Markdown 内容
             import re
-            # 尝试提取代码块中的内容
             code_block_match = re.search(r'```markdown\s*\n(.*?)\n```', ai_response, re.DOTALL)
             if code_block_match:
                 lecture_content = code_block_match.group(1)
             else:
-                # 如果没有 markdown 标记，使用整个响应
                 lecture_content = ai_response
-            
+
             # 保存讲义文件
             output_path = self.lecture_generator.create_lecture_file(topic, lecture_content)
 
+            # 构建完成数据
+            filtered_data = {
+                'topic': topic,
+                'filepath': output_path,
+                'content': lecture_content,
+            }
+
             # 记录到记忆
-            self.memory.log_generation(topic, 'lecture', {
-                'output_path': output_path,
-                'lecture_content': lecture_content,
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+            self.memory.log_generation(topic, 'lecture', filtered_data)
             # 保存到生成历史供 /save-memory 使用
             self._generation_history.append({
                 'type': 'lecture',
                 'topic': topic,
-                'data': {'output_path': output_path, 'lecture_content': lecture_content}
+                'data': filtered_data
             })
             # 最多保留10条
             if len(self._generation_history) > 10:
                 self._generation_history.pop(0)
 
-            # 生成预览
-            preview = self.lecture_generator.get_lecture_preview(output_path, max_lines=30)
+            yield {
+                'type': 'lecture_complete',
+                'data': filtered_data,
+                'message': f'讲义「{topic}」已生成'
+            }
 
-            return f"✅ 课程讲义已生成！<br>📄 文件路径: {output_path}<br><br>📋 内容预览：<br>─────────────────────────<br>{preview}<br>─────────────────────────<br><br>💡 提示：这是 Markdown 格式文件，可以用任何文本编辑器打开"
-            
         except Exception as e:
-            return f"❌ 讲义生成失败: {str(e)}"
+            yield self._err_event('lecture', str(e))
+
+    def _init_progress(self, kind: str, label: str, detail: str = '', output_format: str = 'md'):
+        """构造 init 阶段的结构化进度事件(替代旧的 emoji banner 字符串)"""
+        return {
+            'type': 'progress',
+            'stage': 'init',
+            'kind': kind,
+            'percent': 0,
+            'label': label,
+            'detail': detail,
+            'format': output_format,
+        }
+
+    def _step_progress(self, kind: str, update: dict):
+        """构造 generating 阶段的结构化进度事件(替代 [xx%] 字符串)"""
+        return {
+            'type': 'progress',
+            'stage': 'generating',
+            'kind': kind,
+            'percent': int(update.get('progress', 0) or 0),
+            'label': str(update.get('message', '生成中')),
+        }
+
+    def _err_event(self, kind: str, message: str):
+        """构造结构化错误事件(替代字符串 ❌ 生成失败)"""
+        return {
+            'type': 'error',
+            'kind': kind,
+            'message': str(message),
+        }
 
     def _create_outline_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成课程大纲"""
-        yield f"📋 即将为您生成课程大纲：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('outline', '即将生成课程大纲', topic, output_format)
 
         for update in self.course_outline_generator.generate_outline_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                filtered_data = self._enrich_completion_data(filtered_data, 'outline', topic, output_format)
                 self.memory.log_generation(topic, 'course_outline', filtered_data)
                 self._generation_history.append({
                     'type': 'course_outline',
@@ -961,17 +993,18 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('outline', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('outline', update)
 
     def _create_speech_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成讲稿"""
-        yield f"📋 即将为您生成授课讲稿：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('speech', '即将生成讲稿', topic, output_format)
 
         for update in self.speech_generator.generate_speech_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                filtered_data = self._enrich_completion_data(filtered_data, 'speech', topic, output_format)
                 self.memory.log_generation(topic, 'speech', filtered_data)
                 self._generation_history.append({
                     'type': 'speech',
@@ -986,17 +1019,18 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('speech', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('speech', update)
 
     def _create_exercise_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成习题集"""
-        yield f"📋 即将为您生成习题集：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('exercise', '即将生成习题集', topic, output_format)
 
         for update in self.exercise_generator.generate_exercise_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                filtered_data = self._enrich_completion_data(filtered_data, 'exercise', topic, output_format)
                 self.memory.log_generation(topic, 'exercise', filtered_data)
                 self._generation_history.append({
                     'type': 'exercise',
@@ -1011,17 +1045,88 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('exercise', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('exercise', update)
+
+    def _enrich_completion_data(self, filtered_data: dict, gen_type: str, topic: str, output_format: str) -> dict:
+        """读取文件内容并尝试生成另一种格式，丰富完成事件数据"""
+        filepath = filtered_data.get('filepath', '')
+        if not filepath or not os.path.isfile(filepath):
+            return filtered_data
+
+        # 读取文件内容供前端预览
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                filtered_data['content'] = f.read()
+        except (UnicodeDecodeError, IOError):
+            pass
+
+        # 尝试生成另一种格式（md ↔ docx）
+        if output_format == 'md':
+            alt_format = 'docx'
+        elif output_format == 'docx':
+            alt_format = 'md'
+        else:
+            return filtered_data
+
+        try:
+            alt_filepath = filepath.rsplit('.', 1)[0] + f'.{alt_format}'
+            if gen_type == 'exercise':
+                if alt_format == 'docx':
+                    json_content = self.exercise_generator._generate_json_content(topic)
+                    self.exercise_generator._save_as_docx(json_content, alt_filepath)
+                else:
+                    md_content = self.exercise_generator._generate_markdown_content(topic)
+                    with open(alt_filepath, 'w', encoding='utf-8') as f:
+                        f.write(md_content)
+            elif gen_type == 'quiz':
+                if alt_format == 'docx':
+                    json_content = self.quiz_generator._generate_json_content(topic)
+                    self.quiz_generator._save_as_docx(json_content, alt_filepath)
+                else:
+                    md_content = self.quiz_generator._generate_markdown_content(topic)
+                    with open(alt_filepath, 'w', encoding='utf-8') as f:
+                        f.write(md_content)
+            elif gen_type == 'card':
+                if alt_format == 'docx':
+                    json_content = self.knowledge_card_generator._generate_json_content(topic)
+                    self.knowledge_card_generator._save_as_docx(json_content, alt_filepath)
+                else:
+                    md_content = self.knowledge_card_generator._generate_markdown_content(topic)
+                    with open(alt_filepath, 'w', encoding='utf-8') as f:
+                        f.write(md_content)
+            elif gen_type == 'speech':
+                if alt_format == 'docx':
+                    json_content = self.speech_generator._generate_json_content(topic)
+                    self.speech_generator._save_as_docx(json_content, alt_filepath)
+                else:
+                    md_content = self.speech_generator._generate_markdown_content(topic)
+                    with open(alt_filepath, 'w', encoding='utf-8') as f:
+                        f.write(md_content)
+            elif gen_type == 'outline':
+                if alt_format == 'docx':
+                    json_content = self.course_outline_generator._generate_json_content(topic)
+                    self.course_outline_generator._save_as_docx(json_content, alt_filepath)
+                else:
+                    md_content = self.course_outline_generator._generate_markdown_content(topic)
+                    with open(alt_filepath, 'w', encoding='utf-8') as f:
+                        f.write(md_content)
+            if os.path.isfile(alt_filepath):
+                filtered_data[f'{alt_format}_filepath'] = alt_filepath
+        except Exception as e:
+            print(f"[WARN] 生成备选格式失败: {e}")
+
+        return filtered_data
 
     def _create_quiz_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成课堂测验"""
-        yield f"📋 即将为您生成课堂测验：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('quiz', '即将生成课堂测验', topic, output_format)
 
         for update in self.quiz_generator.generate_quiz_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                filtered_data = self._enrich_completion_data(filtered_data, 'quiz', topic, output_format)
                 self.memory.log_generation(topic, 'quiz', filtered_data)
                 self._generation_history.append({
                     'type': 'quiz',
@@ -1036,17 +1141,18 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('quiz', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('quiz', update)
 
     def _create_card_with_ai(self, topic: str, output_format: str = "md"):
         """使用 AI 生成知识卡片"""
-        yield f"📋 即将为您生成知识卡片：{topic}（{output_format.upper()}格式）<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('card', '即将生成知识卡片', topic, output_format)
 
         for update in self.knowledge_card_generator.generate_card_stream(topic, output_format):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                filtered_data = self._enrich_completion_data(filtered_data, 'card', topic, output_format)
                 self.memory.log_generation(topic, 'knowledge_card', filtered_data)
                 self._generation_history.append({
                     'type': 'knowledge_card',
@@ -1061,17 +1167,25 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('card', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('card', update)
 
     def _create_mindmap_with_ai(self, topic: str):
         """使用 AI 生成思维导图"""
-        yield f"📋 即将为您生成思维导图：{topic}<br><br>⏳ 正在生成中，请稍候...<br>=================================================="
+        yield self._init_progress('mindmap', '即将生成思维导图', topic, 'md')
 
         for update in self.mindmap_generator.generate_mindmap_stream(topic):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
+                # 读取文件内容供前端预览
+                filepath = filtered_data.get('filepath', '')
+                if filepath and os.path.isfile(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            filtered_data['content'] = f.read()
+                    except (UnicodeDecodeError, IOError):
+                        pass
                 self.memory.log_generation(topic, 'mindmap', filtered_data)
                 self._generation_history.append({
                     'type': 'mindmap',
@@ -1086,9 +1200,9 @@ class MiniMaxAgent:
                     'message': update['message']
                 }
             elif update.get('status') == 'error':
-                yield f"<br>❌ 生成失败: {update['message']}"
+                yield self._err_event('mindmap', update.get('message', '生成失败'))
             else:
-                yield f"<br>[{update.get('progress', 0)}%] {update['message']}"
+                yield self._step_progress('mindmap', update)
 
     def _create_ppt_with_ai(self, topic: str):
         """

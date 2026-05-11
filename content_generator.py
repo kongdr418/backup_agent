@@ -42,7 +42,7 @@ class ContentGenerator:
         'cover_style': 'infographic'
     }
 
-    def __init__(self, output_dir: str = "generated_content", settings: dict = None):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_content"), settings: dict = None):
         self.output_dir = output_dir
         self.audio_dir = os.path.join(output_dir, "audio")
         self.image_dir = os.path.join(output_dir, "images")

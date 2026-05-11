@@ -64,3 +64,12 @@ generated_svg_ppt/
 
 # Test output
 test_output.txt
+test_complex.json
+test_input.json
+test_mindmap.json
+
+# Mindmap render
+mindmap_render.js
+
+# HTML test file
+test_ppt_svg.html

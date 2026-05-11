@@ -12,7 +12,7 @@ from typing import Generator, Optional
 class KnowledgeCardGenerator:
     """知识卡片生成器"""
 
-    def __init__(self, output_dir: str = "generated_cards"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_cards")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 

@@ -20,7 +20,7 @@ class PPTPreviewer:
     LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
     PDFTOPPM_PATH = r"D:\poppler\Release-25.12.0-0\poppler-25.12.0\Library\bin\pdftoppm.exe"
     
-    def __init__(self, output_dir: str = "ppt_previews"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ppt_previews")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
     
@@ -287,10 +287,10 @@ if __name__ == "__main__":
     
     if ok:
         # 列出所有生成的 PPT
-        ppt_dir = "generated_ppt"
+        ppt_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_ppt")
         if os.path.exists(ppt_dir):
             # 过滤掉临时文件
-            ppt_files = [f for f in os.listdir(ppt_dir) 
+            ppt_files = [f for f in os.listdir(ppt_dir)
                         if f.endswith('.pptx') and not f.startswith('~$')]
             
             if ppt_files:

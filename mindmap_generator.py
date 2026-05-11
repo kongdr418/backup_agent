@@ -12,7 +12,7 @@ from typing import Generator, Optional
 class MindmapGenerator:
     """思维导图生成器"""
 
-    def __init__(self, output_dir: str = "generated_mindmaps"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_mindmaps")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 

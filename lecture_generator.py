@@ -12,7 +12,7 @@ from pathlib import Path
 class LectureGenerator:
     """课程讲义生成器"""
     
-    def __init__(self, output_dir: str = "generated_lectures"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_lectures")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
     

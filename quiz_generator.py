@@ -13,7 +13,7 @@ from typing import Generator, Optional
 class QuizGenerator:
     """课堂测验生成器"""
 
-    def __init__(self, output_dir: str = "generated_quizzes"):
+    def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_quizzes")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
