@@ -134,9 +134,8 @@ class VideoGenerator:
         ], check=True, capture_output=True)
 
         # PDF → PNG
-        pdftoppm = self._find_pdftoppm()
         subprocess.run([
-            pdftoppm, "-r", "150", "-png",
+            "pdftoppm", "-r", "150", "-png",
             str(pdf_path),
             str(temp_dir / "slides" / "slide")
         ], check=True, capture_output=True)
@@ -173,46 +172,6 @@ class VideoGenerator:
             return Path(result)
 
         raise FileNotFoundError("未找到 LibreOffice")
-
-    def _find_pdftoppm(self) -> str:
-        """查找 pdftoppm 可执行文件"""
-        env_path = os.environ.get('PDFTOPPM_PATH')
-        if env_path and Path(env_path).exists():
-            return env_path
-        result = shutil.which("pdftoppm")
-        if result:
-            return result
-        raise FileNotFoundError("未找到 pdftoppm")
-
-    def _find_ffmpeg(self) -> str:
-        """查找 ffmpeg 可执行文件"""
-        env_path = os.environ.get('FFMPEG_PATH')
-        if env_path and Path(env_path).exists():
-            return env_path
-        result = shutil.which("ffmpeg")
-        if result:
-            return result
-        raise FileNotFoundError("未找到 ffmpeg")
-
-    def _find_ffprobe(self) -> str:
-        """查找 ffprobe 可执行文件"""
-        env_path = os.environ.get('FFPROBE_PATH')
-        if env_path and Path(env_path).exists():
-            return env_path
-        result = shutil.which("ffprobe")
-        if result:
-            return result
-        raise FileNotFoundError("未找到 ffprobe")
-
-    def _find_edgetts(self) -> str:
-        """查找 edge-tts 可执行文件"""
-        env_path = os.environ.get('EDGE_TTS_PATH')
-        if env_path and Path(env_path).exists():
-            return env_path
-        result = shutil.which("edge-tts")
-        if result:
-            return result
-        raise FileNotFoundError("未找到 edge-tts")
 
     def _parse_ppt(self, pptx_path: Path, temp_dir: Path) -> List[Dict]:
         """解析PPT，生成讲稿"""
@@ -272,9 +231,8 @@ class VideoGenerator:
             outfile = audio_dir / f"page_{i}.m4a"
 
             # 生成配音
-            edgetts = self._find_edgetts()
             subprocess.run([
-                edgetts,
+                "edge-tts",
                 "--voice", voice,
                 "--text", script,
                 "--write-media", str(outfile)
@@ -293,9 +251,8 @@ class VideoGenerator:
             audio_path = audio_dir / f"page_{i}.m4a"
 
             try:
-                ffprobe = self._find_ffprobe()
                 result = subprocess.run([
-                    ffprobe, "-v", "error",
+                    "ffprobe", "-v", "error",
                     "-show_entries", "format=duration",
                     "-of", "json", str(audio_path)
                 ], capture_output=True, text=True, check=True)
@@ -397,10 +354,9 @@ class VideoGenerator:
                 i = slide["index"]
                 f.write(f"file 'audio/page_{i}.m4a'\n")
 
-        ffmpeg = self._find_ffmpeg()
         full_audio = temp_dir / "full_audio.m4a"
         subprocess.run([
-            ffmpeg, "-y",
+            "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(concat_list),
             "-c:a", "aac", "-b:a", "192k",
@@ -419,7 +375,7 @@ class VideoGenerator:
 
                 if slide_img.exists():
                     subprocess.run([
-                        ffmpeg, "-y",
+                        "ffmpeg", "-y",
                         "-loop", "1", "-i", str(slide_img),
                         "-i", str(audio),
                         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
@@ -434,7 +390,7 @@ class VideoGenerator:
         # 拼接片段
         preview = temp_dir / "preview.mp4"
         subprocess.run([
-            ffmpeg, "-y",
+            "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(segments_list),
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
@@ -446,7 +402,7 @@ class VideoGenerator:
         subtitle_path = output_dir / "05-subtitles.srt"
         video_path = output_dir / "07-video.mp4"
         subprocess.run([
-            ffmpeg, "-y",
+            "ffmpeg", "-y",
             "-i", str(preview),
             "-i", str(full_audio),
             "-vf", f"subtitles='{subtitle_path}':force_style='FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=1,Bold=1'",
