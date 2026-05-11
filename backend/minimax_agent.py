@@ -10,17 +10,17 @@ import os
 import re
 from datetime import datetime
 from typing import Generator, Optional
-from ppt_generator import PPTGenerator
+from generators.ppt_generator import PPTGenerator
 from ppt_preview import generate_text_preview, PPTPreviewer
-from lecture_generator import LectureGenerator
-from content_generator import ContentGenerator
+from generators.lecture_generator import LectureGenerator
+from generators.content_generator import ContentGenerator
 from memory_manager import MemoryManager
-from course_outline_generator import CourseOutlineGenerator
-from speech_generator import SpeechGenerator
-from exercise_generator import ExerciseGenerator
-from quiz_generator import QuizGenerator
-from knowledge_card_generator import KnowledgeCardGenerator
-from mindmap_generator import MindmapGenerator
+from generators.course_outline_generator import CourseOutlineGenerator
+from generators.speech_generator import SpeechGenerator
+from generators.exercise_generator import ExerciseGenerator
+from generators.quiz_generator import QuizGenerator
+from generators.knowledge_card_generator import KnowledgeCardGenerator
+from generators.mindmap_generator import MindmapGenerator
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
