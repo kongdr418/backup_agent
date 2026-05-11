@@ -78,7 +78,7 @@ const nav: NavItem[] = [
   { path: '/ppt-studio', label: 'PPT 工作台', icon: Presentation, hue: 'ppt' },
   { path: '/video-studio', label: '微课', icon: Video, hue: 'ppt' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
-  { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
+  // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
   { path: '/settings', label: '设置', icon: Settings, hue: 'settings' },
 ]
 

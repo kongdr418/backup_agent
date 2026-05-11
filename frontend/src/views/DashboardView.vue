@@ -182,14 +182,14 @@ const modules = [
     fg: 'text-amber-600',
     desc: '查看与管理所有生成结果',
   },
-  {
-    label: '记忆',
-    path: '/memory',
-    icon: Brain,
-    bg: 'icon-rose',
-    fg: 'text-rose-600',
-    desc: '查看和管理 AI 长期记忆',
-  },
+  // {
+  //   label: '记忆',
+  //   path: '/memory',
+  //   icon: Brain,
+  //   bg: 'icon-rose',
+  //   fg: 'text-rose-600',
+  //   desc: '查看和管理 AI 长期记忆',
+  // },
   {
     label: '讲义',
     path: '/chat',
