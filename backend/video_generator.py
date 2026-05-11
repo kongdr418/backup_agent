@@ -398,19 +398,31 @@ class VideoGenerator:
             str(preview)
         ], check=True, capture_output=True)
 
-        # 烧录字幕
+        # 烧录字幕 - 关键修复：Windows ffmpeg 的 ass/subtitles 滤镜无法正确解析含反斜杠的路径
+        # 现象：ffmpeg 把 "D:\path\file.srt" 误解析为 original_size 选项值（提取了 drive letter D: 和 : 后剩余部分）
+        # 解决：将 SRT 转换为 ASS 中间文件，再用纯文件名（无路径）传给 ass 滤镜
         subtitle_path = output_dir / "05-subtitles.srt"
         video_path = output_dir / "07-video.mp4"
+        ass_path = output_dir / "06-subtitles.ass"
+        if not subtitle_path.exists():
+            raise FileNotFoundError(f"字幕文件不存在: {subtitle_path}")
+
+        # SRT → ASS 转换（避免路径解析 bug）
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(subtitle_path), str(ass_path)
+        ], check=True, capture_output=True)
+
+        # ass 滤镜使用纯文件名（无路径），在 output_dir 中运行 ffmpeg 避免路径解析问题
         subprocess.run([
             "ffmpeg", "-y",
             "-i", str(preview),
             "-i", str(full_audio),
-            "-vf", f"subtitles='{subtitle_path}':force_style='FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=1,Bold=1'",
+            "-vf", f"ass={ass_path.name}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             str(video_path)
-        ], check=True, capture_output=True)
+        ], check=True, capture_output=True, cwd=str(output_dir))
 
         return video_path
 
