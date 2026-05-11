@@ -10,6 +10,7 @@ from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
+from video_generator import VideoGenerator
 import json
 import os
 import shutil
@@ -824,7 +825,7 @@ def download_file():
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt', 'ppt_previews',
+        'generated_svg_ppt', 'ppt_previews', 'generated_videos',
     ]]
     if not any(abs_path.startswith(p) for p in allowed_prefixes):
         return jsonify({'error': '文件不在允许的目录中'}), 403
@@ -835,6 +836,31 @@ def download_file():
     from flask import send_file as flask_send_file
     return flask_send_file(abs_path, as_attachment=True,
                            download_name=os.path.basename(abs_path))
+
+
+@app.route('/api/files/upload', methods=['POST'])
+def upload_file():
+    """上传 PPTX 文件"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': '没有上传文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': '文件名为空'}), 400
+
+    if not file.filename.endswith('.pptx'):
+        return jsonify({'success': False, 'error': '只支持 PPTX 文件'}), 400
+
+    # 保存到 generators/generated_ppt 目录
+    upload_dir = os.path.join(GENERATORS_DIR, 'generated_ppt')
+    os.makedirs(upload_dir, exist_ok=True)
+
+    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    filepath = os.path.join(upload_dir, filename)
+    file.save(filepath)
+
+    request_logger.info(f'[UPLOAD] 文件已上传: {filepath}')
+    return jsonify({'success': True, 'path': filepath, 'name': filename})
 
 
 @app.route('/api/files/read', methods=['GET'])
@@ -1162,6 +1188,89 @@ def ppt_svg_delete(job_id):
     except Exception as e:
         request_logger.error(f'[PPT-SVG] 删除任务失败: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== PPT 视频生成端点 ====================
+
+@app.route('/api/ppt-video/generate', methods=['POST'])
+def ppt_video_generate():
+    """
+    将 PPTX 文件转换为带配音和字幕的说课视频
+
+    请求体:
+    {
+        "pptx_path": "PPT 文件路径（可选，默认从最新生成的 PPT 获取）",
+        "topic": "视频主题（可选）",
+        "voice": "配音语音（默认: zh-CN-XiaoxiaoNeural）"
+    }
+    """
+    data = request.json or {}
+
+    # 获取 PPTX 路径
+    pptx_path = data.get('pptx_path')
+    topic = data.get('topic')
+    voice = data.get('voice', 'zh-CN-XiaoxiaoNeural')
+
+    # 如果没有指定路径，尝试获取最新生成的 PPT
+    if not pptx_path:
+        # 从 generated_ppt 目录获取最新的 pptx 文件
+        ppt_dir = os.path.join(GENERATORS_DIR, 'generated_ppt')
+        if os.path.exists(ppt_dir):
+            pptx_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
+            if pptx_files:
+                # 按修改时间排序，取最新的
+                pptx_files.sort(key=lambda f: os.path.getmtime(os.path.join(ppt_dir, f)), reverse=True)
+                pptx_path = os.path.join(ppt_dir, pptx_files[0])
+
+    if not pptx_path or not os.path.exists(pptx_path):
+        return jsonify({'success': False, 'error': '未找到 PPT 文件'}), 400
+
+    def generate():
+        try:
+            generator = VideoGenerator()
+
+            def progress_callback(progress, message):
+                yield f"data: {json.dumps({'progress': progress, 'message': message}, ensure_ascii=False)}\n\n"
+
+            result = generator.generate_video(
+                pptx_path=pptx_path,
+                topic=topic,
+                voice=voice,
+                progress_callback=progress_callback
+            )
+
+            yield f"data: {json.dumps({'done': True, 'success': True, **result}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            request_logger.error(f'[PPT-VIDEO] 生成失败: {e}')
+            yield f"data: {json.dumps({'done': True, 'success': False, 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@app.route('/api/ppt-video/list', methods=['GET'])
+def ppt_video_list():
+    """列出已生成的视频"""
+    video_dir = os.path.join(BACKEND_DIR, 'generated_videos')
+    if not os.path.exists(video_dir):
+        return jsonify({'videos': []})
+
+    videos = []
+    for item in os.listdir(video_dir):
+        item_path = os.path.join(video_dir, item)
+        if os.path.isdir(item_path):
+            video_file = os.path.join(item_path, '07-video.mp4')
+            if os.path.exists(video_file):
+                stat = os.stat(video_file)
+                videos.append({
+                    'name': item,
+                    'path': video_file,
+                    'size': stat.st_size,
+                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                })
+
+    videos.sort(key=lambda x: x['created'], reverse=True)
+    return jsonify({'videos': videos})
 
 
 if __name__ == '__main__':

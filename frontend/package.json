@@ -10,6 +10,7 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@panzoom/panzoom": "^4.6.2",
     "axios": "^1.7.7",
     "dompurify": "^3.1.7",
     "katex": "^0.16.45",
