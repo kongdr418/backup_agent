@@ -479,6 +479,43 @@ def get_files():
                     'icon': '📊'
                 })
 
+    # 扫描 SVG PPT 导出的 PPTX 文件
+    svg_ppt_dir = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    if os.path.exists(svg_ppt_dir):
+        for job_dir in os.listdir(svg_ppt_dir):
+            job_path = os.path.join(svg_ppt_dir, job_dir)
+            if not os.path.isdir(job_path) or job_dir.startswith('temp_'):
+                continue
+            exports_dir = os.path.join(job_path, 'exports')
+            if not os.path.exists(exports_dir):
+                continue
+            # 读取 topic 作为友好文件名
+            topic = None
+            meta_path = os.path.join(job_path, 'metadata.json')
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, 'r', encoding='utf-8') as mf:
+                        meta = json.load(mf)
+                    topic = meta.get('topic')
+                except Exception:
+                    pass
+            for f in os.listdir(exports_dir):
+                if f.endswith('.pptx') and not f.startswith('~$'):
+                    filepath = os.path.join(exports_dir, f)
+                    stat = os.stat(filepath)
+                    display_name = f"{topic}.pptx" if topic else f
+                    files.append({
+                        'id': f'svg_ppt_{job_dir}_{f}',
+                        'name': display_name,
+                        'type': 'ppt',
+                        'type_label': 'PPT',
+                        'path': filepath,
+                        'size': stat.st_size,
+                        'size_formatted': f"{stat.st_size / 1024:.1f} KB",
+                        'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        'icon': '📊'
+                    })
+
     # 扫描讲义文件
     lecture_dir = os.path.join(GENERATORS_DIR, "generated_lectures")
     if os.path.exists(lecture_dir):
@@ -722,6 +759,9 @@ def delete_file():
     # 微课视频在 BACKEND_DIR/generated_videos 下
     video_root = os.path.join(BACKEND_DIR, 'generated_videos')
     allowed_dirs.append(video_root)
+    # SVG PPT 在 BACKEND_DIR/generated_svg_ppt 下
+    svg_ppt_root = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    allowed_dirs.append(svg_ppt_root)
     abs_path = os.path.abspath(file_path)
     is_allowed = any(abs_path.startswith(d) for d in allowed_dirs)
 
@@ -767,6 +807,9 @@ def rename_file():
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
     ]]
+    # SVG PPT 在 BACKEND_DIR/generated_svg_ppt 下
+    svg_ppt_root = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    allowed_dirs.append(svg_ppt_root)
     abs_old = os.path.abspath(old_path)
     is_allowed = any(abs_old.startswith(d) for d in allowed_dirs)
 
