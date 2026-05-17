@@ -26,7 +26,7 @@
       <div class="bg-bg-surface rounded-xl border border-line p-5 mb-5">
         <h3 class="text-[14px] font-medium text-ink-1 mb-4">上传 PPT</h3>
 
-        <div class="flex gap-3">
+        <div class="flex gap-3 items-center">
           <NUpload
             ref="uploadRef"
             :max="1"
@@ -36,6 +36,15 @@
           >
             <NButton>选择 PPTX 文件</NButton>
           </NUpload>
+          <div class="flex items-center gap-1.5">
+            <span class="text-[12.5px] text-ink-3 whitespace-nowrap">音色:</span>
+            <NSelect
+              v-model:value="selectedVoice"
+              :options="voiceOptions"
+              size="small"
+              class="w-28"
+            />
+          </div>
           <span v-if="uploadFile" class="text-[13px] text-ink-2 flex items-center">
             {{ uploadFile.name }}
           </span>
@@ -130,8 +139,21 @@ const progress = ref(0)
 const progressMessage = ref('')
 const selectedPpt = ref<string | null>(null)
 const uploadFile = ref<File | null>(null)
+const selectedVoice = ref('mimo_default')
 const videos = ref<{ name: string; path: string; size: number; created: string }[]>([])
 const pptList = ref<{ id: string; name: string; path: string }[]>([])
+
+const voiceOptions = [
+  { label: '默认', value: 'mimo_default' },
+  { label: '冰糖', value: '冰糖' },
+  { label: '茉莉', value: '茉莉' },
+  { label: '苏打', value: '苏打' },
+  { label: '白桦', value: '白桦' },
+  { label: 'Mia', value: 'Mia' },
+  { label: 'Chloe', value: 'Chloe' },
+  { label: 'Milo', value: 'Milo' },
+  { label: 'Dean', value: 'Dean' },
+]
 
 const pptOptions = computed(() =>
   pptList.value.map((p) => ({ label: p.name, value: p.id }))
@@ -246,7 +268,7 @@ async function doGenerate(pptxPath: string) {
     const res = await fetch('/api/ppt-video/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pptx_path: pptxPath }),
+      body: JSON.stringify({ pptx_path: pptxPath, voice: selectedVoice.value }),
     })
 
     const reader = res.body?.getReader()

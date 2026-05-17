@@ -2,11 +2,12 @@
 PPT 视频生成器
 将 PPTX 文件转换为带配音和字幕的说课视频（MP4）
 
-依赖: LibreOffice, poppler, ffmpeg, edge-tts, python-pptx
+依赖: LibreOffice, poppler, ffmpeg, python-pptx
 """
 
 import os
 import json
+import base64
 import subprocess
 import shutil
 from pathlib import Path
@@ -16,6 +17,12 @@ from typing import Dict, List, Optional
 
 class VideoGenerator:
     """PPT 视频生成器"""
+
+    # MIMO-TTS API 配置
+    MIMO_API_KEY = os.environ.get('MIMO_API_KEY', '')
+    MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
+    MIMO_MODEL = "mimo-v2.5-tts"
+    MIMO_VOICE = "mimo_default"
 
     def __init__(self, workspace_dir: str = None):
         """
@@ -34,7 +41,7 @@ class VideoGenerator:
         self,
         pptx_path: str,
         topic: str = None,
-        voice: str = "zh-CN-XiaoxiaoNeural",
+        voice: str = "mimo_default",
         progress_callback=None
     ) -> Dict:
         """
@@ -43,7 +50,7 @@ class VideoGenerator:
         Args:
             pptx_path: PPTX 文件路径
             topic: 视频主题（用于输出目录命名）
-            voice: edge-tts 语音（默认: zh-CN-XiaoxiaoNeural）
+            voice: MIMO-TTS 语音（默认: mimo_default）
             progress_callback: 进度回调函数
 
         Returns:
@@ -214,6 +221,30 @@ class VideoGenerator:
 
         return slides
 
+    def _generate_mimo_audio(self, voiceover_text: str, voice: str = "") -> bytes:
+        """调用 MiMo V2-TTS 生成音频"""
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=self.MIMO_API_KEY,
+            base_url=self.MIMO_BASE_URL
+        )
+
+        response = client.chat.completions.create(
+            model=self.MIMO_MODEL,
+            messages=[
+                {"role": "user", "content": "请朗读以下内容"},
+                {"role": "assistant", "content": voiceover_text}
+            ],
+            audio={
+                "format": "wav",
+                "voice": voice or self.MIMO_VOICE
+            }
+        )
+
+        audio_data = response.choices[0].message.audio.data
+        return base64.b64decode(audio_data)
+
     def _generate_audio(
         self,
         slides: List[Dict],
@@ -221,22 +252,19 @@ class VideoGenerator:
         voice: str,
         callback
     ):
-        """生成配音"""
+        """生成配音（MIMO-TTS 在线 API）"""
         audio_dir = temp_dir / "audio"
 
         # 顺序生成（避免并发问题）
         for slide in slides:
             i = slide["index"]
             script = slide["script"] or f"这是第{i}页内容，请观看。"
-            outfile = audio_dir / f"page_{i}.m4a"
+            outfile = audio_dir / f"page_{i}.wav"
 
-            # 生成配音
-            subprocess.run([
-                "edge-tts",
-                "--voice", voice,
-                "--text", script,
-                "--write-media", str(outfile)
-            ], check=True, capture_output=True)
+            # 调用 MIMO-TTS API 生成配音
+            audio_bytes = self._generate_mimo_audio(script, voice)
+            with open(outfile, "wb") as f:
+                f.write(audio_bytes)
 
             if callback:
                 callback(0.6 + (i / len(slides)) * 0.1, f"生成配音 {i}/{len(slides)}")
@@ -248,7 +276,7 @@ class VideoGenerator:
 
         for slide in slides:
             i = slide["index"]
-            audio_path = audio_dir / f"page_{i}.m4a"
+            audio_path = audio_dir / f"page_{i}.wav"
 
             try:
                 result = subprocess.run([
@@ -352,14 +380,13 @@ class VideoGenerator:
         with open(concat_list, "w") as f:
             for slide in slides:
                 i = slide["index"]
-                f.write(f"file 'audio/page_{i}.m4a'\n")
+                f.write(f"file 'audio/page_{i}.wav'\n")
 
-        full_audio = temp_dir / "full_audio.m4a"
+        full_audio = temp_dir / "full_audio.wav"
         subprocess.run([
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(concat_list),
-            "-c:a", "aac", "-b:a", "192k",
             str(full_audio)
         ], check=True, capture_output=True)
 
@@ -369,7 +396,7 @@ class VideoGenerator:
             for slide in slides:
                 i = slide["index"]
                 slide_img = temp_dir / "slides" / f"slide-{i}.png"
-                audio = temp_dir / "audio" / f"page_{i}.m4a"
+                audio = temp_dir / "audio" / f"page_{i}.wav"
                 dur = durations.get(i, 5.0)
                 seg = temp_dir / f"seg_{i}.mp4"
 

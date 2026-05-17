@@ -1239,7 +1239,7 @@ def ppt_video_generate():
     {
         "pptx_path": "PPT 文件路径（可选，默认从最新生成的 PPT 获取）",
         "topic": "视频主题（可选）",
-        "voice": "配音语音（默认: zh-CN-XiaoxiaoNeural）"
+        "voice": "配音语音（默认: mimo_default，可选: 冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）"
     }
     """
     data = request.json or {}
@@ -1247,7 +1247,7 @@ def ppt_video_generate():
     # 获取 PPTX 路径
     pptx_path = data.get('pptx_path')
     topic = data.get('topic')
-    voice = data.get('voice', 'zh-CN-XiaoxiaoNeural')
+    voice = data.get('voice', 'mimo_default')
 
     # 如果没有指定路径，尝试获取最新生成的 PPT
     if not pptx_path:
