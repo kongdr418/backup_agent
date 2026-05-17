@@ -32,6 +32,14 @@
           :name="file.name"
         />
 
+        <!-- Video preview -->
+        <VideoPreview
+          v-else-if="file.type === 'video'"
+          :src="downloadHref"
+          :name="file.name"
+          :meta="`${file.size_formatted} · ${file.created}`"
+        />
+
         <!-- SVG PPT -->
         <PptThumbnailPreview
           v-else-if="file.type === 'svg_ppt'"
@@ -101,6 +109,7 @@ import { fileDownloadUrl } from '@/api/files'
 // Lazy-loaded preview sub-components
 const ImagePreview = defineAsyncComponent(() => import('./preview/ImagePreview.vue'))
 const AudioPreview = defineAsyncComponent(() => import('./preview/AudioPreview.vue'))
+const VideoPreview = defineAsyncComponent(() => import('./preview/VideoPreview.vue'))
 const MarkdownPreview = defineAsyncComponent(() => import('./preview/MarkdownPreview.vue'))
 const DocxPreview = defineAsyncComponent(() => import('./preview/DocxPreview.vue'))
 const MindmapPreview = defineAsyncComponent(() => import('./preview/MindmapPreview.vue'))

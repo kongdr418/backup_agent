@@ -93,7 +93,21 @@
 
       <!-- Video List -->
       <div class="bg-bg-surface rounded-xl border border-line p-5">
-        <h3 class="text-[14px] font-medium text-ink-1 mb-4">已生成的视频</h3>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-[14px] font-medium text-ink-1">已生成的视频</h3>
+          <NButton
+            v-if="videos.length > 0"
+            quaternary
+            type="error"
+            size="small"
+            @click="askClearAll"
+          >
+            <template #icon>
+              <Trash2 class="w-3.5 h-3.5" />
+            </template>
+            清空全部
+          </NButton>
+        </div>
 
         <div v-if="videos.length === 0" class="text-center py-10 text-[13px] text-ink-3">
           暂无生成的视频
@@ -103,19 +117,43 @@
           <div
             v-for="video in videos"
             :key="video.path"
-            class="border border-line rounded-lg overflow-hidden hover:border-accent transition-colors"
+            class="video-card border border-line rounded-lg overflow-hidden hover:border-accent transition-colors"
           >
             <div class="aspect-video bg-bg-subtle flex items-center justify-center">
               <video
                 :src="`/api/files/download?path=${encodeURIComponent(video.path)}`"
                 class="w-full h-full object-contain"
                 controls
+                preload="metadata"
               />
             </div>
             <div class="p-3">
-              <div class="text-[13px] font-medium text-ink-1 truncate">{{ video.name }}</div>
-              <div class="text-[11px] text-ink-3 mt-1">
-                {{ video.created }} · {{ formatSize(video.size) }}
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0 flex-1">
+                  <div class="text-[13px] font-medium text-ink-1 truncate" :title="video.name">
+                    {{ video.name }}
+                  </div>
+                  <div class="text-[11px] text-ink-3 mt-1">
+                    {{ video.created }} · {{ formatSize(video.size) }}
+                  </div>
+                </div>
+                <div class="flex items-center gap-1 shrink-0 video-actions">
+                  <a
+                    :href="`/api/files/download?path=${encodeURIComponent(video.path)}`"
+                    :download="`${video.name}.mp4`"
+                    class="action-btn"
+                    title="下载"
+                  >
+                    <Download class="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    class="action-btn danger"
+                    title="删除"
+                    @click="askDelete(video)"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -127,11 +165,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NSelect, NProgress, NUpload, useMessage } from 'naive-ui'
-import { Video, RefreshCw } from 'lucide-vue-next'
+import { NButton, NSelect, NProgress, NUpload, useDialog, useMessage } from 'naive-ui'
+import { Video, RefreshCw, Trash2, Download } from 'lucide-vue-next'
 import StatusPill from '@/components/common/StatusPill.vue'
 
 const message = useMessage()
+const dialog = useDialog()
 
 const loading = ref(false)
 const generating = ref(false)
@@ -140,7 +179,7 @@ const progressMessage = ref('')
 const selectedPpt = ref<string | null>(null)
 const uploadFile = ref<File | null>(null)
 const selectedVoice = ref('mimo_default')
-const videos = ref<{ name: string; path: string; size: number; created: string }[]>([])
+const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 const pptList = ref<{ id: string; name: string; path: string }[]>([])
 
 const voiceOptions = [
@@ -315,4 +354,98 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
+
+function askDelete(video: { id: string; name: string }) {
+  dialog.warning({
+    title: '删除视频',
+    content: `确定删除视频「${video.name}」?该操作不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fetch('/api/ppt-video/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: video.id }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          message.success('视频已删除')
+          await refreshList()
+        } else {
+          message.error(data.error || '删除失败')
+        }
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '删除失败')
+      }
+    },
+  })
+}
+
+function askClearAll() {
+  dialog.warning({
+    title: '清空全部视频',
+    content: `将删除全部 ${videos.value.length} 个微课视频(含中间产物),操作不可恢复。`,
+    positiveText: '清空',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fetch('/api/ppt-video/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          message.success(`已清空 ${data.deleted_count} 个视频`)
+          await refreshList()
+        } else {
+          message.error(data.error || '清空失败')
+        }
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '清空失败')
+      }
+    },
+  })
+}
 </script>
+
+<style scoped>
+.video-card {
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.video-actions {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+
+.video-card:hover .video-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: rgb(var(--ink-3-rgb));
+  cursor: pointer;
+  transition: all 150ms;
+  text-decoration: none;
+}
+
+.action-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+
+.action-btn.danger:hover {
+  background: rgb(var(--accent-rose-rgb) / 0.1);
+  color: rgb(var(--accent-rose-rgb));
+}
+</style>

@@ -671,6 +671,30 @@ def get_files():
                     'icon': '🖼️'
                 })
 
+    # 扫描微课视频文件
+    video_dir = os.path.join(BACKEND_DIR, "generated_videos")
+    if os.path.exists(video_dir):
+        for item in os.listdir(video_dir):
+            item_path = os.path.join(video_dir, item)
+            # 跳过临时目录与非目录
+            if not os.path.isdir(item_path) or item.startswith('temp_'):
+                continue
+            video_file = os.path.join(item_path, '07-video.mp4')
+            if os.path.exists(video_file):
+                stat = os.stat(video_file)
+                size_mb = stat.st_size / (1024 * 1024)
+                files.append({
+                    'id': f'video_{item}',
+                    'name': f'{item}.mp4',
+                    'type': 'video',
+                    'type_label': '微课视频',
+                    'path': video_file,
+                    'size': stat.st_size,
+                    'size_formatted': f"{size_mb:.1f} MB" if size_mb >= 1 else f"{stat.st_size / 1024:.1f} KB",
+                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    'icon': '🎬'
+                })
+
     # 按时间倒序排列
     files.sort(key=lambda x: x['created'], reverse=True)
 
@@ -695,6 +719,9 @@ def delete_file():
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
     ]]
+    # 微课视频在 BACKEND_DIR/generated_videos 下
+    video_root = os.path.join(BACKEND_DIR, 'generated_videos')
+    allowed_dirs.append(video_root)
     abs_path = os.path.abspath(file_path)
     is_allowed = any(abs_path.startswith(d) for d in allowed_dirs)
 
@@ -703,6 +730,14 @@ def delete_file():
         return jsonify({'success': False, 'error': '无权删除此文件'}), 403
 
     try:
+        # 视频文件：删除整个父目录（含中间产物）
+        if abs_path.startswith(os.path.abspath(video_root)):
+            parent_dir = os.path.dirname(abs_path)
+            if os.path.isdir(parent_dir) and parent_dir.startswith(os.path.abspath(video_root)):
+                shutil.rmtree(parent_dir)
+                request_logger.info(f'[FILES] 视频目录已删除: {parent_dir}')
+                return jsonify({'success': True, 'message': '视频已删除'})
+
         os.remove(abs_path)
         request_logger.info(f'[FILES] 文件已删除: {file_path}')
         return jsonify({'success': True, 'message': '文件已删除'})
@@ -774,7 +809,7 @@ def clear_all_files():
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt'
+        'generated_svg_ppt', 'generated_videos'
     ]
     deleted_count = 0
     errors = []
@@ -783,6 +818,9 @@ def clear_all_files():
         if dir_name == 'generated_svg_ppt':
             # SVG PPT 在 BACKEND_DIR 下，不在 generators 子目录
             dir_path = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+        elif dir_name == 'generated_videos':
+            # 微课视频在 BACKEND_DIR 下
+            dir_path = os.path.join(BACKEND_DIR, 'generated_videos')
         else:
             dir_path = os.path.join(GENERATORS_DIR, dir_name)
         if os.path.exists(dir_path):
@@ -795,6 +833,17 @@ def clear_all_files():
                         if os.path.isdir(abs_job) and abs_job.startswith(os.path.abspath(dir_path)):
                             shutil.rmtree(abs_job)
                             deleted_count += 1
+                elif dir_name == 'generated_videos':
+                    # 视频以子目录存储（每个子目录含 07-video.mp4 与中间产物），整个目录删除
+                    for sub in os.listdir(dir_path):
+                        sub_path = os.path.join(dir_path, sub)
+                        abs_sub = os.path.abspath(sub_path)
+                        if os.path.isdir(abs_sub) and abs_sub.startswith(os.path.abspath(dir_path)):
+                            try:
+                                shutil.rmtree(abs_sub)
+                                deleted_count += 1
+                            except Exception as e:
+                                errors.append(f'删除 {abs_sub} 失败: {e}')
                 else:
                     for root, dirs, files in os.walk(dir_path):
                         for f in files:
@@ -1296,19 +1345,72 @@ def ppt_video_list():
     videos = []
     for item in os.listdir(video_dir):
         item_path = os.path.join(video_dir, item)
-        if os.path.isdir(item_path):
-            video_file = os.path.join(item_path, '07-video.mp4')
-            if os.path.exists(video_file):
-                stat = os.stat(video_file)
-                videos.append({
-                    'name': item,
-                    'path': video_file,
-                    'size': stat.st_size,
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
-                })
+        # 跳过临时目录与非目录
+        if not os.path.isdir(item_path) or item.startswith('temp_'):
+            continue
+        video_file = os.path.join(item_path, '07-video.mp4')
+        if os.path.exists(video_file):
+            stat = os.stat(video_file)
+            videos.append({
+                'id': item,
+                'name': item,
+                'path': video_file,
+                'size': stat.st_size,
+                'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+            })
 
     videos.sort(key=lambda x: x['created'], reverse=True)
     return jsonify({'videos': videos})
+
+
+@app.route('/api/ppt-video/delete', methods=['POST'])
+def ppt_video_delete():
+    """删除指定的视频（含整个子目录）"""
+    data = request.json or {}
+    video_id = data.get('id', '')
+
+    if not video_id or '/' in video_id or '\\' in video_id or '..' in video_id:
+        return jsonify({'success': False, 'error': '非法的视频 id'}), 400
+
+    video_root = os.path.abspath(os.path.join(BACKEND_DIR, 'generated_videos'))
+    target = os.path.abspath(os.path.join(video_root, video_id))
+    if not target.startswith(video_root) or not os.path.isdir(target):
+        return jsonify({'success': False, 'error': '视频不存在'}), 404
+
+    try:
+        shutil.rmtree(target)
+        request_logger.info(f'[PPT-VIDEO] 已删除视频目录: {target}')
+        return jsonify({'success': True, 'message': '视频已删除'})
+    except Exception as e:
+        request_logger.error(f'[PPT-VIDEO] 删除失败: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ppt-video/clear', methods=['POST'])
+def ppt_video_clear():
+    """清空所有视频"""
+    data = request.json or {}
+    if not data.get('confirm'):
+        return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
+
+    video_root = os.path.join(BACKEND_DIR, 'generated_videos')
+    if not os.path.exists(video_root):
+        return jsonify({'success': True, 'deleted_count': 0})
+
+    deleted = 0
+    errors = []
+    for sub in os.listdir(video_root):
+        sub_path = os.path.join(video_root, sub)
+        abs_sub = os.path.abspath(sub_path)
+        if os.path.isdir(abs_sub) and abs_sub.startswith(os.path.abspath(video_root)):
+            try:
+                shutil.rmtree(abs_sub)
+                deleted += 1
+            except Exception as e:
+                errors.append(f'{sub}: {e}')
+
+    request_logger.info(f'[PPT-VIDEO] 已清空 {deleted} 个视频目录')
+    return jsonify({'success': True, 'deleted_count': deleted, 'errors': errors})
 
 
 if __name__ == '__main__':

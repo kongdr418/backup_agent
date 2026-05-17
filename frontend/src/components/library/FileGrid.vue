@@ -59,6 +59,7 @@ import {
   ClipboardList,
   Trash2,
   Pencil,
+  Video,
 } from 'lucide-vue-next'
 import type { GeneratedFile } from '@/types'
 
@@ -95,6 +96,8 @@ function iconFor(type: string) {
       return Music
     case 'content_image':
       return ImageIcon
+    case 'video':
+      return Video
     default:
       return FileText
   }
@@ -120,6 +123,8 @@ function iconBg(type: string) {
       return 'icon-rose'
     case 'content_audio':
       return 'icon-orange'
+    case 'video':
+      return 'icon-purple'
     default:
       return 'icon-neutral'
   }
@@ -145,6 +150,8 @@ function iconFg(type: string) {
       return 'text-rose-600'
     case 'content_audio':
       return 'text-amber-600'
+    case 'video':
+      return 'text-purple-600'
     default:
       return 'text-ink-3'
   }
@@ -166,13 +173,15 @@ function badgeClass(type: string) {
       return 'badge-green'
     case 'mindmap':
       return 'badge-rose'
+    case 'video':
+      return 'badge-purple'
     default:
       return 'badge-neutral'
   }
 }
 
 function canRename(type: string) {
-  return type !== 'svg_ppt'
+  return type !== 'svg_ppt' && type !== 'video'
 }
 </script>
 

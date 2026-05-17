@@ -102,6 +102,7 @@ const categories = [
   { value: 'all', label: '全部' },
   { value: 'svg_ppt', label: 'SVG PPT (新)' },
   // { value: 'ppt', label: 'PPT (旧)' },
+  { value: 'video', label: '微课视频' },
   { value: 'lecture', label: '讲义' },
   { value: 'outline', label: '课程大纲' },
   { value: 'speech', label: '讲稿' },
@@ -183,12 +184,13 @@ function askDelete(f: GeneratedFile) {
 function askClearAll() {
   dialog.warning({
     title: '清空全部',
-    content: '将删除全部文件 (除 SVG PPT 历史外),操作不可恢复。',
+    content: '将删除全部生成的文件（含微课视频），操作不可恢复。',
     positiveText: '清空',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
         await fileStore.clearAllFiles()
+        await loadSvgPptJobs()
         message.success('已清空')
       } catch (e) {
         message.error(e instanceof Error ? e.message : '清空失败')
