@@ -1369,13 +1369,23 @@ def ppt_video_generate():
                 progress_callback=progress_callback
             )
 
-            yield f"data: {json.dumps({'done': True, 'success': True, **result}, ensure_ascii=False)}\n\n"
+            final_result = None
+            for r in result:
+                if isinstance(r, dict):
+                    final_result = r
+                else:
+                    yield r
+
+            yield f"data: {json.dumps({'done': True, 'success': True, **final_result}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             request_logger.error(f'[PPT-VIDEO] 生成失败: {e}')
             yield f"data: {json.dumps({'done': True, 'success': False, 'error': str(e)}, ensure_ascii=False)}\n\n"
 
-    return Response(generate(), mimetype='text/event-stream')
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['X-Accel-Buffering'] = 'no'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 
 @app.route('/api/ppt-video/list', methods=['GET'])

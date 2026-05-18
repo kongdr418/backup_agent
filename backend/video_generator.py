@@ -43,7 +43,7 @@ class VideoGenerator:
         topic: str = None,
         voice: str = "mimo_default",
         progress_callback=None
-    ) -> Dict:
+    ):
         """
         生成说课视频
 
@@ -75,33 +75,33 @@ class VideoGenerator:
         (temp_dir / "slides").mkdir(exist_ok=True)
         (temp_dir / "audio").mkdir(exist_ok=True)
 
-        self._send_progress(progress_callback, 0.1, "导出页图...")
+        yield from self._send_progress(progress_callback, 0.1, "导出页图...")
 
         # 阶段1: 导出页图 (LibreOffice → PDF → PNG)
         self._export_slides(pptx_path, temp_dir)
         slide_count = len(list((temp_dir / "slides").glob("*.png")))
-        self._send_progress(progress_callback, 0.25, f"页图导出完成 ({slide_count} 页)")
+        yield from self._send_progress(progress_callback, 0.25, f"页图导出完成 ({slide_count} 页)")
 
         # 阶段2: 解析PPT生成讲稿
         slides_data = self._parse_ppt(pptx_path, temp_dir)
-        self._send_progress(progress_callback, 0.35, "讲稿解析完成")
+        yield from self._send_progress(progress_callback, 0.35, "讲稿解析完成")
 
         # 阶段3: 生成配音
-        self._generate_audio(slides_data, temp_dir, voice, progress_callback)
-        self._send_progress(progress_callback, 0.6, "配音生成完成")
+        yield from self._generate_audio(slides_data, temp_dir, voice, progress_callback)
+        yield from self._send_progress(progress_callback, 0.6, "配音生成完成")
 
         # 阶段4: 获取音频时长
         durations = self._get_durations(slides_data, temp_dir)
-        self._send_progress(progress_callback, 0.65, "获取音频时长")
+        yield from self._send_progress(progress_callback, 0.65, "获取音频时长")
 
         # 阶段5: 生成字幕
         subtitle_path = output_dir / "05-subtitles.srt"
         self._generate_subtitles(slides_data, durations, subtitle_path)
-        self._send_progress(progress_callback, 0.7, "字幕生成完成")
+        yield from self._send_progress(progress_callback, 0.7, "字幕生成完成")
 
         # 阶段6: 合成视频
         video_path = self._合成视频(slides_data, durations, temp_dir, output_dir, progress_callback)
-        self._send_progress(progress_callback, 0.9, "视频合成完成")
+        yield from self._send_progress(progress_callback, 0.9, "视频合成完成")
 
         # 清理临时文件
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -112,9 +112,9 @@ class VideoGenerator:
         # 生成元数据
         self._generate_metadata(topic, slides_data, durations, output_dir)
 
-        self._send_progress(progress_callback, 1.0, "视频生成完成")
+        yield from self._send_progress(progress_callback, 1.0, "视频生成完成")
 
-        return {
+        yield {
             "success": True,
             "video_path": str(video_path),
             "subtitle_path": str(subtitle_path),
@@ -125,7 +125,7 @@ class VideoGenerator:
 
     def _send_progress(self, callback, progress: float, message: str):
         if callback:
-            callback(progress, message)
+            yield from callback(progress, message)
 
     def _export_slides(self, pptx_path: Path, temp_dir: Path):
         """导出页图: LibreOffice → PDF → PNG"""
@@ -267,7 +267,7 @@ class VideoGenerator:
                 f.write(audio_bytes)
 
             if callback:
-                callback(0.6 + (i / len(slides)) * 0.1, f"生成配音 {i}/{len(slides)}")
+                yield from callback(0.6 + (i / len(slides)) * 0.1, f"生成配音 {i}/{len(slides)}")
 
     def _get_durations(self, slides: List[Dict], temp_dir: Path) -> Dict[int, float]:
         """获取每段音频时长"""
