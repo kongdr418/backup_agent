@@ -1,32 +1,16 @@
 <template>
-  <div class="h-full flex flex-col">
-    <!-- Header -->
-    <div
-      class="h-12 shrink-0 px-5 border-b border-line bg-bg-surface flex items-center justify-between"
-    >
-      <div class="flex items-center gap-2 text-[13px] text-ink-2">
+  <div class="h-full flex">
+    <!-- Param panel (left) -->
+    <div class="w-[340px] shrink-0 h-full border-r border-line bg-bg-surface flex flex-col">
+      <div class="h-12 shrink-0 px-4 flex items-center gap-2 border-b border-line">
         <Video class="w-3.5 h-3.5 text-ink-3" />
-        <span>微课视频生成</span>
-        <StatusPill v-if="status" :tone="statusTone">{{ statusText }}</StatusPill>
+        <span class="text-[13px] font-medium text-ink-1">微课视频生成</span>
       </div>
-      <div class="flex items-center gap-2">
-        <button
-          class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
-          @click="refreshList"
-        >
-          <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': loading }" />
-          刷新
-        </button>
-      </div>
-    </div>
 
-    <!-- Content -->
-    <div class="flex-1 overflow-auto p-5">
-      <!-- Upload PPT -->
-      <div class="bg-bg-surface rounded-xl border border-line p-5 mb-5">
-        <h3 class="text-[14px] font-medium text-ink-1 mb-4">上传 PPT</h3>
-
-        <div class="flex gap-3 items-center">
+      <div class="flex-1 overflow-auto p-4">
+        <!-- Upload PPT -->
+        <div class="mb-5">
+          <label class="block text-[12.5px] text-ink-2 mb-2">上传 PPT</label>
           <NUpload
             ref="uploadRef"
             :max="1"
@@ -34,21 +18,43 @@
             :show-file-list="false"
             @change="onUploadChange"
           >
-            <NButton>选择 PPTX 文件</NButton>
+            <NButton block>选择 PPTX 文件</NButton>
           </NUpload>
-          <div class="flex items-center gap-1.5">
-            <span class="text-[12.5px] text-ink-3 whitespace-nowrap">音色:</span>
-            <NSelect
-              v-model:value="selectedVoice"
-              :options="voiceOptions"
-              size="small"
-              class="w-28"
-            />
+          <div v-if="uploadFile" class="mt-2 flex items-center gap-2">
+            <span class="text-[12px] text-ink-2 truncate flex-1">{{ uploadFile.name }}</span>
+            <button
+              class="shrink-0 text-ink-3 hover:text-ink-1 transition-colors"
+              title="清除"
+              @click="clearFile"
+            >
+              <X class="w-3.5 h-3.5" />
+            </button>
           </div>
-          <span v-if="uploadFile" class="text-[13px] text-ink-2 flex items-center">
-            {{ uploadFile.name }}
-          </span>
         </div>
+
+        <!-- Voice selection -->
+        <div class="mb-5">
+          <label class="block text-[12.5px] text-ink-2 mb-2">音色选择</label>
+          <NSelect
+            v-model:value="selectedVoice"
+            :options="voiceOptions"
+            placeholder="选择音色"
+          />
+        </div>
+
+        <!-- Generate button -->
+        <NButton
+          type="primary"
+          block
+          :disabled="!uploadFile || generating"
+          :loading="generating"
+          @click="onGenerate"
+        >
+          <template #icon>
+            <Video class="w-4 h-4" />
+          </template>
+          {{ generating ? '生成中...' : '生成视频' }}
+        </NButton>
 
         <!-- Progress -->
         <div v-if="generating" class="mt-4">
@@ -58,59 +64,47 @@
           </div>
           <NProgress type="line" :percentage="Math.round(progress * 100)" :show-indicator="false" />
         </div>
-
-        <div v-if="!generating" class="mt-4">
-          <NButton type="primary" :disabled="!uploadFile" @click="onGenerate">
-            <template #icon>
-              <Video class="w-4 h-4" />
-            </template>
-            生成视频
-          </NButton>
-        </div>
       </div>
+    </div>
 
-      <!-- Select from library -->
-      <div class="bg-bg-surface rounded-xl border border-line p-5 mb-5">
-        <h3 class="text-[14px] font-medium text-ink-1 mb-4">或从文件库选择</h3>
-
-        <div class="flex gap-3">
-          <NSelect
-            v-model:value="selectedPpt"
-            :options="pptOptions"
-            placeholder="选择要转换的 PPT"
-            filterable
-            class="flex-1"
-            @update:value="onSelectPpt"
-          />
-          <NButton type="primary" :disabled="!selectedPpt" @click="onGenerateFromLibrary">
-            <template #icon>
-              <Video class="w-4 h-4" />
-            </template>
-            生成视频
-          </NButton>
+    <!-- Preview area (right) -->
+    <div class="flex-1 min-w-0 flex flex-col">
+      <!-- Toolbar -->
+      <div
+        class="h-12 shrink-0 px-5 border-b border-line bg-bg-surface flex items-center justify-between"
+      >
+        <div class="flex items-center gap-2 text-[13px] text-ink-2">
+          <MonitorPlay class="w-3.5 h-3.5 text-ink-3" />
+          <span>已生成的微课视频</span>
+          <StatusPill v-if="generating" tone="warning">生成中</StatusPill>
         </div>
-      </div>
-
-      <!-- Video List -->
-      <div class="bg-bg-surface rounded-xl border border-line p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-[14px] font-medium text-ink-1">已生成的视频</h3>
-          <NButton
+        <div class="flex items-center gap-2">
+          <button
+            class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
+            @click="refreshList"
+          >
+            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': loading }" />
+            刷新
+          </button>
+          <button
             v-if="videos.length > 0"
-            quaternary
-            type="error"
-            size="small"
+            class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
             @click="askClearAll"
           >
-            <template #icon>
-              <Trash2 class="w-3.5 h-3.5" />
-            </template>
-            清空全部
-          </NButton>
+            <Trash2 class="w-3.5 h-3.5" />
+            清空
+          </button>
         </div>
+      </div>
 
-        <div v-if="videos.length === 0" class="text-center py-10 text-[13px] text-ink-3">
-          暂无生成的视频
+      <!-- Video list -->
+      <div class="flex-1 overflow-auto p-5">
+        <div v-if="videos.length === 0" class="h-full flex items-center justify-center">
+          <div class="text-center text-ink-3">
+            <Video class="w-12 h-12 mx-auto mb-3 opacity-50" />
+            <p class="text-[13px]">暂无生成的视频</p>
+            <p class="text-[12px] mt-1">上传 PPT 后点击生成按钮</p>
+          </div>
         </div>
 
         <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -164,23 +158,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { NButton, NSelect, NProgress, NUpload, useDialog, useMessage } from 'naive-ui'
-import { Video, RefreshCw, Trash2, Download } from 'lucide-vue-next'
+import { Video, MonitorPlay, RefreshCw, Trash2, Download, X } from 'lucide-vue-next'
 import StatusPill from '@/components/common/StatusPill.vue'
 
 const message = useMessage()
 const dialog = useDialog()
 
+const uploadRef = ref()
 const loading = ref(false)
 const generating = ref(false)
 const progress = ref(0)
 const progressMessage = ref('')
-const selectedPpt = ref<string | null>(null)
 const uploadFile = ref<File | null>(null)
 const selectedVoice = ref('mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
-const pptList = ref<{ id: string; name: string; path: string }[]>([])
 
 const voiceOptions = [
   { label: '默认', value: 'mimo_default' },
@@ -194,43 +187,9 @@ const voiceOptions = [
   { label: 'Dean', value: 'Dean' },
 ]
 
-const pptOptions = computed(() =>
-  pptList.value.map((p) => ({ label: p.name, value: p.id }))
-)
-
-const status = computed(() => {
-  if (generating.value) return 'generating'
-  return null
-})
-
-const statusTone = computed<'neutral' | 'success' | 'warning' | 'danger'>(() => 'warning')
-
-const statusText = computed(() => {
-  if (generating.value) return '生成中'
-  return ''
-})
-
 onMounted(() => {
   refreshList()
-  loadPptList()
 })
-
-async function loadPptList() {
-  try {
-    const res = await fetch('/api/files')
-    const data = await res.json()
-    const files = data.files || []
-    pptList.value = files
-      .filter((f: { type: string }) => f.type === 'ppt')
-      .map((f: { id: string; name: string; path: string }) => ({
-        id: f.path,
-        name: f.name,
-        path: f.path,
-      }))
-  } catch (e) {
-    console.error('Failed to load PPT list:', e)
-  }
-}
 
 async function refreshList() {
   loading.value = true
@@ -245,24 +204,15 @@ async function refreshList() {
   }
 }
 
-function onSelectPpt(value: string) {
-  selectedPpt.value = value
-}
-
 function onUploadChange(options: { file: any }) {
   if (options.file.file) {
     uploadFile.value = options.file.file
-    selectedPpt.value = null
   }
 }
 
-async function onGenerateFromLibrary() {
-  if (!selectedPpt.value) {
-    message.warning('请先选择 PPT')
-    return
-  }
-
-  await doGenerate(selectedPpt.value)
+function clearFile() {
+  uploadFile.value = null
+  uploadRef.value?.clear(null)
 }
 
 async function onGenerate() {
@@ -271,7 +221,6 @@ async function onGenerate() {
     return
   }
 
-  // 上传文件到后端
   const formData = new FormData()
   formData.append('file', uploadFile.value)
 
