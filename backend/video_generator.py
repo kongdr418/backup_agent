@@ -297,74 +297,181 @@ class VideoGenerator:
         durations: Dict[int, float],
         output_path: Path
     ):
-        """生成 SRT 字幕"""
+        """生成 SRT 字幕 和 ASS 字幕（直接输出 ASS 避免 ffmpeg 默认转换的字号过大问题）"""
         import re
 
-        def split_long_text(text, max_chars=22):
-            paragraphs = re.split(r'\n+', text.strip())
-            result = []
-            for para in paragraphs:
-                para = para.strip()
-                if not para:
-                    continue
-                sentences = re.split(r'([。！？；])', para)
-                current = ""
-                for idx in range(0, len(sentences) - 1, 2):
-                    sent = sentences[idx]
-                    punct = sentences[idx + 1] if idx + 1 < len(sentences) else ""
-                    combined = sent + punct
-                    if len(current) + len(combined) <= max_chars:
-                        current += combined
-                    else:
-                        if current.strip():
-                            result.append(current.strip())
-                        current = combined
-                if current.strip():
-                    result.append(current.strip())
-            return result
+        MAX_CHARS = 18          # 单行最大字符数（中文字）
+        MIN_CHUNK_DUR = 0.5     # 最短显示时长（秒）
 
-        def time_str(seconds):
+        def force_split(text: str, max_chars: int) -> list:
+            """按字符数强制切分"""
+            return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+
+        def split_text_cascade(text: str, max_chars: int = MAX_CHARS) -> list:
+            """三级断句：句末标点 → 逗号停顿 → 强制切分，确保不超 max_chars"""
+            text = text.strip()
+            if not text:
+                return []
+
+            # 第一级：句末标点
+            primary = re.split(r'([。！？；])', text)
+            chunks = []
+            for idx in range(0, len(primary) - 1, 2):
+                sent = primary[idx]
+                punct = primary[idx + 1] if idx + 1 < len(primary) else ""
+                combined = (sent + punct).strip()
+                if combined:
+                    chunks.append(combined)
+            if len(primary) % 2 == 1:
+                tail = primary[-1].strip()
+                if tail:
+                    chunks.append(tail)
+
+            # 第二级：逗号等次级停顿
+            refined = []
+            for chunk in chunks:
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                if len(chunk) <= max_chars:
+                    refined.append(chunk)
+                    continue
+
+                secondary = re.split(r'([，、,（）])', chunk)
+                buffer = ""
+                for idx in range(0, len(secondary) - 1, 2):
+                    seg = secondary[idx]
+                    punct = secondary[idx + 1] if idx + 1 < len(secondary) else ""
+                    combined = seg + punct
+                    if len(buffer) + len(combined) <= max_chars:
+                        buffer += combined
+                    else:
+                        if buffer.strip():
+                            refined.append(buffer.strip())
+                        buffer = combined
+                if len(secondary) % 2 == 1:
+                    tail = secondary[-1].strip()
+                    if tail:
+                        if len(buffer) + len(tail) <= max_chars:
+                            buffer += tail
+                        else:
+                            if buffer.strip():
+                                refined.append(buffer.strip())
+                            buffer = tail
+                if buffer.strip():
+                    refined.append(buffer.strip())
+
+            # 第三级：仍超长则强制切分
+            final = []
+            for chunk in refined:
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                if len(chunk) > max_chars:
+                    final.extend(force_split(chunk, max_chars))
+                else:
+                    final.append(chunk)
+
+            return [c.strip() for c in final if c.strip()]
+
+        def srt_time(seconds: float) -> str:
             h = int(seconds // 3600)
             m = int((seconds % 3600) // 60)
             s = int(seconds % 60)
             ms = int((seconds - int(seconds)) * 1000)
             return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-        srt_index = 1
-        current_time = 0.0
+        def ass_time(seconds: float) -> str:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = seconds % 60
+            return f"{h:01d}:{m:02d}:{s:05.2f}"
 
+        def escape_ass(text: str) -> str:
+            """转义 ASS 特殊字符"""
+            return (text
+                    .replace("\\", "")
+                    .replace("{", "(")
+                    .replace("}", ")")
+                    .replace("\n", " ")
+                    .replace("\r", ""))
+
+        srt_entries = []
+        ass_events = []
+        srt_idx = 1
+        cursor = 0.0
+
+        for slide in slides:
+            i = slide["index"]
+            script = slide.get("script") or ""
+            dur = durations.get(i, 5.0)
+
+            paragraphs = re.split(r'\n+', script.strip())
+            all_chunks = []
+            for para in paragraphs:
+                para = para.strip()
+                if not para:
+                    continue
+                all_chunks.extend(split_text_cascade(para))
+
+            if not all_chunks:
+                # 无脚本也要推进时间，防止后续时间戳错位
+                cursor += dur
+                continue
+
+            # 字符数加权时长分配
+            slide_start = cursor
+            total_chars = sum(len(c) for c in all_chunks)
+            if total_chars == 0:
+                cursor += dur
+                continue
+
+            for chunk in all_chunks:
+                chunk_chars = len(chunk)
+                chunk_dur = max(MIN_CHUNK_DUR, dur * chunk_chars / total_chars)
+                start = cursor
+                end = cursor + chunk_dur
+                cursor = end
+
+                # SRT
+                srt_entries.append(
+                    f"{srt_idx}\n{srt_time(start)} --> {srt_time(end)}\n{chunk}\n"
+                )
+                srt_idx += 1
+
+                # ASS event
+                safe_text = escape_ass(chunk)
+                ass_events.append(
+                    f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{safe_text}"
+                )
+
+            # 严格对齐到 slide 结束时间（消除累计误差）
+            cursor = slide_start + dur
+
+        # 写入 SRT 文件
         with open(output_path, "w", encoding="utf-8") as f:
-            for slide in slides:
-                i = slide["index"]
-                script = slide["script"]
-                dur = durations.get(i, 5.0)
+            f.write("\n".join(srt_entries))
 
-                if not script or not script.strip():
-                    continue
-
-                paragraphs = re.split(r'\n+', script.strip())
-                para_count = len([p for p in paragraphs if p.strip()])
-                if para_count == 0:
-                    continue
-
-                avg_para_dur = dur / para_count
-
-                for para in paragraphs:
-                    para = para.strip()
-                    if not para:
-                        continue
-                    chunks = split_long_text(para)
-                    if not chunks:
-                        continue
-                    chunk_dur = avg_para_dur / len(chunks)
-                    for chunk in chunks:
-                        start = current_time
-                        end = current_time + chunk_dur
-                        current_time = end
-                        f.write(f"{srt_index}\n")
-                        f.write(f"{time_str(start)} --> {time_str(end)}\n")
-                        f.write(f"{chunk}\n\n")
-                        srt_index += 1
+        # 生成 ASS 文件（自定义样式）
+        ass_path = output_path.parent / "06-subtitles.ass"
+        ass_header = (
+            "[Script Info]\n"
+            "Title: AI Creator Subtitles\n"
+            "ScriptType: v4.00+\n"
+            "PlayResX: 1920\n"
+            "PlayResY: 1080\n"
+            "WrapStyle: 0\n"
+            "ScaledBorderAndShadow: yes\n"
+            "\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+            "Style: Default,Microsoft YaHei,52,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,200,200,80,1\n"
+            "\n"
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        )
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(ass_header + "\n".join(ass_events))
 
     def _合成视频(
         self,
@@ -425,19 +532,11 @@ class VideoGenerator:
             str(preview)
         ], check=True, capture_output=True)
 
-        # 烧录字幕 - 关键修复：Windows ffmpeg 的 ass/subtitles 滤镜无法正确解析含反斜杠的路径
-        # 现象：ffmpeg 把 "D:\path\file.srt" 误解析为 original_size 选项值（提取了 drive letter D: 和 : 后剩余部分）
-        # 解决：将 SRT 转换为 ASS 中间文件，再用纯文件名（无路径）传给 ass 滤镜
-        subtitle_path = output_dir / "05-subtitles.srt"
-        video_path = output_dir / "07-video.mp4"
+        # 烧录字幕（ASS 已由 _generate_subtitles 直接生成，跳过 ffmpeg 默认转换）
         ass_path = output_dir / "06-subtitles.ass"
-        if not subtitle_path.exists():
-            raise FileNotFoundError(f"字幕文件不存在: {subtitle_path}")
-
-        # SRT → ASS 转换（避免路径解析 bug）
-        subprocess.run([
-            "ffmpeg", "-y", "-i", str(subtitle_path), str(ass_path)
-        ], check=True, capture_output=True)
+        video_path = output_dir / "07-video.mp4"
+        if not ass_path.exists():
+            raise FileNotFoundError(f"字幕文件不存在: {ass_path}")
 
         # ass 滤镜使用纯文件名（无路径），在 output_dir 中运行 ffmpeg 避免路径解析问题
         subprocess.run([
