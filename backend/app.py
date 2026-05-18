@@ -955,8 +955,8 @@ def upload_file():
     if not file.filename.endswith('.pptx'):
         return jsonify({'success': False, 'error': '只支持 PPTX 文件'}), 400
 
-    # 保存到 generators/generated_ppt 目录
-    upload_dir = os.path.join(GENERATORS_DIR, 'generated_ppt')
+    # 保存到 uploads 目录（不在文件库扫描范围内）
+    upload_dir = os.path.join(BACKEND_DIR, 'uploads')
     os.makedirs(upload_dir, exist_ok=True)
 
     filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"

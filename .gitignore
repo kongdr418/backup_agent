@@ -70,6 +70,9 @@ backend/__pycache__/
 backend/*.pyc
 backend/flask_server.log
 
+# Uploaded files (local only)
+backend/uploads/
+
 # Frontend (local only)
 frontend/node_modules/
 frontend/.env
