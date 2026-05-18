@@ -86,6 +86,9 @@ class VideoGenerator:
         slides_data = self._parse_ppt(pptx_path, temp_dir)
         yield from self._send_progress(progress_callback, 0.35, "讲稿解析完成")
 
+        # 阶段2.5: 对无备注的页用 LLM 生成自然讲稿（有备注则跳过）
+        yield from self._generate_llm_scripts(slides_data, topic, progress_callback)
+
         # 阶段3: 生成配音
         yield from self._generate_audio(slides_data, temp_dir, voice, progress_callback)
         yield from self._send_progress(progress_callback, 0.6, "配音生成完成")
@@ -203,6 +206,7 @@ class VideoGenerator:
             if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
                 notes = slide.notes_slide.notes_text_frame.text.strip()
 
+            needs_llm = not notes
             combined_script = notes if notes else (
                 "；".join(content_lines[:5]) if content_lines else f"这是第{i}页内容"
             )
@@ -211,7 +215,8 @@ class VideoGenerator:
                 "index": i,
                 "title": title,
                 "content": "\n".join(content_lines[:10]),
-                "script": combined_script
+                "script": combined_script,
+                "needs_llm": needs_llm,
             })
 
         # 保存讲稿
@@ -220,6 +225,133 @@ class VideoGenerator:
             json.dump(slides, f, ensure_ascii=False, indent=2)
 
         return slides
+
+    def _generate_llm_scripts(self, slides_data, topic, progress_callback):
+        """对无备注的页用 DeepSeek 批量生成自然讲稿，原地回填 slide['script']。失败时静默回退。"""
+        missing_pages = [s for s in slides_data if s.get("needs_llm")]
+        if not missing_pages:
+            return
+
+        yield from self._send_progress(
+            progress_callback, 0.38,
+            f"LLM 生成讲稿中 ({len(missing_pages)} 页)..."
+        )
+
+        api_key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+        if not api_key:
+            print("[VIDEO] DEEPSEEK_API_KEY 未配置，跳过 LLM 讲稿生成")
+            return
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            print("[VIDEO] openai SDK 未安装，跳过 LLM 讲稿生成")
+            return
+
+        slides_context = [
+            {
+                "index": s["index"],
+                "title": s.get("title", ""),
+                "content": (s.get("content", "") or "")[:500],
+            }
+            for s in slides_data
+        ]
+        missing_indices = [s["index"] for s in missing_pages]
+        topic_hint = f"\n课程主题：{topic}" if topic else ""
+
+        prompt = (
+            f"你是一位经验丰富的教师，需要为一个PPT课件配上口播讲稿。{topic_hint}\n\n"
+            f"下面是这个PPT课件的全部页面信息（JSON 数组，提供完整上下文）：\n\n"
+            f"{json.dumps(slides_context, ensure_ascii=False, indent=2)}\n\n"
+            f"请仅为以下页码生成讲稿：{missing_indices}\n\n"
+            "【重要】请根据每一页的角色合理分配讲解时长，不要平均分配。识别规则与长度建议：\n\n"
+            "- 封面页（通常是第1页，标题简短如\"XX课程\"\"XX介绍\"，几乎无内容）\n"
+            "  → 30-60 字，简短开场欢迎 + 点题，不要展开内容\n"
+            "- 目录/大纲页（标题含\"目录\"\"大纲\"\"提纲\"\"Contents\"，内容是章节列表）\n"
+            "  → 40-80 字，简要概述课程结构，不要逐条朗读目录\n"
+            "- 章节过渡/分隔页（仅含章节号或一句小标题，内容极少）\n"
+            "  → 20-40 字，一句话过场即可\n"
+            "- 正文内容页（包含具体知识点、要点、案例、数据等）\n"
+            "  → 100-180 字，展开讲解，举例说明，避免单纯堆砌要点\n"
+            "- 总结/结语/谢谢页（标题含\"总结\"\"小结\"\"结语\"\"谢谢\"\"Q&A\"）\n"
+            "  → 60-100 字，回顾要点 + 自然收尾\n\n"
+            "通用要求：\n"
+            "1. 口语化、自然流畅，适合中文 TTS 朗读\n"
+            "2. 多页之间有自然过渡（\"接下来\"\"我们再看\"\"刚才提到的\"）\n"
+            "3. 纯文本，不要 markdown、emoji，标点要规范\n"
+            "4. 不要硬凑字数，封面/过渡页该短就短，正文页该详细就详细\n"
+            "5. 严格按 JSON 数组格式返回，不要任何额外说明\n\n"
+            "返回格式（必须严格遵守）：\n"
+            "[\n"
+            '  {"index": 1, "script": "..."},\n'
+            '  {"index": 2, "script": "..."}\n'
+            "]\n"
+        )
+
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.deepseek.com",
+                timeout=30.0,
+            )
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "你是一位中文教学讲解专家，擅长把课件内容转化为自然流畅的口播讲稿。封面、目录、过渡页要简短，正文页要详细，节奏分明。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4000,
+            )
+            content = response.choices[0].message.content or ""
+        except Exception as e:
+            print(f"[VIDEO] LLM 讲稿生成调用失败，回退到原讲稿: {e}")
+            return
+
+        scripts = self._parse_llm_scripts(content)
+        if not scripts:
+            print("[VIDEO] LLM 返回内容无法解析为 JSON 数组，回退到原讲稿")
+            return
+
+        by_index = {s["index"]: s for s in slides_data}
+        updated = 0
+        for item in scripts:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index")
+            script = (item.get("script") or "").strip()
+            if idx in by_index and script:
+                by_index[idx]["script"] = script
+                updated += 1
+
+        print(f"[VIDEO] LLM 讲稿生成完成: {updated}/{len(missing_pages)} 页")
+
+        yield from self._send_progress(
+            progress_callback, 0.45,
+            f"LLM 讲稿生成完成 ({updated} 页)"
+        )
+
+    def _parse_llm_scripts(self, content):
+        """从 LLM 返回文本中提取 JSON 数组，宽容处理 markdown 围栏。"""
+        import re
+
+        text = (content or "").strip()
+        fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+        if fence_match:
+            text = fence_match.group(1).strip()
+
+        array_match = re.search(r'\[[\s\S]*\]', text)
+        if not array_match:
+            return None
+
+        try:
+            parsed = json.loads(array_match.group(0))
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            return None
+
+        return None
 
     def _generate_mimo_audio(self, voiceover_text: str, voice: str = "") -> bytes:
         """调用 MiMo V2-TTS 生成音频"""
@@ -452,6 +584,22 @@ class VideoGenerator:
                         merged.append(chunk)
                 else:
                     merged.append(chunk)
+
+            # 第五级：合并过短的 chunk 到相邻 chunk，避免单字成行
+            MIN_CHUNK_WIDTH = 8  # 视觉宽度下限（≈4个中文字）
+            if len(merged) > 1:
+                short_merged = []
+                for chunk in merged:
+                    if short_merged:
+                        prev_w = display_width(short_merged[-1])
+                        curr_w = display_width(chunk)
+                        if prev_w < MIN_CHUNK_WIDTH or curr_w < MIN_CHUNK_WIDTH:
+                            candidate = short_merged[-1] + chunk
+                            if display_width(candidate) <= max_width:
+                                short_merged[-1] = candidate
+                                continue
+                    short_merged.append(chunk)
+                merged = short_merged
 
             return [c.strip() for c in merged if c.strip()]
 
