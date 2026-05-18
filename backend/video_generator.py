@@ -299,51 +299,116 @@ class VideoGenerator:
     ):
         """生成 SRT 字幕 和 ASS 字幕（直接输出 ASS 避免 ffmpeg 默认转换的字号过大问题）"""
         import re
+        import unicodedata
 
-        MAX_CHARS = 18          # 单行最大字符数（中文字）
+        MAX_WIDTH = 36          # 视觉宽度上限（≈18个中文字）
         MIN_CHUNK_DUR = 0.5     # 最短显示时长（秒）
 
-        def force_split(text: str, max_chars: int) -> list:
-            """按字符数强制切分"""
-            return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+        def display_width(text: str) -> int:
+            """计算文本显示宽度：中文字/全角=2，英文字/半角=1"""
+            return sum(
+                2 if unicodedata.east_asian_width(c) in ('F', 'W') else 1
+                for c in text
+            )
 
-        def split_text_cascade(text: str, max_chars: int = MAX_CHARS) -> list:
-            """三级断句：句末标点 → 逗号停顿 → 强制切分，确保不超 max_chars"""
+        def force_split_chars(text: str, max_width: int) -> list:
+            """按字符显示宽度强制切分，末尾标点合并到前一行"""
+            result = []
+            current = ""
+            current_w = 0
+            for i, c in enumerate(text):
+                w = 2 if unicodedata.east_asian_width(c) in ('F', 'W') else 1
+                if current_w + w > max_width:
+                    # 如果剩余全是标点，合并到当前行
+                    remaining = text[i:]
+                    if re.match(r'^[。！？；.!?;，、,\s]+$', remaining):
+                        current += remaining
+                        break
+                    result.append(current)
+                    current = c
+                    current_w = w
+                else:
+                    current += c
+                    current_w += w
+            if current:
+                result.append(current)
+            return result
+
+        def force_split(text: str, max_width: int = MAX_WIDTH) -> list:
+            """按显示宽度强制切分，英文优先在空格/词边界断开"""
+            if display_width(text) <= max_width:
+                return [text]
+
+            # 包含空格时优先按词切分（保留英文单词完整）
+            if ' ' in text:
+                words = text.split(' ')
+                result = []
+                current = ""
+                current_w = 0
+                for word in words:
+                    word_w = display_width(word)
+                    space_w = 1 if current else 0
+                    if current_w + space_w + word_w <= max_width:
+                        current += (" " if current else "") + word
+                        current_w += space_w + word_w
+                    else:
+                        if current:
+                            result.append(current)
+                        # 单个词超长，按字符硬切
+                        if word_w > max_width:
+                            result.extend(force_split_chars(word, max_width))
+                        else:
+                            current = word
+                            current_w = word_w
+                if current:
+                    result.append(current)
+                return result
+
+            # 无空格（纯中文/连续字符）：按字符硬切
+            return force_split_chars(text, max_width)
+
+        def split_text_cascade(text: str, max_width: int = MAX_WIDTH) -> list:
+            """三级断句：句末标点 → 逗号停顿 → 强制切分，确保不超 max_width"""
             text = text.strip()
             if not text:
                 return []
 
-            # 第一级：句末标点
-            primary = re.split(r'([。！？；])', text)
+            # 第一级：句末标点（中英混合）
+            primary = re.split(r'([。！？；.!?;])', text)
             chunks = []
             for idx in range(0, len(primary) - 1, 2):
                 sent = primary[idx]
                 punct = primary[idx + 1] if idx + 1 < len(primary) else ""
+                if not sent.strip():          # 跳过连续标点产生的空片段
+                    continue
                 combined = (sent + punct).strip()
                 if combined:
                     chunks.append(combined)
             if len(primary) % 2 == 1:
                 tail = primary[-1].strip()
-                if tail:
+                # 尾部纯标点也跳过（由前一个 chunk 继承）
+                if tail and not re.match(r'^[。！？；.!?;\s]+$', tail):
                     chunks.append(tail)
 
-            # 第二级：逗号等次级停顿
+            # 第二级：逗号等次级停顿（中英混合）
             refined = []
             for chunk in chunks:
                 chunk = chunk.strip()
                 if not chunk:
                     continue
-                if len(chunk) <= max_chars:
+                if display_width(chunk) <= max_width:
                     refined.append(chunk)
                     continue
 
-                secondary = re.split(r'([，、,（）])', chunk)
+                secondary = re.split(r'([，、,（）()])', chunk)
                 buffer = ""
                 for idx in range(0, len(secondary) - 1, 2):
                     seg = secondary[idx]
                     punct = secondary[idx + 1] if idx + 1 < len(secondary) else ""
+                    if not seg.strip():       # 跳过连续标点产生的空片段
+                        continue
                     combined = seg + punct
-                    if len(buffer) + len(combined) <= max_chars:
+                    if display_width(buffer) + display_width(combined) <= max_width:
                         buffer += combined
                     else:
                         if buffer.strip():
@@ -351,8 +416,9 @@ class VideoGenerator:
                         buffer = combined
                 if len(secondary) % 2 == 1:
                     tail = secondary[-1].strip()
-                    if tail:
-                        if len(buffer) + len(tail) <= max_chars:
+                    # 尾部纯标点跳过，由前一个 chunk 继承
+                    if tail and not re.match(r'^[，、,（）()\s]+$', tail):
+                        if display_width(buffer) + display_width(tail) <= max_width:
                             buffer += tail
                         else:
                             if buffer.strip():
@@ -367,12 +433,27 @@ class VideoGenerator:
                 chunk = chunk.strip()
                 if not chunk:
                     continue
-                if len(chunk) > max_chars:
-                    final.extend(force_split(chunk, max_chars))
+                if display_width(chunk) > max_width:
+                    final.extend(force_split(chunk, max_width))
                 else:
                     final.append(chunk)
 
-            return [c.strip() for c in final if c.strip()]
+            # 第四级：后处理，合并纯标点 chunk 到相邻文本
+            punct_only = re.compile(r'^[。！？；.!?;，、,\s]+$')
+            merged = []
+            for chunk in final:
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                if punct_only.match(chunk):
+                    if merged:
+                        merged[-1] += chunk
+                    else:
+                        merged.append(chunk)
+                else:
+                    merged.append(chunk)
+
+            return [c.strip() for c in merged if c.strip()]
 
         def srt_time(seconds: float) -> str:
             h = int(seconds // 3600)
