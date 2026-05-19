@@ -87,21 +87,19 @@ import PreviewDrawer from '@/components/library/PreviewDrawer.vue'
 
 import type { GeneratedFile } from '@/types'
 import { useFileStore } from '@/stores/fileStore'
-import { listPptJobs, deletePptJob } from '@/api/pptSvg'
+import { deletePptJob } from '@/api/pptSvg'
 
 const fileStore = useFileStore()
 const dialog = useDialog()
 const message = useMessage()
 
 const loading = ref(false)
-const svgPptFiles = ref<GeneratedFile[]>([])
 
-const allFiles = computed<GeneratedFile[]>(() => [...fileStore.files, ...svgPptFiles.value])
+const allFiles = computed<GeneratedFile[]>(() => fileStore.files)
 
 const categories = [
   { value: 'all', label: '全部' },
-  { value: 'svg_ppt', label: 'SVG PPT (新)' },
-  // { value: 'ppt', label: 'PPT (旧)' },
+  { value: 'ppt', label: 'PPT' },
   { value: 'video', label: '微课视频' },
   { value: 'lecture', label: '讲义' },
   { value: 'outline', label: '课程大纲' },
@@ -166,10 +164,9 @@ function askDelete(f: GeneratedFile) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        if (f.type === 'svg_ppt') {
-          const jobId = f.path.replace(/^generated_svg_ppt\//, '')
+        if (f.id.startsWith('svg_ppt_')) {
+          const jobId = f.id.replace(/^svg_ppt_/, '')
           await deletePptJob(jobId)
-          svgPptFiles.value = svgPptFiles.value.filter((x) => x.id !== f.id)
         } else {
           await fileStore.deleteFile(f.path)
         }
@@ -190,7 +187,6 @@ function askClearAll() {
     onPositiveClick: async () => {
       try {
         await fileStore.clearAllFiles()
-        await loadSvgPptJobs()
         message.success('已清空')
       } catch (e) {
         message.error(e instanceof Error ? e.message : '清空失败')
@@ -202,27 +198,9 @@ function askClearAll() {
 async function refresh() {
   loading.value = true
   try {
-    await Promise.all([fileStore.fetchFiles(), loadSvgPptJobs()])
+    await fileStore.fetchFiles()
   } finally {
     loading.value = false
-  }
-}
-
-async function loadSvgPptJobs() {
-  try {
-    const jobs = await listPptJobs()
-    svgPptFiles.value = jobs.map((j) => ({
-      id: `svg_ppt_${j.job_id}`,
-      name: j.topic || j.job_id,
-      type: 'svg_ppt',
-      type_label: 'SVG PPT',
-      path: `generated_svg_ppt/${j.job_id}`,
-      size: 0,
-      size_formatted: j.has_pptx ? '可下载' : '仅预览',
-      created: j.created_at,
-    }))
-  } catch {
-    svgPptFiles.value = []
   }
 }
 

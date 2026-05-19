@@ -40,14 +40,12 @@
           :meta="`${file.size_formatted} · ${file.created}`"
         />
 
-        <!-- SVG PPT -->
+        <!-- PPT: SVG PPT 展示预览图+下载，旧版PPT只显示下载 -->
         <PptThumbnailPreview
-          v-else-if="file.type === 'svg_ppt'"
+          v-else-if="file.type === 'ppt' && isSvgPpt"
           :job-id="svgJobId"
           :name="file.name"
         />
-
-        <!-- Legacy PPT (download only) -->
         <DownloadCard
           v-else-if="file.type === 'ppt'"
           :name="file.name"
@@ -135,6 +133,11 @@ const fileExtension = computed(() => {
   return props.file.name.split('.').pop()?.toLowerCase() || ''
 })
 
+const isSvgPpt = computed(() => {
+  if (!props.file) return false
+  return props.file.id?.startsWith('svg_ppt_') ?? false
+})
+
 const downloadHref = computed(() => {
   if (!props.file) return '#'
   return fileDownloadUrl(props.file.path)
@@ -145,8 +148,8 @@ watch(
   (f) => {
     svgJobId.value = ''
     if (!f) return
-    if (f.type === 'svg_ppt') {
-      svgJobId.value = (f.id || '').replace(/^svg_ppt_/, '')
+    if (f.id?.startsWith('svg_ppt_')) {
+      svgJobId.value = f.id.replace(/^svg_ppt_/, '')
     }
   },
   { immediate: true },

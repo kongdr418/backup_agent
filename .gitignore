@@ -80,3 +80,6 @@ frontend/generated_*
 
 # Test output
 test_output.txt
+
+# Sample files (root level examples)
+/*.pptx

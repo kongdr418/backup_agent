@@ -489,6 +489,14 @@ def get_files():
             exports_dir = os.path.join(job_path, 'exports')
             if not os.path.exists(exports_dir):
                 continue
+            # 只取第一个 .pptx 文件
+            pptx_files = [f for f in os.listdir(exports_dir)
+                          if f.endswith('.pptx') and not f.startswith('~$')]
+            if not pptx_files:
+                continue
+            f = pptx_files[0]
+            filepath = os.path.join(exports_dir, f)
+            stat = os.stat(filepath)
             # 读取 topic 作为友好文件名
             topic = None
             meta_path = os.path.join(job_path, 'metadata.json')
@@ -499,22 +507,18 @@ def get_files():
                     topic = meta.get('topic')
                 except Exception:
                     pass
-            for f in os.listdir(exports_dir):
-                if f.endswith('.pptx') and not f.startswith('~$'):
-                    filepath = os.path.join(exports_dir, f)
-                    stat = os.stat(filepath)
-                    display_name = f"{topic}.pptx" if topic else f
-                    files.append({
-                        'id': f'svg_ppt_{job_dir}_{f}',
-                        'name': display_name,
-                        'type': 'ppt',
-                        'type_label': 'PPT',
-                        'path': filepath,
-                        'size': stat.st_size,
-                        'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                        'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                        'icon': '📊'
-                    })
+            display_name = f"{topic}.pptx" if topic else f
+            files.append({
+                'id': f'svg_ppt_{job_dir}',
+                'name': display_name,
+                'type': 'ppt',
+                'type_label': 'PPT',
+                'path': filepath,
+                'size': stat.st_size,
+                'size_formatted': f"{stat.st_size / 1024:.1f} KB",
+                'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                'icon': '📊'
+            })
 
     # 扫描讲义文件
     lecture_dir = os.path.join(GENERATORS_DIR, "generated_lectures")

@@ -30,6 +30,18 @@
       </div>
       <div class="slide-full" v-html="activeSlideData.svg" />
     </div>
+
+    <!-- Download link -->
+    <a
+      v-if="!loading && !error && downloadUrl !== '#'"
+      :href="downloadUrl"
+      target="_blank"
+      rel="noopener"
+      class="download-bar"
+    >
+      <Download class="w-4 h-4" />
+      下载 PPTX
+    </a>
   </div>
 </template>
 
@@ -205,5 +217,24 @@ watch(() => props.jobId, load)
 .slide-full :deep(svg) {
   width: 100%;
   height: auto;
+}
+
+.download-bar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-radius: 10px;
+  background: rgb(var(--accent-rgb));
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: opacity 200ms;
+}
+
+.download-bar:hover {
+  opacity: 0.88;
 }
 </style>
