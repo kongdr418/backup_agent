@@ -55,7 +55,7 @@
           type="ppt"
           :size="file.size_formatted"
           :date="file.created"
-          :download-url="pptDirectUrl(file.path)"
+          :download-url="fileDownloadUrl(file.path)"
         />
 
         <!-- DOCX -->
@@ -157,9 +157,6 @@ function imageUrl(name: string) {
 }
 function audioUrl(name: string) {
   return videoAudioUrl(name)
-}
-function pptDirectUrl(path: string) {
-  return `/${path.replace(/\\/g, '/')}`
 }
 </script>
 
