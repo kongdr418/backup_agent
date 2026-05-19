@@ -167,6 +167,7 @@ function askDelete(f: GeneratedFile) {
         if (f.id.startsWith('svg_ppt_')) {
           const jobId = f.id.replace(/^svg_ppt_/, '')
           await deletePptJob(jobId)
+          fileStore.files = fileStore.files.filter((x) => x.id !== f.id)
         } else {
           await fileStore.deleteFile(f.path)
         }
