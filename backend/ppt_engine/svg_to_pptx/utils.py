@@ -159,6 +159,8 @@ def select_ppt_font_family(text: str, font_stack: str) -> str:
     typeface; writing the whole CSS stack makes PowerPoint fall back
     unpredictably, especially for Chinese text.
     """
+    import platform
+
     families = split_font_stack(font_stack)
     lower_families = {family.lower(): family for family in families}
 
@@ -167,6 +169,12 @@ def select_ppt_font_family(text: str, font_stack: str) -> str:
             return lower_families[mono]
 
     has_cjk = any(is_cjk_char(ch) for ch in text)
+
+    # macOS: use Hiragino Sans GB for CJK text — Microsoft YaHei is not
+    # bundled with Office for Mac and won't render correctly otherwise
+    if has_cjk and platform.system() == "Darwin":
+        return "Hiragino Sans GB"
+
     cjk_candidates = (
         "microsoft yahei",
         "dengxian",
