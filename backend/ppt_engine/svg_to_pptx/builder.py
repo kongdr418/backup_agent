@@ -7,6 +7,7 @@ converted slide XML and media into the PPTX zip package.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import zipfile
 import json
@@ -154,6 +155,8 @@ def create_pptx(
             stem = svg_path.stem
             if stem in notes:
                 _add_notes(extract_dir, slide_num, notes[stem])
+                # Also add notes relationship to slide's rels file
+                _add_notes_rels(extract_dir, slide_num)
 
         # Update [Content_Types].xml with media types
         _update_content_types(extract_dir, all_media_types)
@@ -402,13 +405,30 @@ def _add_notes(extract_dir: Path, slide_num: int, notes_text: str) -> None:
     notes_dir = extract_dir / "ppt" / "notesSlides"
     notes_dir.mkdir(parents=True, exist_ok=True)
 
-    # Simple plaintext notes (strip markdown)
+    # Strip markdown formatting, leaving plain readable text
     import re
-    plain = re.sub(r"[#*_`\[\]]", "", notes_text)
-    plain = re.sub(r"^- ", "• ", plain, flags=re.MULTILINE)
+    # Remove leading --- separators that appear in first section
+    notes_text = re.sub(r"^---\s*\n?", "", notes_text, flags=re.MULTILINE)
+    # Remove bold markers
+    notes_text = re.sub(r"\*\*(.+?)\*\*", r"\1", notes_text)
+    # Remove italic markers
+    notes_text = re.sub(r"\*(.+?)\*", r"\1", notes_text)
+    # Remove markdown links [text](url) → text
+    notes_text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", notes_text)
+    # Remove diagram/icon hints [diagram:...] [icon:...]
+    notes_text = re.sub(r"\[(?:diagram|icon):[^\]]+\]", "", notes_text)
+    # Remove markdown headers
+    notes_text = re.sub(r"^#+\s+", "", notes_text, flags=re.MULTILINE)
+    # Convert bullet markers to plain text
+    notes_text = re.sub(r"^[-*]\s+", "• ", notes_text, flags=re.MULTILINE)
+    # Remove remaining brackets that weren't part of links
+    notes_text = re.sub(r"[\[\]]", "", notes_text)
+    # Collapse multiple newlines/spaces
+    notes_text = re.sub(r"\n{3,}", "\n\n", notes_text)
+    notes_text = notes_text.strip()
 
     paragraphs = []
-    for line in plain.split("\n"):
+    for line in notes_text.split("\n"):
         line = line.strip()
         if line:
             escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -449,8 +469,40 @@ def _add_notes(extract_dir: Path, slide_num: int, notes_text: str) -> None:
     (rels_dir / f"notesSlide{slide_num}.xml.rels").write_text(notes_rels, encoding="utf-8")
 
 
+def _add_notes_rels(extract_dir: Path, slide_num: int) -> None:
+    """Add notesSlide relationship to slide's rels file."""
+    rels_file = extract_dir / "ppt" / "slides" / "_rels" / f"slide{slide_num}.xml.rels"
+    rels_file.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = ""
+    if rels_file.exists():
+        existing = rels_file.read_text(encoding="utf-8")
+
+    # Find highest existing rId
+    rids = [int(m.group(1)) for m in re.finditer(r'rId(\d+)', existing)]
+    next_rid = max(rids) + 1 if rids else 2
+
+    new_rel = (
+        f'<Relationship Id="rId{next_rid}"'
+        f' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"'
+        f' Target="../notesSlides/notesSlide{slide_num}.xml"/>'
+    )
+
+    # Insert before closing tag if exists
+    if "</Relationships>" in existing:
+        content = existing.replace("</Relationships>", f"{new_rel}</Relationships>")
+    else:
+        content = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f"{new_rel}"
+            '</Relationships>'
+        )
+
+    rels_file.write_text(content, encoding="utf-8")
+
+
 def _update_content_types(extract_dir: Path, media_types: set[str]) -> None:
-    """Add media content types to [Content_Types].xml."""
     ct_path = extract_dir / "[Content_Types].xml"
     if not ct_path.exists():
         return
@@ -478,7 +530,14 @@ def _update_content_types(extract_dir: Path, media_types: set[str]) -> None:
 
     if additions:
         content = content[:insert_pos] + additions + content[insert_pos:]
-        ct_path.write_text(content, encoding="utf-8")
+
+    # Always add notesSlide override so PowerPoint recognizes notes
+    if 'Override PartName="/ppt/notesSlides/notesSlide1.xml"' not in content:
+        insert_pos = content.rfind("</Types>")
+        if insert_pos >= 0:
+            content = content[:insert_pos] + '<Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>' + content[insert_pos:]
+
+    ct_path.write_text(content, encoding="utf-8")
 
 
 def _zip_pptx(source_dir: Path, output_path: Path) -> None:

@@ -203,10 +203,13 @@ class PPTPipeline:
             try:
                 from ppt_engine.svg_to_pptx.builder import create_pptx
                 svg_files = sorted(svg_final_dir.glob("*.svg"))
+                # Parse manuscript into per-slide notes
+                notes = _parse_manuscript_to_notes(manuscript, svg_files)
                 create_pptx(
                     svg_files=svg_files,
                     output_path=pptx_path,
                     canvas_format=canvas_format,
+                    notes=notes,
                 )
             except Exception as e:
                 yield PipelineEvent(
@@ -269,3 +272,16 @@ class PPTPipeline:
                 continue
 
         prs.save(str(pptx_path))
+
+
+def _parse_manuscript_to_notes(manuscript: str, svg_files: list[Path]) -> dict[str, str]:
+    """Split manuscript into per-slide notes (already plain text, just split by ---)."""
+    import re
+    notes = {}
+    sections = re.split(r"\n---\n", manuscript.strip())
+    for i, svg_file in enumerate(svg_files):
+        if i < len(sections):
+            text = sections[i].strip()
+            if text:
+                notes[svg_file.stem] = text
+    return notes

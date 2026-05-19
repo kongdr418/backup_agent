@@ -14,52 +14,41 @@ Given a course topic/title, produce a complete slide manuscript suitable for an 
 
 ## Output Format
 
-Produce a Markdown document where each slide is separated by `---`. Each slide section should contain:
+Produce a plain text document where each slide is separated by `---`. **Each slide section should be written as natural speech** — a single paragraph of 2-3 sentences that the teacher would say when presenting that slide, as if reading a script.
 
-1. **Slide title** as a `## Heading`
-2. **2-5 bullet points** summarizing key content for that slide
-3. **Key data/numbers** highlighted in bold
-4. **Suggested visual elements** in [brackets] — e.g., [diagram: flowchart], [chart: bar], [icon: lightbulb]
+Write in natural, conversational language suitable for being read aloud as a script. Avoid bullet points, markdown formatting, or structured lists.
 
 ## Slide Structure Guidelines
 
-1. **Title slide**: Course topic, subtitle, presenter/author info
-2. **Outline slide**: Brief overview of what will be covered (table of contents style)
-3. **Core concepts**: 3-5 slides covering the main knowledge points
-   - Each concept should have a clear definition
-   - Include examples or analogies where appropriate
-   - Highlight key terms in **bold**
-4. **Practical examples / applications**: 1-2 slides showing real-world use cases
-5. **Summary slide**: Key takeaways, recap of main points
-6. **Q&A / Closing slide**: Thank you, discussion prompts, references
+1. **Title slide**: What the teacher says to introduce the topic
+2. **Outline slide**: What the teacher says to preview the class structure
+3. **Core concepts**: 3-5 slides — each page should be a spoken explanation of the concept, as if the teacher is lecturing
+4. **Practical examples / applications**: Spoken explanation of real-world use cases
+5. **Summary slide**: Key takeaways in natural speech
+6. **Q&A / Closing slide**: Thank you and discussion prompts
 
 ## Principles
 
-- **Clarity first**: Each slide should convey ONE main idea
-- **Hierarchy**: Most important information first within each slide
-- **Concise**: Bullet points, not paragraphs — aim for 15-25 words per bullet
-- **Visual thinking**: Suggest where diagrams, charts, or icons would enhance understanding
-- **Progressive complexity**: Start simple, build up
-- **Audience awareness**: Write for learners, not experts
+- **Conversational**: Write as if speaking to students, not writing for a textbook
+- **Concise**: 2-3 sentences per slide, covering the main point
+- **Natural**: Use natural sentence structures that flow when read aloud
+- **No formatting**: No bold, no bullet points, no markdown — just plain sentences
+- **No visual hints**: Do not include [diagram:...], [icon:...] or any bracket notation
 
 ## Output Example
 
 ```
 ---
 
-## 什么是机器学习
-
-- **机器学习**是人工智能的一个分支，让计算机从数据中学习规律
-- 无需显式编程，系统自动从经验中改进
-- 三大学习类型：监督学习、无监督学习、强化学习
-- [diagram: three types of ML with arrows]
+同学们好，今天我们来学习什么是机器学习。机器学习是人工智能的一个重要分支，它让计算机能够从数据中自动学习规律，而不需要我们手动编写规则。简单来说，就是让机器通过大量数据来发现规律、做出预测。
 
 ---
 
-## 监督学习详解
+接下来我们来看监督学习。监督学习是最常见的一种机器学习方法，它使用标注好的数据来训练模型。比如在垃圾邮件识别中，我们给模型提供大量标记为"垃圾邮件"或"正常邮件"的样本，模型学会区分两者后，就能自动判断新邮件的类别。
 
-- 使用**标注数据**进行训练（输入-输出对）
-- 典型算法：线性回归、决策树、神经网络
-- 应用：垃圾邮件过滤、图像识别、语音识别
-- [chart: accuracy comparison of algorithms]
+---
+
+无监督学习则不同，它处理的是没有标注的数据。模型需要自己发现数据中的隐藏结构，比如把用户按照购物行为分成不同的群体，这就是聚类分析。典型算法包括K均值聚类和主成分分析。
+
+---
 ```

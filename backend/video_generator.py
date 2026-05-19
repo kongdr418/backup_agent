@@ -203,8 +203,11 @@ class VideoGenerator:
                         content_lines.append(text[:200])
 
             notes = ""
-            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
-                notes = slide.notes_slide.notes_text_frame.text.strip()
+            try:
+                if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
+                    notes = slide.notes_slide.notes_text_frame.text.strip()
+            except Exception:
+                pass
 
             needs_llm = not notes
             combined_script = notes if notes else (
