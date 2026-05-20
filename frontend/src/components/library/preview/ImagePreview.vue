@@ -118,17 +118,38 @@ function onImgError() {
 
 async function initPanzoom() {
   if (!panContainer.value || !imgEl.value) return
+
+  // 图片还没加载完则跳过，等 onLoad 时再初始化
+  const img = imgEl.value
+  if (!img.complete || !img.naturalWidth) return
+
+  // 清理旧实例，防止重复初始化
+  if (panzoomInstance) {
+    panzoomInstance.destroy()
+    panzoomInstance = null
+  }
+
   try {
     const Panzoom = (await import('@panzoom/panzoom')).default
-    panzoomInstance = Panzoom(imgEl.value, {
+    const container = panContainer.value
+
+    const imgW = img.naturalWidth
+    const imgH = img.naturalHeight
+    const containerW = container.offsetWidth
+    const containerH = container.offsetHeight
+
+    // 计算初始偏移使图片居中
+    const startX = (containerW - imgW) / 2
+    const startY = (containerH - imgH) / 2
+
+    panzoomInstance = Panzoom(img, {
       maxScale: 5,
       minScale: 0.5,
       step: 0.3,
-      contain: 'outside',
+      contain: false,
+      startX,
+      startY,
     })
-    panContainer.value.addEventListener('wheel', (e) => {
-      panzoomInstance?.zoomWithWheel(e)
-    }, { passive: false })
   } catch {
     // panzoom not available, image still shows without zoom
   }
@@ -152,8 +173,8 @@ function resetZoom() {
   panzoomInstance?.reset()
 }
 
-function onWheel(_e: WheelEvent) {
-  // handled by panzoom
+function onWheel(e: WheelEvent) {
+  panzoomInstance?.zoomWithWheel(e)
 }
 
 onMounted(() => {
