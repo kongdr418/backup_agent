@@ -268,8 +268,9 @@ def chat_stream():
                     # 使用流式方式发送大数据，避免一次发送过多数据导致缓冲问题
                     audio_data = item.get('audio_base64', '')
                     voiceover_text = item.get('voiceover_text', '')
+                    audio_filename = item.get('audio_filename', '')
                     # 分段发送音频数据
-                    yield f"data: {json.dumps({'type': 'video_audio_data', 'audio_base64': audio_data, 'voiceover_text': voiceover_text}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'video_audio_data', 'audio_base64': audio_data, 'audio_filename': audio_filename, 'voiceover_text': voiceover_text}, ensure_ascii=False)}\n\n"
 
                 # 情况5：图片数据（单独发送）
                 elif isinstance(item, dict) and item.get('type') == 'graphic_image_data':
@@ -277,7 +278,8 @@ def chat_stream():
                     print(f"[DEBUG APP] 收到图片数据，准备发送，base64长度: {len(item.get('image_base64', ''))}")
                     image_data = item.get('image_base64', '')
                     prompt = item.get('prompt', '')
-                    yield f"data: {json.dumps({'type': 'graphic_image_data', 'image_base64': image_data, 'prompt': prompt}, ensure_ascii=False)}\n\n"
+                    image_filename = item.get('image_filename', '')
+                    yield f"data: {json.dumps({'type': 'graphic_image_data', 'image_base64': image_data, 'image_filename': image_filename, 'prompt': prompt}, ensure_ascii=False)}\n\n"
 
                 # 情况6：图文文案数据（小红书 markdown 文案）
                 elif isinstance(item, dict) and item.get('type') == 'graphic_text_data':
@@ -938,6 +940,7 @@ def download_file():
         'generators/generated_lectures', 'generators/generated_outlines',
         'generators/generated_speeches', 'generators/generated_cards',
         'generators/generated_mindmaps', 'generators/generated_ppt',
+        'generators/generated_content',
     ]]
     if not any(abs_path.startswith(p) for p in allowed_prefixes):
         return jsonify({'error': '文件不在允许的目录中'}), 403
@@ -1074,7 +1077,7 @@ def get_graphic_image(filename):
     from urllib.parse import unquote
     filename = unquote(filename)
     print(f"[DEBUG] 加载图文图片请求: filename={filename}")
-    path = os.path.join(os.path.dirname(__file__), 'generated_content', 'images', filename)
+    path = os.path.join(GENERATORS_DIR, 'generated_content', 'images', filename)
     print(f"[DEBUG] 图片完整路径: {path}, 存在: {os.path.exists(path)}")
     if os.path.exists(path):
         with open(path, 'rb') as img:
@@ -1089,7 +1092,7 @@ def get_video_audio(filename):
     import base64
     from urllib.parse import unquote
     filename = unquote(filename)
-    path = os.path.join(os.path.dirname(__file__), 'generated_content', 'audio', filename)
+    path = os.path.join(GENERATORS_DIR, 'generated_content', 'audio', filename)
     if os.path.exists(path):
         with open(path, 'rb') as audio:
             b64 = base64.b64encode(audio.read()).decode('utf-8')

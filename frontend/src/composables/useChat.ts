@@ -105,14 +105,14 @@ export function useChat() {
         if (ev.type === 'graphic_image_data' && ev.image_base64) {
           chatStore.updateLastMessage(sid, (m) => {
             m.type = 'graphic_image'
-            m.data = { ...(m.data || {}), imageBase64: ev.image_base64, prompt: ev.prompt }
+            m.data = { ...(m.data || {}), imageBase64: ev.image_base64, image_path: ev.image_filename, prompt: ev.prompt }
           })
         }
 
         if (ev.type === 'video_audio_data' && ev.audio_base64) {
           chatStore.updateLastMessage(sid, (m) => {
             m.type = 'video_audio'
-            m.data = { audioBase64: ev.audio_base64, voiceoverText: ev.voiceover_text }
+            m.data = { audioBase64: ev.audio_base64, audio_path: ev.audio_filename, voiceoverText: ev.voiceover_text }
           })
         }
 

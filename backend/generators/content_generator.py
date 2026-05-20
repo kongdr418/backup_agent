@@ -191,6 +191,7 @@ class ContentGenerator:
                     'data': {
                         'type': 'graphic_image_data',
                         'image_base64': image_base64_url,
+                        'image_filename': image_filename,
                         'prompt': image_prompt
                     },
                     'message': '🎨 封面图片已生成'
@@ -327,6 +328,7 @@ class ContentGenerator:
                     'data': {
                         'type': 'video_audio_data',
                         'audio_base64': audio_base64_url,
+                        'audio_filename': audio_filename,
                         'voiceover_text': voiceover
                     },
                     'message': '🔊 音频已合成'

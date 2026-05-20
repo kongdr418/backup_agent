@@ -23,6 +23,7 @@
           v-if="file.type === 'content_image'"
           :src="imageUrl(file.name)"
           :name="file.name"
+          :api-mode="true"
         />
 
         <!-- Audio preview -->

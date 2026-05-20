@@ -18,7 +18,7 @@
     >
       <img
         ref="imgEl"
-        :src="src"
+        :src="imageDataUrl || src"
         :alt="name || '图片'"
         class="preview-img"
         @load="onLoad"
@@ -51,14 +51,60 @@ import { Download, ZoomIn, ZoomOut, Maximize2, ExternalLink } from 'lucide-vue-n
 const props = defineProps<{
   src: string
   name?: string
+  apiMode?: boolean  // true when src is a JSON API endpoint returning {image: base64}
 }>()
 
 const panContainer = ref<HTMLElement | null>(null)
 const imgEl = ref<HTMLImageElement | null>(null)
 const loading = ref(true)
 const error = ref('')
+const imageDataUrl = ref('')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let panzoomInstance: any = null
+
+async function fetchImageFromApi(url: string): Promise<string> {
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`API request failed: ${resp.status}`)
+  const json = await resp.json()
+  if (!json.image) throw new Error('No image data in response')
+  // json.image is already base64, construct data URL
+  return `data:image/jpeg;base64,${json.image}`
+}
+
+async function fetchImageAsDataUrl(url: string): Promise<string> {
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
+  const blob = await resp.blob()
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function loadImage() {
+  loading.value = true
+  error.value = ''
+  imageDataUrl.value = ''
+
+  try {
+    if (props.apiMode) {
+      // Fetch from JSON API endpoint (e.g., /api/graphic/image/xxx)
+      const dataUrl = await fetchImageFromApi(props.src)
+      imageDataUrl.value = dataUrl
+    } else {
+      // Fetch binary stream and convert to data URL
+      const dataUrl = await fetchImageAsDataUrl(props.src)
+      imageDataUrl.value = dataUrl
+    }
+    loading.value = false
+    initPanzoom()
+  } catch (e) {
+    loading.value = false
+    error.value = '图片加载失败'
+  }
+}
 
 function onLoad() {
   loading.value = false
@@ -110,16 +156,19 @@ function onWheel(_e: WheelEvent) {
   // handled by panzoom
 }
 
+onMounted(() => {
+  loadImage()
+})
+
 onUnmounted(() => {
   panzoomInstance?.destroy()
   panzoomInstance = null
 })
 
 watch(() => props.src, () => {
-  loading.value = true
-  error.value = ''
   panzoomInstance?.destroy()
   panzoomInstance = null
+  loadImage()
 })
 </script>
 
