@@ -2,12 +2,12 @@
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
       <!-- Quick action chips -->
-      <div v-if="!isLoading" class="flex flex-wrap gap-1.5 mb-2">
+      <div v-if="!isLoading" class="flex gap-1 mb-2">
         <button
           v-for="q in quickActions"
           :key="q.label"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded-full border border-line bg-bg-surface text-ink-2 hover:border-ink-4 hover:text-ink-1 transition-colors"
-          @click="apply(q.prompt)"
+          class="inline-flex items-center gap-1 px-2 py-0.5 text-[12px] rounded-full border border-line bg-bg-surface text-ink-2 hover:border-ink-4 hover:text-ink-1 transition-colors whitespace-nowrap"
+          @click="apply(q)"
         >
           <component :is="q.icon" class="w-3.5 h-3.5" />
           {{ q.label }}
@@ -19,15 +19,24 @@
         class="flex items-center gap-2 glass-thin rounded-xl p-1.5 transition-colors focus-within:border-accent/50"
       >
         <!-- Format toggle -->
-        <div class="flex items-center gap-0.5 px-1 shrink-0">
+        <div
+          class="flex items-center gap-0.5 px-1 shrink-0"
+          :title="docxAvailable ? '' : '当前内容类型不支持 DOCX 导出'"
+        >
           <button
             v-for="fmt in formats"
             :key="fmt.value"
             class="px-2 py-1 text-[12px] rounded-md transition-all"
-            :class="selectedFormat === fmt.value
-              ? 'bg-brand text-white shadow-sm'
-              : 'text-ink-3 hover:text-ink-1'"
-            @click="selectedFormat = fmt.value"
+            :class="[
+              selectedFormat === fmt.value
+                ? 'bg-brand text-white shadow-sm'
+                : 'text-ink-3 hover:text-ink-1',
+              !docxAvailable && fmt.value === 'docx'
+                ? 'opacity-40 cursor-not-allowed hover:text-ink-3'
+                : ''
+            ]"
+            :disabled="!docxAvailable && fmt.value === 'docx'"
+            @click="!docxAvailable && fmt.value === 'docx' ? null : selectedFormat = fmt.value"
           >
             {{ fmt.label }}
           </button>
@@ -74,8 +83,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
-import { Send, Square, FileText, BookOpen, Image as ImageIcon, Video, GraduationCap, Lightbulb } from 'lucide-vue-next'
+import { computed, nextTick, ref, watch } from 'vue'
+import {
+  Send, Square, FileText, BookOpen, Image as ImageIcon, Video,
+  GraduationCap, Lightbulb, List, ClipboardList, GitBranch
+} from 'lucide-vue-next'
 
 defineProps<{ isLoading: boolean }>()
 const emit = defineEmits<{ send: [text: string]; cancel: [] }>()
@@ -89,24 +101,60 @@ const formats = [
 ]
 const selectedFormat = ref('md')
 
-const quickActions = [
-  { label: '讲义', prompt: '生成讲义：', icon: BookOpen },
-  { label: '讲稿', prompt: '讲稿：', icon: FileText },
-  { label: '习题集', prompt: '习题集：', icon: GraduationCap },
-  { label: '知识卡片', prompt: '知识卡片：', icon: Lightbulb },
-  { label: '图文', prompt: '生成图文：', icon: ImageIcon },
-  { label: '短视频脚本', prompt: '生成短视频：', icon: Video },
+// 不支持 DOCX 的触发词
+const noDocxTriggers = [
+  '生成讲义', '讲义',
+  '思维导图', '导图',
+  '生成图文',
+  '生成短视频',
+  '制作PPT',
+]
+
+const docxAvailable = computed(() => {
+  const text = input.value.trim()
+  if (!text) return true
+  return !noDocxTriggers.some(t => text.includes(t))
+})
+
+// 当 DOCX 不可用时自动切回 MD
+watch(docxAvailable, (available) => {
+  if (!available && selectedFormat.value === 'docx') {
+    selectedFormat.value = 'md'
+  }
+})
+
+interface QuickAction {
+  label: string
+  prompt: string
+  icon: any
+  supportsDocx: boolean
+}
+
+const quickActions: QuickAction[] = [
+  { label: '课程大纲', prompt: '课程大纲：', icon: List, supportsDocx: true },
+  { label: '讲稿', prompt: '讲稿：', icon: FileText, supportsDocx: true },
+  { label: '讲义', prompt: '生成讲义：', icon: BookOpen, supportsDocx: false },
+  { label: '习题集', prompt: '习题集：', icon: GraduationCap, supportsDocx: true },
+  { label: '课堂测验', prompt: '课堂测验：', icon: ClipboardList, supportsDocx: true },
+  { label: '知识卡片', prompt: '知识卡片：', icon: Lightbulb, supportsDocx: true },
+  { label: '思维导图', prompt: '思维导图：', icon: GitBranch, supportsDocx: false },
+  { label: '图文', prompt: '生成图文：', icon: ImageIcon, supportsDocx: false },
+  { label: '短视频脚本', prompt: '生成短视频：', icon: Video, supportsDocx: false },
 ]
 
 const placeholder = '描述你想生成的内容,例如：生成讲义：神经网络入门'
 
-function apply(p: string) {
-  input.value = p
+function apply(q: QuickAction) {
+  input.value = q.prompt
+  // 点击不支持 docx 的快捷按钮时自动切回 MD
+  if (!q.supportsDocx && selectedFormat.value === 'docx') {
+    selectedFormat.value = 'md'
+  }
   nextTick(() => {
     const t = taRef.value
     if (t) {
       t.focus()
-      t.setSelectionRange(p.length, p.length)
+      t.setSelectionRange(q.prompt.length, q.prompt.length)
       autoResize({ target: t } as unknown as Event)
     }
   })
@@ -138,12 +186,14 @@ function send() {
   const text = input.value.trim()
   if (!text) return
   const fmt = selectedFormat.value
-  // Append format suffix if not already present and not MD (default)
-  const msg = fmt === 'docx' && !/\s*docx\s*$/i.test(text)
+  // 安全检查：如果当前内容不支持 docx，强制使用 md
+  const effectiveFmt = docxAvailable.value ? fmt : 'md'
+  const msg = effectiveFmt === 'docx' && !/\s*docx\s*$/i.test(text)
     ? `${text} docx`
     : text
   emit('send', msg)
   input.value = ''
+  selectedFormat.value = 'md'
   nextTick(() => {
     if (taRef.value) taRef.value.style.height = 'auto'
   })
