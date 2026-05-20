@@ -37,9 +37,9 @@
       <button class="zoom-btn" @click="resetZoom" title="重置">
         <Maximize2 class="w-3.5 h-3.5" />
       </button>
-      <a :href="src" target="_blank" rel="noopener" class="zoom-btn" title="原图">
+      <button class="zoom-btn" @click="openOriginal" title="原图">
         <ExternalLink class="w-3.5 h-3.5" />
-      </a>
+      </button>
     </div>
   </div>
 </template>
@@ -133,15 +133,10 @@ async function initPanzoom() {
     const Panzoom = (await import('@panzoom/panzoom')).default
     const container = panContainer.value
 
-    // 用 offsetWidth/offsetHeight（CSS 限制后的实际渲染尺寸），不用 naturalWidth/naturalHeight
-    const imgW = img.offsetWidth
-    const imgH = img.offsetHeight
-    const containerW = container.offsetWidth
-    const containerH = container.offsetHeight
-
-    // 计算初始偏移使图片居中
-    const startX = (containerW - imgW) / 2
-    const startY = (containerH - imgH) / 2
+    // pan-container 的 flexbox 已经把图片居中，panzoom 不需要额外偏移
+    // 否则 translate 会叠加在 flexbox 居中之上，导致双倍偏移
+    const startX = 0
+    const startY = 0
 
     panzoomInstance = Panzoom(img, {
       maxScale: 5,
@@ -176,6 +171,32 @@ function resetZoom() {
 
 function onWheel(e: WheelEvent) {
   panzoomInstance?.zoomWithWheel(e)
+}
+
+function openOriginal() {
+  const url = imageDataUrl.value || props.src
+  if (!url) return
+
+  // data URL 太长时直接用 <a href> 打开会空白，转为 Blob URL 更可靠
+  if (url.startsWith('data:')) {
+    const parts = url.split(',')
+    const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg'
+    const byteString = parts[0].endsWith(';base64')
+      ? atob(parts[1])
+      : decodeURIComponent(parts[1])
+    const ab = new ArrayBuffer(byteString.length)
+    const ia = new Uint8Array(ab)
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i)
+    }
+    const blob = new Blob([ab], { type: mime })
+    const blobUrl = URL.createObjectURL(blob)
+    window.open(blobUrl, '_blank')
+    // 延迟释放，避免窗口还没打开就被回收
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000)
+  } else {
+    window.open(url, '_blank')
+  }
 }
 
 onMounted(() => {
