@@ -133,8 +133,9 @@ async function initPanzoom() {
     const Panzoom = (await import('@panzoom/panzoom')).default
     const container = panContainer.value
 
-    const imgW = img.naturalWidth
-    const imgH = img.naturalHeight
+    // 用 offsetWidth/offsetHeight（CSS 限制后的实际渲染尺寸），不用 naturalWidth/naturalHeight
+    const imgW = img.offsetWidth
+    const imgH = img.offsetHeight
     const containerW = container.offsetWidth
     const containerH = container.offsetHeight
 
