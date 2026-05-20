@@ -7,7 +7,7 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          'MiSans',
+          'DM Sans',
           '-apple-system',
           'BlinkMacSystemFont',
           '"PingFang SC"',
@@ -15,7 +15,13 @@ export default {
           'system-ui',
           'sans-serif',
         ],
-        mono: ['"JetBrains Mono"', 'Menlo', 'Consolas', 'monospace'],
+        display: [
+          'Playfair Display',
+          'Georgia',
+          '"Times New Roman"',
+          'serif',
+        ],
+        mono: ['"DM Mono"', '"JetBrains Mono"', 'Menlo', 'Consolas', 'monospace'],
       },
       colors: {
         // 中性面 — 从 tokens.css var() 注入,保留 alpha 工具(/60 等)
@@ -59,12 +65,32 @@ export default {
         warning: 'rgb(var(--warning-rgb) / <alpha-value>)',
         danger: 'rgb(var(--danger-rgb) / <alpha-value>)',
         info: 'rgb(var(--info-rgb) / <alpha-value>)',
-        // 兼容旧代码(原 brand 类)— 别名指向 accent
+        // Brand — Warm Studio palette
         brand: {
+          forest: 'rgb(var(--forest-rgb) / <alpha-value>)',
+          'forest-light': 'rgb(var(--forest-light-rgb) / <alpha-value>)',
+          'forest-pale': 'rgb(var(--forest-pale-rgb) / <alpha-value>)',
+          terra: 'rgb(var(--terra-rgb) / <alpha-value>)',
+          'terra-light': 'rgb(var(--terra-light-rgb) / <alpha-value>)',
+          'terra-pale': 'rgb(var(--terra-pale-rgb) / <alpha-value>)',
+          amber: 'rgb(var(--amber-rgb) / <alpha-value>)',
+          'amber-pale': 'rgb(var(--amber-pale-rgb) / <alpha-value>)',
+          sage: 'rgb(var(--sage-rgb) / <alpha-value>)',
           DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
           hover: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
           subtle: 'rgb(var(--accent-soft-rgb) / <alpha-value>)',
         },
+        // Nav module colors
+        nav: {
+          chat: 'rgb(var(--nav-chat-rgb) / <alpha-value>)',
+          ppt: 'rgb(var(--nav-ppt-rgb) / <alpha-value>)',
+          video: 'rgb(var(--nav-video-rgb) / <alpha-value>)',
+          library: 'rgb(var(--nav-library-rgb) / <alpha-value>)',
+          memory: 'rgb(var(--nav-memory-rgb) / <alpha-value>)',
+          settings: 'rgb(var(--nav-settings-rgb) / <alpha-value>)',
+        },
+        // 兼容旧代码(原 brand 类)— 别名指向 accent
+        // 兼容别名将通过 brand.xxx 访问 warm palette
       },
       boxShadow: {
         card: 'var(--shadow-card)',
@@ -98,14 +124,24 @@ export default {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        'fade-in-scale': {
+          '0%': { opacity: '0', transform: 'scale(0.96)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        'slide-up-fade-warm': {
+          '0%': { opacity: '0', transform: 'translateY(16px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
         'pulse-soft': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.6' },
         },
       },
       animation: {
-        'slide-up-fade': 'slide-up-fade 220ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+        'slide-up-fade': 'slide-up-fade 250ms cubic-bezier(0.16, 1, 0.3, 1)',
         'fade-in': 'fade-in 180ms ease-out',
+        'fade-in-scale': 'fade-in-scale 400ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'slide-up-fade-warm': 'slide-up-fade-warm 400ms cubic-bezier(0.16, 1, 0.3, 1)',
         'pulse-soft': 'pulse-soft 1.6s ease-in-out infinite',
       },
     },

@@ -1050,7 +1050,7 @@ class MiniMaxAgent:
                 yield self._step_progress('exercise', update)
 
     def _enrich_completion_data(self, filtered_data: dict, gen_type: str, topic: str, output_format: str) -> dict:
-        """读取文件内容并尝试生成另一种格式，丰富完成事件数据"""
+        """读取文件内容，丰富完成事件数据"""
         filepath = filtered_data.get('filepath', '')
         if not filepath or not os.path.isfile(filepath):
             return filtered_data
@@ -1061,61 +1061,6 @@ class MiniMaxAgent:
                 filtered_data['content'] = f.read()
         except (UnicodeDecodeError, IOError):
             pass
-
-        # 尝试生成另一种格式（md ↔ docx）
-        if output_format == 'md':
-            alt_format = 'docx'
-        elif output_format == 'docx':
-            alt_format = 'md'
-        else:
-            return filtered_data
-
-        try:
-            alt_filepath = filepath.rsplit('.', 1)[0] + f'.{alt_format}'
-            if gen_type == 'exercise':
-                if alt_format == 'docx':
-                    json_content = self.exercise_generator._generate_json_content(topic)
-                    self.exercise_generator._save_as_docx(json_content, alt_filepath)
-                else:
-                    md_content = self.exercise_generator._generate_markdown_content(topic)
-                    with open(alt_filepath, 'w', encoding='utf-8') as f:
-                        f.write(md_content)
-            elif gen_type == 'quiz':
-                if alt_format == 'docx':
-                    json_content = self.quiz_generator._generate_json_content(topic)
-                    self.quiz_generator._save_as_docx(json_content, alt_filepath)
-                else:
-                    md_content = self.quiz_generator._generate_markdown_content(topic)
-                    with open(alt_filepath, 'w', encoding='utf-8') as f:
-                        f.write(md_content)
-            elif gen_type == 'card':
-                if alt_format == 'docx':
-                    json_content = self.knowledge_card_generator._generate_json_content(topic)
-                    self.knowledge_card_generator._save_as_docx(json_content, alt_filepath)
-                else:
-                    md_content = self.knowledge_card_generator._generate_markdown_content(topic)
-                    with open(alt_filepath, 'w', encoding='utf-8') as f:
-                        f.write(md_content)
-            elif gen_type == 'speech':
-                if alt_format == 'docx':
-                    json_content = self.speech_generator._generate_json_content(topic)
-                    self.speech_generator._save_as_docx(json_content, alt_filepath)
-                else:
-                    md_content = self.speech_generator._generate_markdown_content(topic)
-                    with open(alt_filepath, 'w', encoding='utf-8') as f:
-                        f.write(md_content)
-            elif gen_type == 'outline':
-                if alt_format == 'docx':
-                    json_content = self.course_outline_generator._generate_json_content(topic)
-                    self.course_outline_generator._save_as_docx(json_content, alt_filepath)
-                else:
-                    md_content = self.course_outline_generator._generate_markdown_content(topic)
-                    with open(alt_filepath, 'w', encoding='utf-8') as f:
-                        f.write(md_content)
-            if os.path.isfile(alt_filepath):
-                filtered_data[f'{alt_format}_filepath'] = alt_filepath
-        except Exception as e:
-            print(f"[WARN] 生成备选格式失败: {e}")
 
         return filtered_data
 

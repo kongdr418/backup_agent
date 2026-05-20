@@ -2,7 +2,7 @@
   <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides">
     <n-message-provider>
       <n-dialog-provider>
-        <div class="app-root app-mesh">
+        <div class="app-root app-mesh-warm">
           <router-view />
         </div>
       </n-dialog-provider>
@@ -31,38 +31,38 @@ const naiveTheme = computed(() => (effective.value === 'dark' ? darkTheme : null
  */
 const PALETTE = {
   light: {
-    primary: '#0a84ff',
-    primaryHover: '#0071f0',
-    primaryPressed: '#0058c0',
-    success: '#30d158',
-    warning: '#ff9f0a',
-    error: '#ff453a',
-    info: '#5ac8fa',
-    bgBase: '#fafafa',
-    bgSurface: '#ffffff',
-    ink1: '#111827',
-    ink2: '#374151',
-    ink3: '#6b7280',
-    ink4: '#9ca3af',
-    line: '#e5e7eb',
-    bgSubtle: '#f5f5f7',
+    primary: '#2D5016',
+    primaryHover: '#4A7C2B',
+    primaryPressed: '#1C3910',
+    success: '#2D5016',
+    warning: '#92400E',
+    error: '#B84A2B',
+    info: '#1E4D6B',
+    bgBase: '#FAF7F2',
+    bgSurface: '#FFFFFF',
+    ink1: '#1C1917',
+    ink2: '#57534E',
+    ink3: '#A8A29E',
+    ink4: '#D6D3D1',
+    line: '#E7E5E4',
+    bgSubtle: '#F2EDE5',
   },
   dark: {
-    primary: '#4493ff',
-    primaryHover: '#66a8ff',
-    primaryPressed: '#0a84ff',
-    success: '#4cd964',
-    warning: '#ffaf38',
-    error: '#ff6961',
-    info: '#64d2ff',
-    bgBase: '#0b0d10',
-    bgSurface: '#16191d',
-    ink1: '#f1f5f9',
-    ink2: '#d1d5db',
-    ink3: '#9ca3af',
-    ink4: '#6b7280',
-    line: '#26292f',
-    bgSubtle: '#1c1f24',
+    primary: '#7CBF5E',
+    primaryHover: '#9FD482',
+    primaryPressed: '#7CBF5E',
+    success: '#7CBF5E',
+    warning: '#E8B85A',
+    error: '#E87B5A',
+    info: '#64D2FF',
+    bgBase: '#131110',
+    bgSurface: '#1C1917',
+    ink1: '#FAF7F2',
+    ink2: '#A8A29E',
+    ink3: '#78716C',
+    ink4: '#57534E',
+    line: '#2C2825',
+    bgSubtle: '#252220',
   },
 }
 

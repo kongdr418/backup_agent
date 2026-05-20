@@ -1,15 +1,15 @@
 /* ==================================================================
-   Mesh Background — 三层 radial-gradient 叠加 + 28s 缓慢漂移
+   Mesh Background — Warm Studio 三层 radial-gradient 叠加 + 28s 缓慢漂移
    只渲染在 body::before 上(z-index: -1),不挡交互。
-   gallery: 蓝-青-紫深水调,与 accent 主题一致。
+   warm: 森林绿-琥珀-赤陶暖水调
    ================================================================== */
 
-.app-mesh {
+.app-mesh-warm {
   position: relative;
   isolation: isolate;
 }
 
-.app-mesh::before {
+.app-mesh-warm::before {
   content: '';
   position: fixed;
   inset: -10%;
@@ -17,34 +17,54 @@
   pointer-events: none;
   background:
     radial-gradient(
-      at 18% 22%,
-      rgb(var(--mesh-1-rgb) / var(--mesh-alpha)) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      at 82% 70%,
-      rgb(var(--mesh-2-rgb) / var(--mesh-alpha)) 0%,
+      at 15% 25%,
+      rgba(45, 80, 22, 0.08) 0%,
       transparent 50%
     ),
     radial-gradient(
+      at 80% 75%,
+      rgba(184, 74, 43, 0.06) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
       at 50% 100%,
-      rgb(var(--mesh-3-rgb) / var(--mesh-alpha)) 0%,
+      rgba(201, 150, 60, 0.07) 0%,
       transparent 60%
     );
   filter: blur(40px);
-  animation: mesh-drift 28s ease-in-out infinite alternate;
+  animation: mesh-drift-warm 28s ease-in-out infinite alternate;
   will-change: transform;
 }
 
-@keyframes mesh-drift {
+@keyframes mesh-drift-warm {
   0% { transform: translate3d(0, 0, 0) scale(1); }
   50% { transform: translate3d(-3%, 2%, 0) scale(1.04); }
   100% { transform: translate3d(2%, -3%, 0) scale(1.02); }
 }
 
-/* 减少动效偏好 — 保持渐变但停止动画 */
+/* 暗模式 — 冷调深色渐变 */
+:root.dark .app-mesh-warm::before {
+  background:
+    radial-gradient(
+      at 15% 25%,
+      rgba(124, 191, 94, 0.06) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      at 80% 75%,
+      rgba(232, 123, 90, 0.05) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      at 50% 100%,
+      rgba(232, 184, 90, 0.05) 0%,
+      transparent 60%
+    );
+}
+
+/* 减少动效偏好 */
 @media (prefers-reduced-motion: reduce) {
-  .app-mesh::before {
+  .app-mesh-warm::before {
     animation: none;
   }
 }

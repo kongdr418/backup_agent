@@ -114,7 +114,7 @@ defineExpose({ mode, effective })
   flex-shrink: 0;
   padding: 4px 6px;
   border-radius: 10px;
-  transition: background-color var(--duration-base) var(--ease-spring);
+  transition: background-color var(--duration-base) var(--ease-out);
 }
 .logo-cell:hover {
   background: rgb(var(--bg-subtle-rgb) / 0.5);
@@ -128,17 +128,18 @@ defineExpose({ mode, effective })
   justify-content: center;
   background: linear-gradient(
     135deg,
-    rgb(var(--accent-rgb)) 0%,
-    rgb(var(--hue-ppt-rgb)) 100%
+    rgb(var(--forest-rgb)) 0%,
+    rgb(var(--nav-ppt-rgb)) 100%
   );
   color: white;
-  box-shadow: 0 2px 8px -2px rgb(var(--accent-rgb) / 0.4);
+  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
 }
 .logo-text {
+  font-family: 'Playfair Display', Georgia, serif;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: rgb(var(--ink-1-rgb));
+  color: var(--ink-primary);
   white-space: nowrap;
 }
 
@@ -159,25 +160,25 @@ defineExpose({ mode, effective })
   height: 34px;
   border-radius: 9px;
   font-size: 13px;
-  color: rgb(var(--ink-2-rgb));
+  color: var(--ink-secondary);
   text-decoration: none;
   transition:
-    color var(--duration-base) var(--ease-spring),
-    background-color var(--duration-base) var(--ease-spring),
-    transform var(--duration-quick) var(--ease-spring);
+    color var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
   white-space: nowrap;
 }
 .nav-pill:hover {
-  color: rgb(var(--ink-1-rgb));
+  color: var(--ink-primary);
   background: rgb(var(--bg-subtle-rgb) / 0.7);
 }
 .nav-pill:active {
   transform: scale(0.97);
 }
 
-/* Active 状态 — 用模块 hue */
+/* Active state — warm palette colors */
 .nav-pill.is-active {
-  color: rgb(var(--hue-active));
+  color: var(--hue-active);
   background: rgb(var(--hue-active) / 0.10);
   font-weight: 500;
   position: relative;
@@ -191,16 +192,16 @@ defineExpose({ mode, effective })
   width: 18px;
   height: 2px;
   border-radius: 0 0 3px 3px;
-  background: rgb(var(--hue-active));
+  background: var(--hue-active);
 }
 
-/* hue 类 — 把 --hue-active 切到对应模块 */
-.hue-dashboard { --hue-active: var(--hue-dashboard-rgb); }
-.hue-chat { --hue-active: var(--hue-chat-rgb); }
-.hue-ppt { --hue-active: var(--hue-ppt-rgb); }
-.hue-library { --hue-active: var(--hue-library-rgb); }
-.hue-memory { --hue-active: var(--hue-memory-rgb); }
-.hue-settings { --hue-active: var(--hue-settings-rgb); }
+/* hue class — switch --hue-active to the module color */
+.hue-dashboard { --hue-active: var(--nav-chat); }
+.hue-chat { --hue-active: var(--nav-chat); }
+.hue-ppt { --hue-active: var(--nav-ppt); }
+.hue-library { --hue-active: var(--nav-library); }
+.hue-memory { --hue-active: var(--nav-memory); }
+.hue-settings { --hue-active: var(--nav-settings); }
 
 /* Right actions */
 .right-stack {
@@ -217,18 +218,18 @@ defineExpose({ mode, effective })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgb(var(--ink-2-rgb));
+  color: var(--ink-secondary);
   background: transparent;
   border: none;
   cursor: pointer;
   transition:
-    background-color var(--duration-base) var(--ease-spring),
-    color var(--duration-base) var(--ease-spring),
-    transform var(--duration-quick) var(--ease-spring);
+    background-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 .action-btn:hover {
   background: rgb(var(--bg-subtle-rgb) / 0.7);
-  color: rgb(var(--ink-1-rgb));
+  color: var(--ink-primary);
 }
 .action-btn:active {
   transform: scale(0.92);
@@ -242,8 +243,8 @@ defineExpose({ mode, effective })
   align-items: center;
   justify-content: center;
   background: rgb(var(--bg-subtle-rgb));
-  color: rgb(var(--ink-2-rgb));
-  border: 1px solid rgb(var(--line-rgb));
+  color: var(--ink-secondary);
+  border: 1px solid var(--line);
   margin-left: 4px;
 }
 

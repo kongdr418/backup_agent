@@ -43,8 +43,15 @@
 }
 
 /* 高光 — 模块 hue 在玻璃上的应用 */
-.glass-hue-chat { box-shadow: inset 0 1px 0 rgb(var(--hue-chat-rgb) / 0.20); }
-.glass-hue-ppt { box-shadow: inset 0 1px 0 rgb(var(--hue-ppt-rgb) / 0.20); }
-.glass-hue-library { box-shadow: inset 0 1px 0 rgb(var(--hue-library-rgb) / 0.20); }
-.glass-hue-memory { box-shadow: inset 0 1px 0 rgb(var(--hue-memory-rgb) / 0.20); }
-.glass-hue-settings { box-shadow: inset 0 1px 0 rgb(var(--hue-settings-rgb) / 0.20); }
+.glass-hue-chat { box-shadow: inset 0 1px 0 rgba(45, 80, 22, 0.20); }
+.glass-hue-ppt { box-shadow: inset 0 1px 0 rgba(124, 74, 140, 0.20); }
+.glass-hue-library { box-shadow: inset 0 1px 0 rgba(140, 90, 43, 0.20); }
+.glass-hue-memory { box-shadow: inset 0 1px 0 rgba(107, 74, 94, 0.20); }
+.glass-hue-settings { box-shadow: inset 0 1px 0 rgba(94, 107, 124, 0.20); }
+
+/* 暗模式高光 */
+:root.dark .glass-hue-chat { box-shadow: inset 0 1px 0 rgba(124, 191, 94, 0.20); }
+:root.dark .glass-hue-ppt { box-shadow: inset 0 1px 0 rgba(170, 120, 200, 0.20); }
+:root.dark .glass-hue-library { box-shadow: inset 0 1px 0 rgba(210, 155, 70, 0.20); }
+:root.dark .glass-hue-memory { box-shadow: inset 0 1px 0 rgba(190, 130, 165, 0.20); }
+:root.dark .glass-hue-settings { box-shadow: inset 0 1px 0 rgba(130, 155, 190, 0.20); }

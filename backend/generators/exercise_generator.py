@@ -6,6 +6,8 @@
 
 import os
 import re
+import threading
+import time
 from datetime import datetime
 from typing import Generator, Optional
 
@@ -28,7 +30,6 @@ class ExerciseGenerator:
         - 习题集：Python基础 docx
         - 习题集docx：Python基础
         """
-        # 检测是否指定 docx 格式
         output_format = "md"
         if re.search(r'习题集.*docx|docx.*习题集', message, re.IGNORECASE):
             output_format = "docx"
@@ -53,15 +54,10 @@ class ExerciseGenerator:
         return None
 
     def generate_exercise_stream(self, topic: str, output_format: str = "md") -> Generator[dict, None, None]:
-        """流式生成习题集
-
-        Args:
-            topic: 主题
-            output_format: 输出格式，"md" 或 "docx"，默认为 "md"
-        """
+        """流式生成习题集"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_data = {'topic': topic, 'filepath': '', 'format': output_format}
+            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
 
             yield {
                 'step': 'start',
@@ -71,15 +67,66 @@ class ExerciseGenerator:
                 'message': f'🚀 开始生成习题集：{topic}'
             }
 
-            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
+            yield {
+                'step': 'generating',
+                'progress': 5,
+                'status': 'running',
+                'data': {},
+                'message': '✨ 正在构思题目结构...'
+            }
+
+            # ── LLM 调用放到后台线程，主线程持续发送递增进度 ──
+            result_container: list = [None]   # [0] = content or None
+            error_container: list = [None]     # [0] = Exception or None
+
+            def llm_task():
+                try:
+                    if output_format == "docx":
+                        result_container[0] = self._generate_json_content(topic)
+                    else:
+                        result_container[0] = self._generate_markdown_content(topic)
+                except Exception as e:
+                    error_container[0] = e
+
+            thread = threading.Thread(target=llm_task)
+            thread.start()
+
+            # 每 0.5s 递增进度，从 5% 到 45%
+            last_progress = 5
+            while thread.is_alive():
+                time.sleep(0.5)
+                if last_progress < 90:
+                    last_progress += 1
+                yield {
+                    'step': 'generating',
+                    'progress': last_progress,
+                    'status': 'running',
+                    'data': {},
+                    'message': '🤖 正在生成习题内容...'
+                }
+
+            thread.join()
+
+            if error_container[0]:
+                raise error_container[0]
+
+            content = result_container[0]
+            if content is None:
+                raise RuntimeError("生成内容为空")
+
+            yield {
+                'step': 'generating',
+                'progress': 92,
+                'status': 'running',
+                'data': {},
+                'message': '💾 正在保存文件...'
+            }
 
             if output_format == "docx":
-                content = self._generate_json_content(topic)
                 filename = f"习题集_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
                 self._save_as_docx(content, filepath)
             else:
-                content = self._generate_markdown_content(topic)
                 filename = f"习题集_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
                 header = f"""---
@@ -92,7 +139,7 @@ type: exercise
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(header + content)
 
-            result_data['filepath'] = filepath
+            result_data = {'topic': topic, 'filepath': filepath, 'format': output_format}
 
             yield {
                 'step': 'complete',
@@ -224,16 +271,13 @@ D. 选项4
         import subprocess
         import tempfile
 
-        # 解析 JSON
         exercise_data = json.loads(json_str)
-
-        # 写入临时 JSON 文件
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
             json.dump(exercise_data, f, ensure_ascii=False)
             temp_json = f.name
 
         try:
-            script_path = os.path.join(os.path.dirname(__file__), 'create_exercise_docx.js')
+            script_path = os.path.join(os.path.dirname(__file__), '../docx_generators/create_exercise_docx.js')
             result = subprocess.run(
                 ['node', script_path, temp_json, filepath],
                 capture_output=True,

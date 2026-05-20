@@ -21,25 +21,28 @@ defineProps<{
 
 <style scoped>
 .page-header {
-  padding: 24px 28px 18px;
+  padding: 28px 32px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .page-title {
-  font-size: 22px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.02em;
-  color: rgb(var(--ink-1-rgb));
-  line-height: 1.3;
+  color: var(--ink-primary);
+  line-height: 1.2;
 }
 
 .page-desc {
   font-size: 13px;
-  color: rgb(var(--ink-3-rgb));
+  color: var(--ink-tertiary);
   margin-top: 4px;
   line-height: 1.5;
+  font-family: 'DM Sans', sans-serif;
 }
 </style>

@@ -934,6 +934,10 @@ def download_file():
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps',
         'generated_svg_ppt', 'ppt_previews', 'generated_videos',
+        'generators/generated_exercises', 'generators/generated_quizzes',
+        'generators/generated_lectures', 'generators/generated_outlines',
+        'generators/generated_speeches', 'generators/generated_cards',
+        'generators/generated_mindmaps', 'generators/generated_ppt',
     ]]
     if not any(abs_path.startswith(p) for p in allowed_prefixes):
         return jsonify({'error': '文件不在允许的目录中'}), 403

@@ -231,16 +231,16 @@ const _ = computed(() => isLoading.value)
   justify-content: center;
   gap: 6px;
   border-radius: 10px;
-  background: rgb(var(--accent-rgb));
+  background: rgb(var(--forest-rgb));
   color: white;
   font-size: 13px;
   border: none;
   cursor: pointer;
-  transition: all 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  box-shadow: 0 2px 8px -2px rgb(var(--accent-rgb) / 0.4);
+  transition: all 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
 }
 .new-chat-btn:hover {
-  background: rgb(var(--accent-hover-rgb));
+  background: rgb(var(--forest-light-rgb));
 }
 
 .session-item {
@@ -251,7 +251,7 @@ const _ = computed(() => isLoading.value)
   cursor: pointer;
   font-size: 13px;
   color: rgb(var(--ink-2-rgb));
-  transition: background-color 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: background-color 250ms cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 .session-item:hover {
@@ -259,7 +259,7 @@ const _ = computed(() => isLoading.value)
   color: rgb(var(--ink-1-rgb));
 }
 .session-item.is-active {
-  background: rgb(var(--accent-rgb) / 0.10);
+  background: rgb(var(--forest-pale-rgb) / 0.5);
   color: rgb(var(--ink-1-rgb));
   font-weight: 500;
 }
@@ -271,7 +271,7 @@ const _ = computed(() => isLoading.value)
   transform: translateY(-50%);
   width: 3px;
   height: 18px;
-  background: rgb(var(--accent-rgb));
+  background: rgb(var(--forest-rgb));
   border-radius: 0 3px 3px 0;
 }
 
@@ -284,7 +284,7 @@ const _ = computed(() => isLoading.value)
   color: rgb(var(--ink-3-rgb));
   cursor: pointer;
   margin-left: 2px;
-  transition: all 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .session-item:hover .session-action {
   opacity: 1;
@@ -294,8 +294,8 @@ const _ = computed(() => isLoading.value)
   color: rgb(var(--ink-1-rgb));
 }
 .session-action.danger:hover {
-  background: rgb(var(--danger-rgb) / 0.12);
-  color: rgb(var(--danger-rgb));
+  background: rgb(var(--terra-pale-rgb) / 0.6);
+  color: rgb(var(--terra-rgb));
 }
 
 /* ============ Main grid (chat + document) ============ */
@@ -305,7 +305,7 @@ const _ = computed(() => isLoading.value)
   height: 100%;
   display: grid;
   grid-template-columns: 1fr;
-  transition: grid-template-columns 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: grid-template-columns 400ms cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 .main-grid.is-split {
@@ -347,7 +347,7 @@ const _ = computed(() => isLoading.value)
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  animation: doc-enter 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: doc-enter 400ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes doc-enter {

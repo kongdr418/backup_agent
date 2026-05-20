@@ -1,10 +1,13 @@
 """
 知识卡片生成器
-生成学生复习用的知识卡片
+生成知识总结卡片
+支持 Markdown 和 Word (.docx) 格式
 """
 
 import os
 import re
+import threading
+import time
 from datetime import datetime
 from typing import Generator, Optional
 
@@ -17,27 +20,17 @@ class KnowledgeCardGenerator:
         os.makedirs(output_dir, exist_ok=True)
 
     def parse_card_request(self, message: str) -> Optional[dict]:
-        """
-        解析知识卡片生成请求
-
-        支持的格式：
-        - 知识卡片：Python基础
-        - 生成卡片：机器学习
-        - 卡片：深度学习
-        - 生成知识卡：XXX
-        - 知识卡片docx：Python基础
-        """
+        """解析知识卡片生成请求"""
         output_format = "md"
-        if re.search(r'卡片.*docx|docx.*卡片', message, re.IGNORECASE):
+        if re.search(r'卡片.*docx|docx.*卡片|知识卡片.*docx', message, re.IGNORECASE):
             output_format = "docx"
             message = re.sub(r'\s*docx\s*', '', message, flags=re.IGNORECASE)
 
         patterns = [
             r'知识卡片[：:]\s*(.+)',
-            r'生成卡片[：:]\s*(.+)',
-            r'生成知识卡[：:]\s*(.+)',
             r'卡片[：:]\s*(.+)',
-            r'知识卡[：:]\s*(.+)',
+            r'生成卡片[：:]\s*(.+)',
+            r'生成知识卡片[：:]\s*(.+)',
         ]
 
         for pattern in patterns:
@@ -54,7 +47,7 @@ class KnowledgeCardGenerator:
         """流式生成知识卡片"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_data = {'topic': topic, 'filepath': '', 'format': output_format}
+            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
 
             yield {
                 'step': 'start',
@@ -64,15 +57,64 @@ class KnowledgeCardGenerator:
                 'message': f'🚀 开始生成知识卡片：{topic}'
             }
 
-            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
+            yield {
+                'step': 'generating',
+                'progress': 5,
+                'status': 'running',
+                'data': {},
+                'message': '✨ 正在收集知识点...'
+            }
+
+            result_container: list = [None]
+            error_container: list = [None]
+
+            def llm_task():
+                try:
+                    if output_format == "docx":
+                        result_container[0] = self._generate_card_json(topic)
+                    else:
+                        result_container[0] = self._generate_card_markdown(topic)
+                except Exception as e:
+                    error_container[0] = e
+
+            thread = threading.Thread(target=llm_task)
+            thread.start()
+
+            last_progress = 5
+            while thread.is_alive():
+                time.sleep(0.5)
+                if last_progress < 90:
+                    last_progress += 1
+                yield {
+                    'step': 'generating',
+                    'progress': last_progress,
+                    'status': 'running',
+                    'data': {},
+                    'message': '🤖 正在生成卡片内容...'
+                }
+
+            thread.join()
+
+            if error_container[0]:
+                raise error_container[0]
+
+            content = result_container[0]
+            if content is None:
+                raise RuntimeError("生成内容为空")
+
+            yield {
+                'step': 'generating',
+                'progress': 95,
+                'status': 'running',
+                'data': {},
+                'message': '💾 正在保存文件...'
+            }
 
             if output_format == "docx":
-                content = self._generate_card_json(topic)
                 filename = f"知识卡片_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
                 self._save_as_docx(content, filepath)
             else:
-                content = self._generate_card_markdown(topic)
                 filename = f"知识卡片_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
                 header = f"""---
@@ -85,8 +127,7 @@ type: knowledge_card
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(header + content)
 
-            result_data['content'] = content
-            result_data['filepath'] = filepath
+            result_data = {'topic': topic, 'filepath': filepath, 'format': output_format}
 
             yield {
                 'step': 'complete',
@@ -104,46 +145,6 @@ type: knowledge_card
                 'data': {'error': str(e)},
                 'message': f'❌ 生成失败: {e}'
             }
-
-    def _generate_card_content(self, topic: str) -> str:
-        """调用 AI 生成高度浓缩、模块化的原子知识卡片"""
-        prompt = f"""请将"{topic}"拆解为一套适合手机端快速检索、深度复习的"原子化知识卡片"。
-
-# 角色指令
-你是一位擅长"知识脱水"的思维导图大师，请将"{topic}"的核心精髓提炼为 8-12 张高密度的知识卡片，确保每张卡片都能在 30 秒内提供深度启发。
-
-# 知识卡片标准模板 (严格执行)
-
----
-
-## 📌 【卡片序号：知识点名称】
-> **一句话定义**：用最通俗、有力的话揭示其本质。
-
-### 🧩 核心逻辑 / 底层原理
-- **运作机制**：简述其背后的逻辑链路（1-3点）。
-- **关键公式/模型**：如有相关的理论模型或数学公式，请在此列出。
-
-### 💡 深度洞察 (Insights)
-- **高手思维**：提供一个常人容易忽略的独特视角或核心洞见。
-- **关联锚点**：连接到【卡片X】或实际应用场景。
-
-### 🛠 应用与避坑 (Actionable)
-- **✅ 典型应用**：在[XX情况]下，直接使用[XX策略]。
-- **❌ 避坑指南**：列出一个最隐蔽的错误理解或操作雷区。
-
-### 🔔 记忆金句 (Soul Sentence)
-★ "此处提炼一句能瞬间产生'原来如此'感叹的结语。"
-
----
-
-# 整体要求
-1. **模块化排版**：严格使用加粗标题、Markdown 列表以及 Emoji 符号（📌, 🧩, 💡, 🛠, ✅, ❌, ★）增强视觉扫描效率。
-2. **拒绝泛谈**：删除所有"首先、其次、综上所述"等废话，只保留纯度最高的干货。
-3. **内容数量**：稳定生成 8-12 张卡片，并在结尾提供一个简洁的【知识图谱索引表】。
-
-请直接返回 Markdown 格式内容，不要任何开场白或额外解释。"""
-
-        return self._call_llm(prompt)
 
     def _generate_card_markdown(self, topic: str) -> str:
         """调用 AI 生成高度浓缩、模块化的原子知识卡片（Markdown格式）"""
@@ -182,7 +183,6 @@ type: knowledge_card
 3. **内容数量**：稳定生成 8-12 张卡片，并在结尾提供一个简洁的【知识图谱索引表】。
 
 请直接返回 Markdown 格式内容，不要任何开场白或额外解释。"""
-
         return self._call_llm(prompt)
 
     def _generate_card_json(self, topic: str) -> str:
@@ -222,8 +222,11 @@ type: knowledge_card
 - answer字段只包含纯答案，不要包含任何格式符号（如【】等）
 - 不要包含任何格式符号（如【】等）
 - 请直接返回JSON，不要其他内容。"""
-
         return self._call_llm(prompt)
+
+    def _generate_json_content(self, topic: str) -> str:
+        """调用 AI 生成 JSON 格式知识卡片（兼容接口）"""
+        return self._generate_card_json(topic)
 
     def _save_as_docx(self, json_str: str, filepath: str):
         """使用 Node.js 直接构建 docx"""
@@ -232,14 +235,18 @@ type: knowledge_card
         import tempfile
 
         card_data = json.loads(json_str)
-
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
             json.dump(card_data, f, ensure_ascii=False)
             temp_json = f.name
 
         try:
-            script_path = os.path.join(os.path.dirname(__file__), 'create_card_docx.js')
-            result = subprocess.run(['node', script_path, temp_json, filepath], capture_output=True, text=True, timeout=30)
+            script_path = os.path.join(os.path.dirname(__file__), '../docx_generators/create_card_docx.js')
+            result = subprocess.run(
+                ['node', script_path, temp_json, filepath],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
             if result.returncode != 0:
                 raise Exception(result.stderr or result.stdout)
         finally:
@@ -256,7 +263,7 @@ type: knowledge_card
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一位学习方法专家，擅长制作简洁有效的知识卡片。"},
+                {"role": "system", "content": "你是一位教育专家，擅长将复杂知识提炼为简洁清晰的知识卡片。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -267,5 +274,5 @@ type: knowledge_card
 
 if __name__ == "__main__":
     generator = KnowledgeCardGenerator()
-    for update in generator.generate_card_stream("Python编程基础"):
+    for update in generator.generate_card_stream("Python基础"):
         print(f"[{update.get('progress', 0)}%] {update['message']}")

@@ -394,7 +394,7 @@ function askClearAll() {
 }
 
 .action-btn.danger:hover {
-  background: rgb(var(--accent-rose-rgb) / 0.1);
-  color: rgb(var(--accent-rose-rgb));
+  background: rgb(var(--terra-pale-rgb) / 0.6);
+  color: rgb(var(--terra-rgb));
 }
 </style>

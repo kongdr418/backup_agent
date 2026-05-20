@@ -6,6 +6,8 @@
 import os
 import re
 import json
+import threading
+import time
 from datetime import datetime
 from typing import Generator, Optional
 
@@ -56,7 +58,7 @@ class QuizGenerator:
         """流式生成课堂测验"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_data = {'topic': topic, 'filepath': '', 'format': output_format}
+            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
 
             yield {
                 'step': 'start',
@@ -66,15 +68,64 @@ class QuizGenerator:
                 'message': f'🚀 开始生成课堂测验：{topic}'
             }
 
+            yield {
+                'step': 'generating',
+                'progress': 5,
+                'status': 'running',
+                'data': {},
+                'message': '✨ 正在构思测验结构...'
+            }
+
+            result_container: list = [None]
+            error_container: list = [None]
+
+            def llm_task():
+                try:
+                    if output_format == "docx":
+                        result_container[0] = self._generate_quiz_json(topic)
+                    else:
+                        result_container[0] = self._generate_quiz_markdown(topic)
+                except Exception as e:
+                    error_container[0] = e
+
+            thread = threading.Thread(target=llm_task)
+            thread.start()
+
+            last_progress = 5
+            while thread.is_alive():
+                time.sleep(0.5)
+                if last_progress < 90:
+                    last_progress += 1
+                yield {
+                    'step': 'generating',
+                    'progress': last_progress,
+                    'status': 'running',
+                    'data': {},
+                    'message': '🤖 正在生成测验题目...'
+                }
+
+            thread.join()
+
+            if error_container[0]:
+                raise error_container[0]
+
+            content = result_container[0]
+            if content is None:
+                raise RuntimeError("生成内容为空")
+
+            yield {
+                'step': 'generating',
+                'progress': 92,
+                'status': 'running',
+                'data': {},
+                'message': '💾 正在保存文件...'
+            }
+
             if output_format == "docx":
-                content = self._generate_quiz_json(topic)
-                safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
                 filename = f"课堂测验_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
                 self._save_as_docx(content, filepath)
             else:
-                content = self._generate_quiz_markdown(topic)
-                safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
                 filename = f"课堂测验_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
                 header = f"""---
@@ -87,8 +138,7 @@ type: quiz
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(header + content)
 
-            result_data['content'] = content
-            result_data['filepath'] = filepath
+            result_data = {'topic': topic, 'filepath': filepath, 'format': output_format}
 
             yield {
                 'step': 'complete',
@@ -310,6 +360,10 @@ type: quiz
 
         return self._call_llm(prompt)
 
+    def _generate_json_content(self, topic: str) -> str:
+        """调用 AI 生成测验内容（JSON格式）（兼容接口）"""
+        return self._generate_quiz_json(topic)
+
     def _save_as_docx(self, json_str: str, filepath: str):
         """使用 Node.js 直接构建 docx"""
         import json
@@ -323,7 +377,7 @@ type: quiz
             temp_json = f.name
 
         try:
-            script_path = os.path.join(os.path.dirname(__file__), 'create_quiz_docx.js')
+            script_path = os.path.join(os.path.dirname(__file__), '../docx_generators/create_quiz_docx.js')
             result = subprocess.run(['node', script_path, temp_json, filepath], capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 raise Exception(result.stderr or result.stdout)

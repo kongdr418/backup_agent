@@ -42,6 +42,34 @@
   --danger-rgb: 255 69 58;             /* #ff453a */
   --info-rgb: 90 200 250;              /* #5ac8fa */
 
+  /* ============ Brand Palette — Warm Studio ============ */
+  --forest-rgb: 45 80 22;              /* #2d5016 */
+  --forest-light-rgb: 74 124 43;       /* #4a7c2b */
+  --forest-pale-rgb: 232 240 226;      /* #e8f0e2 */
+  --terra-rgb: 184 74 43;              /* #b84a2b */
+  --terra-light-rgb: 212 99 58;        /* #d4633a */
+  --terra-pale-rgb: 245 232 226;       /* #f5e8e2 */
+  --amber-rgb: 201 150 60;             /* #c9963c */
+  --amber-pale-rgb: 251 244 230;       /* #fbf4e6 */
+  --sage-rgb: 107 124 94;              /* #6b7c5e */
+
+  /* ============ Module Colors ============ */
+  --nav-chat-rgb: 45 80 22;
+  --nav-ppt-rgb: 124 74 140;
+  --nav-video-rgb: 45 107 124;
+  --nav-library-rgb: 140 90 43;
+  --nav-memory-rgb: 107 74 94;
+  --nav-settings-rgb: 94 107 124;
+
+  /* ============ 缓动 ============ */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --duration-xslow: 600ms;
+
   /* ============ 玻璃 / Glass — chrome 专用 ============ */
   --glass-chrome-bg: 255 255 255;
   --glass-chrome-a: 0.62;
@@ -70,13 +98,6 @@
   --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
   --shadow-pop: 0 10px 30px -10px rgb(0 0 0 / 0.12), 0 4px 8px -4px rgb(0 0 0 / 0.08);
   --shadow-elevated: 0 24px 48px -12px rgb(0 0 0 / 0.18), 0 8px 16px -8px rgb(0 0 0 / 0.10);
-
-  /* ============ 缓动 ============ */
-  --ease-spring: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --duration-quick: 120ms;
-  --duration-base: 220ms;
-  --duration-slow: 380ms;
 }
 
 /* =================================================================== */
@@ -120,6 +141,25 @@
   --danger-rgb: 255 105 97;
   --info-rgb: 100 210 255;
 
+  /* Brand — Warm Studio dark */
+  --forest-rgb: 124 191 94;
+  --forest-light-rgb: 159 212 130;
+  --forest-pale-rgb: 28 46 16;
+  --terra-rgb: 232 123 90;
+  --terra-light-rgb: 240 154 122;
+  --terra-pale-rgb: 61 26 16;
+  --amber-rgb: 232 184 90;
+  --amber-pale-rgb: 61 46 10;
+  --sage-rgb: 158 170 142;
+
+  /* Module dark */
+  --nav-chat-rgb: 124 191 94;
+  --nav-ppt-rgb: 170 120 200;
+  --nav-video-rgb: 100 175 200;
+  --nav-library-rgb: 210 155 70;
+  --nav-memory-rgb: 190 130 165;
+  --nav-settings-rgb: 130 155 190;
+
   /* 玻璃 */
   --glass-chrome-bg: 18 22 28;
   --glass-chrome-a: 0.55;
@@ -133,7 +173,7 @@
   /* Mesh 暗 */
   --mesh-alpha: 0.12;
 
-  /* 阴影 — 暗模式弱化(不需要"凸起"提示) */
+  /* 阴影 — 暖色调暗模式 */
   --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.20);
   --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.30);
   --shadow-pop: 0 10px 30px -10px rgb(0 0 0 / 0.50), 0 4px 8px -4px rgb(0 0 0 / 0.30);

@@ -119,11 +119,11 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
 }
-.kind-blue { background: rgb(var(--accent-rgb) / 0.12); color: rgb(var(--accent-rgb)); }
-.kind-purple { background: rgb(var(--accent-purple-rgb) / 0.12); color: rgb(var(--accent-purple-rgb)); }
-.kind-orange { background: rgb(var(--accent-orange-rgb) / 0.12); color: rgb(var(--accent-orange-rgb)); }
-.kind-rose { background: rgb(var(--accent-rose-rgb) / 0.12); color: rgb(var(--accent-rose-rgb)); }
-.kind-green { background: rgb(var(--accent-green-rgb) / 0.12); color: rgb(var(--accent-green-rgb)); }
+.kind-blue { background: rgb(var(--forest-pale-rgb) / 0.5); color: rgb(var(--forest-rgb)); }
+.kind-purple { background: rgba(240, 232, 245, 0.7); color: #7C4A8C; }
+.kind-orange { background: rgb(var(--amber-pale-rgb) / 0.6); color: rgb(var(--amber-rgb)); }
+.kind-rose { background: rgba(242, 232, 236, 0.7); color: #6B4A5E; }
+.kind-green { background: rgb(var(--forest-pale-rgb) / 0.5); color: rgb(var(--forest-rgb)); }
 
 .progress-info {
   display: flex;
@@ -159,8 +159,8 @@ onUnmounted(() => {
 .progress-fill {
   height: 100%;
   border-radius: 99px;
-  background: linear-gradient(90deg, rgb(var(--accent-rgb)), rgb(90 200 250));
-  transition: width 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: linear-gradient(90deg, rgb(var(--forest-rgb)), rgb(var(--amber-rgb)));
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 .progress-fill::after {
@@ -185,7 +185,7 @@ onUnmounted(() => {
 .percent-text {
   font-size: 12px;
   font-weight: 600;
-  color: rgb(var(--accent-rgb));
+  color: rgb(var(--forest-rgb));
   font-feature-settings: 'tnum';
 }
 

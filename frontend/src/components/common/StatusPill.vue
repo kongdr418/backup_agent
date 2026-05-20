@@ -22,9 +22,9 @@ const cls = computed(
   () =>
     ({
       neutral: 'bg-bg-subtle text-ink-2',
-      success: 'bg-emerald-50 text-emerald-700',
-      warning: 'bg-amber-50 text-amber-700',
-      danger: 'bg-rose-50 text-rose-700',
+      success: 'bg-forest-pale text-brand-forest',
+      warning: 'bg-amber-pale text-amber-700',
+      danger: 'bg-terra-pale text-terra',
     })[props.tone],
 )
 
@@ -32,9 +32,9 @@ const dotCls = computed(
   () =>
     ({
       neutral: 'bg-ink-4',
-      success: 'bg-emerald-500',
+      success: 'bg-brand-forest',
       warning: 'bg-amber-500',
-      danger: 'bg-rose-500',
+      danger: 'bg-terra',
     })[props.tone],
 )
 </script>

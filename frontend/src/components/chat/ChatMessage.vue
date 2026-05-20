@@ -213,11 +213,11 @@ async function onRegenerate() {
 .avatar-assistant {
   background: linear-gradient(
     135deg,
-    rgb(var(--accent-rgb)),
-    rgb(var(--hue-ppt-rgb))
+    rgb(var(--forest-rgb)),
+    rgb(var(--nav-ppt-rgb))
   );
   color: white;
-  box-shadow: 0 2px 8px -2px rgb(var(--accent-rgb) / 0.4);
+  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
 }
 .avatar-user {
   background: rgb(var(--bg-subtle-rgb));
@@ -255,7 +255,7 @@ async function onRegenerate() {
 }
 
 .bubble-user {
-  background: rgb(var(--accent-rgb));
+  background: rgb(var(--forest-rgb));
   color: white;
   border-bottom-right-radius: 6px;
 }
@@ -313,7 +313,7 @@ async function onRegenerate() {
   transition: all 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .retry-btn:hover {
-  background: rgb(var(--accent-rgb));
+  background: rgb(var(--forest-rgb));
   color: white;
   border-color: transparent;
 }
@@ -344,8 +344,8 @@ async function onRegenerate() {
 }
 .tool-btn:hover {
   background: rgb(var(--bg-subtle-rgb));
-  color: rgb(var(--ink-1-rgb));
-  border-color: rgb(var(--line-rgb));
+  color: var(--ink-primary);
+  border-color: var(--line);
 }
 
 /* ============ Prose 气泡内 MD ============ */
@@ -369,7 +369,7 @@ async function onRegenerate() {
   border-radius: 5px;
   font-size: 0.86em;
   font-family: 'JetBrains Mono', monospace;
-  color: rgb(var(--accent-rgb));
+  color: rgb(var(--terra-rgb));
 }
 :deep(.prose-bubble pre) {
   background: rgb(var(--bg-inset-rgb));

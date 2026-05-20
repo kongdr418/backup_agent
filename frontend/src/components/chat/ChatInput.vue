@@ -2,7 +2,7 @@
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
       <!-- Quick action chips -->
-      <div v-if="!isLoading" class="flex flex-wrap gap-1.5 mb-2.5">
+      <div v-if="!isLoading" class="flex flex-wrap gap-1.5 mb-2">
         <button
           v-for="q in quickActions"
           :key="q.label"
@@ -14,10 +14,27 @@
         </button>
       </div>
 
-      <!-- Input bar -->
+      <!-- Format selector + Input bar -->
       <div
-        class="flex items-end gap-2 glass-thin rounded-xl p-2 transition-colors focus-within:border-accent/50"
+        class="flex items-center gap-2 glass-thin rounded-xl p-1.5 transition-colors focus-within:border-accent/50"
       >
+        <!-- Format toggle -->
+        <div class="flex items-center gap-0.5 px-1 shrink-0">
+          <button
+            v-for="fmt in formats"
+            :key="fmt.value"
+            class="px-2 py-1 text-[12px] rounded-md transition-all"
+            :class="selectedFormat === fmt.value
+              ? 'bg-brand text-white shadow-sm'
+              : 'text-ink-3 hover:text-ink-1'"
+            @click="selectedFormat = fmt.value"
+          >
+            {{ fmt.label }}
+          </button>
+        </div>
+
+        <div class="w-px h-6 bg-line shrink-0" />
+
         <textarea
           ref="taRef"
           v-model="input"
@@ -52,10 +69,6 @@
           <Send class="w-4 h-4" />
         </button>
       </div>
-
-      <div class="text-[11px] text-ink-4 mt-1.5 text-center">
-        Enter 发送 · Shift+Enter 换行
-      </div>
     </div>
   </div>
 </template>
@@ -69,6 +82,12 @@ const emit = defineEmits<{ send: [text: string]; cancel: [] }>()
 
 const input = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)
+
+const formats = [
+  { label: 'MD', value: 'md' },
+  { label: 'DOCX', value: 'docx' },
+]
+const selectedFormat = ref('md')
 
 const quickActions = [
   { label: '讲义', prompt: '生成讲义：', icon: BookOpen },
@@ -118,7 +137,12 @@ function onEnter(e: KeyboardEvent) {
 function send() {
   const text = input.value.trim()
   if (!text) return
-  emit('send', text)
+  const fmt = selectedFormat.value
+  // Append format suffix if not already present and not MD (default)
+  const msg = fmt === 'docx' && !/\s*docx\s*$/i.test(text)
+    ? `${text} docx`
+    : text
+  emit('send', msg)
   input.value = ''
   nextTick(() => {
     if (taRef.value) taRef.value.style.height = 'auto'

@@ -44,8 +44,15 @@
 
     <!-- Body — 根据 kind 渲染 -->
     <div class="dv-body">
+      <!-- DOCX 预览 -->
+      <DocxPreview
+        v-if="docxFilepath"
+        :path="docxFilepath"
+        :name="topic || title"
+      />
+
       <!-- 文本 / 摘要内容(MD 渲染) -->
-      <div v-if="markdownContent" class="dv-md prose prose-doc" v-html="renderedMarkdown" />
+      <div v-else-if="markdownContent" class="dv-md prose prose-doc" v-html="renderedMarkdown" />
 
       <!-- 图文卡(图片 + 文案) -->
       <div v-else-if="kind === 'graphic_image' && imageBase64" class="dv-graphic">
@@ -113,6 +120,7 @@ import {
   ScrollText,
 } from 'lucide-vue-next'
 import { useMediaRestore } from '@/composables/useMediaRestore'
+import DocxPreview from '@/components/library/preview/DocxPreview.vue'
 
 marked.setOptions({ gfm: true, breaks: true })
 
@@ -148,9 +156,11 @@ const { audioBase64: restoredAudio, imageBase64: restoredImage } = useMediaResto
 const completeType = computed(() => (data.value.completeType as string) || '')
 const topic = computed(() => (data.value.topic as string) || '')
 const filepath = computed(() => (data.value.filepath as string) || '')
-const docxFilepath = computed(
-  () => (data.value.docx_filepath as string) || (data.value.md_filepath as string) || '',
-)
+const docxFilepath = computed(() => {
+  const f = filepath.value
+  if (f && f.endsWith('.docx')) return f
+  return (data.value.docx_filepath as string) || ''
+})
 
 const xiaohongshu = computed(() => (data.value.xiaohongshu as string) || '')
 const imageBase64 = computed(() => (data.value.imageBase64 as string) || restoredImage.value || '')

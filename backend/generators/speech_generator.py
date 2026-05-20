@@ -1,10 +1,13 @@
 """
 讲稿生成器
-生成教师可直接念出来的授课讲稿
+生成授课讲稿
+支持 Markdown 和 Word (.docx) 格式
 """
 
 import os
 import re
+import threading
+import time
 from datetime import datetime
 from typing import Generator, Optional
 
@@ -17,15 +20,7 @@ class SpeechGenerator:
         os.makedirs(output_dir, exist_ok=True)
 
     def parse_speech_request(self, message: str) -> Optional[dict]:
-        """
-        解析讲稿生成请求
-
-        支持的格式：
-        - 讲稿：机器学习第一章
-        - 生成讲稿：深度学习
-        - 授课讲稿：Python基础
-        - 讲稿docx：机器学习第一章
-        """
+        """解析讲稿生成请求"""
         output_format = "md"
         if re.search(r'讲稿.*docx|docx.*讲稿', message, re.IGNORECASE):
             output_format = "docx"
@@ -35,7 +30,6 @@ class SpeechGenerator:
             r'讲稿[：:]\s*(.+)',
             r'生成讲稿[：:]\s*(.+)',
             r'授课讲稿[：:]\s*(.+)',
-            r'讲课稿[：:]\s*(.+)',
         ]
 
         for pattern in patterns:
@@ -52,7 +46,7 @@ class SpeechGenerator:
         """流式生成讲稿"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_data = {'topic': topic, 'filepath': '', 'format': output_format}
+            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
 
             yield {
                 'step': 'start',
@@ -62,15 +56,64 @@ class SpeechGenerator:
                 'message': f'🚀 开始生成讲稿：{topic}'
             }
 
-            safe_topic = re.sub(r'[^\w一-鿿]+', '_', topic)[:50]
+            yield {
+                'step': 'generating',
+                'progress': 5,
+                'status': 'running',
+                'data': {},
+                'message': '✨ 正在构思讲稿结构...'
+            }
+
+            result_container: list = [None]
+            error_container: list = [None]
+
+            def llm_task():
+                try:
+                    if output_format == "docx":
+                        result_container[0] = self._generate_speech_json(topic)
+                    else:
+                        result_container[0] = self._generate_speech_markdown(topic)
+                except Exception as e:
+                    error_container[0] = e
+
+            thread = threading.Thread(target=llm_task)
+            thread.start()
+
+            last_progress = 5
+            while thread.is_alive():
+                time.sleep(0.5)
+                if last_progress < 90:
+                    last_progress += 1
+                yield {
+                    'step': 'generating',
+                    'progress': last_progress,
+                    'status': 'running',
+                    'data': {},
+                    'message': '🤖 正在撰写讲稿内容...'
+                }
+
+            thread.join()
+
+            if error_container[0]:
+                raise error_container[0]
+
+            content = result_container[0]
+            if content is None:
+                raise RuntimeError("生成内容为空")
+
+            yield {
+                'step': 'generating',
+                'progress': 92,
+                'status': 'running',
+                'data': {},
+                'message': '💾 正在保存文件...'
+            }
 
             if output_format == "docx":
-                content = self._generate_speech_json(topic)
                 filename = f"讲稿_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
                 self._save_as_docx(content, filepath)
             else:
-                content = self._generate_speech_markdown(topic)
                 filename = f"讲稿_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
                 header = f"""---
@@ -83,8 +126,7 @@ type: speech_script
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(header + content)
 
-            result_data['content'] = content
-            result_data['filepath'] = filepath
+            result_data = {'topic': topic, 'filepath': filepath, 'format': output_format}
 
             yield {
                 'step': 'complete',
@@ -136,9 +178,7 @@ type: speech_script
 - **语感**：拒绝说教，采用"朋友式对话"或"启发式引导"的口语风格。
 - **标注**：使用【】标注动作、眼神或语气（如：【扫视全场】、【语重心长地】）。
 - **格式**：严格使用示例中的模块标签（教学要点、通俗解释、重点标注等）。
-- **输出**：直接返回 Markdown 内容，不要开场白。
-"""
-
+- **输出**：直接返回 Markdown 内容，不要开场白。"""
         return self._call_llm(prompt)
 
     def _generate_speech_json(self, topic: str) -> str:
@@ -185,22 +225,21 @@ type: speech_script
       "keyPoint": "变量是存储数据的基本单元",
       "discussion": "生活中有哪些地方用到了'容器+标签'的模式？",
       "examples": ["成绩单上的学生姓名", "通讯录中的联系人"],
-      "script": "【扫视全场】同学们，今天我们来聊聊编程中最基本的概念——变量。【指向黑板】变量其实就像..."
+      "script": "同学们，今天我们来聊聊编程中最基本的概念——变量。变量其实就像..."
     }}
   ],
   "summary": {{
-    "conclusion": "今天我们学习了变量的定义、赋值和使用。",
-    "mission": "掌握变量是编程的起点，希望大家在生活中也能发现'变量思维'的魅力。"
+    "conclusion": "本节课我们学习了...",
+    "mission": "掌握这些基础知识，将为后续深入学习编程打下坚实基础。"
   }}
 }}
 
-注意：
-- 不要包含任何格式符号（如【】等）
-- 生成3-5个章节
-- 每章内容要精炼但完整
-- 请直接返回JSON，不要其他内容。"""
-
+请直接返回JSON，不要其他内容。"""
         return self._call_llm(prompt)
+
+    def _generate_json_content(self, topic: str) -> str:
+        """调用 AI 生成 JSON 格式讲稿（兼容接口）"""
+        return self._generate_speech_json(topic)
 
     def _save_as_docx(self, json_str: str, filepath: str):
         """使用 Node.js 直接构建 docx"""
@@ -209,14 +248,18 @@ type: speech_script
         import tempfile
 
         speech_data = json.loads(json_str)
-
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
             json.dump(speech_data, f, ensure_ascii=False)
             temp_json = f.name
 
         try:
-            script_path = os.path.join(os.path.dirname(__file__), 'create_speech_docx.js')
-            result = subprocess.run(['node', script_path, temp_json, filepath], capture_output=True, text=True, timeout=30)
+            script_path = os.path.join(os.path.dirname(__file__), '../docx_generators/create_speech_docx.js')
+            result = subprocess.run(
+                ['node', script_path, temp_json, filepath],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
             if result.returncode != 0:
                 raise Exception(result.stderr or result.stdout)
         finally:
@@ -244,5 +287,5 @@ type: speech_script
 
 if __name__ == "__main__":
     generator = SpeechGenerator()
-    for update in generator.generate_speech_stream("机器学习概述", "md"):
+    for update in generator.generate_speech_stream("Python基础"):
         print(f"[{update.get('progress', 0)}%] {update['message']}")
