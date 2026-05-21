@@ -2,7 +2,7 @@
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
       <!-- Quick action chips -->
-      <div v-if="!isLoading" class="flex gap-1 mb-2">
+      <div v-if="!isLoading && !chatView.isSplit" class="flex gap-1 mb-2">
         <button
           v-for="q in quickActions"
           :key="q.label"
@@ -88,9 +88,12 @@ import {
   Send, Square, FileText, BookOpen, Image as ImageIcon, Video,
   GraduationCap, Lightbulb, List, ClipboardList, GitBranch
 } from 'lucide-vue-next'
+import { useChatViewStore } from '@/stores/chatViewStore'
 
 defineProps<{ isLoading: boolean }>()
 const emit = defineEmits<{ send: [text: string]; cancel: [] }>()
+
+const chatView = useChatViewStore()
 
 const input = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)

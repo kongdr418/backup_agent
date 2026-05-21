@@ -77,6 +77,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { NButton, NModal, NInput, useDialog, useMessage } from 'naive-ui'
 import { FolderOpen, RefreshCw, Trash2 } from 'lucide-vue-next'
 
@@ -89,6 +90,7 @@ import type { GeneratedFile } from '@/types'
 import { useFileStore } from '@/stores/fileStore'
 import { deletePptJob } from '@/api/pptSvg'
 
+const route = useRoute()
 const fileStore = useFileStore()
 const dialog = useDialog()
 const message = useMessage()
@@ -205,7 +207,12 @@ async function refresh() {
   }
 }
 
-onMounted(() => {
-  refresh()
+onMounted(async () => {
+  await refresh()
+  const openId = route.query.open as string
+  if (openId) {
+    const file = allFiles.value.find((f) => f.id === openId)
+    if (file) onOpen(file)
+  }
 })
 </script>

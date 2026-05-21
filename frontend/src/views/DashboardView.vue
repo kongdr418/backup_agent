@@ -34,26 +34,6 @@
           </button>
         </section>
 
-        <!-- Secondary tools row -->
-        <section>
-          <div class="section-header">
-            <span class="section-title">其他工具</span>
-          </div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <button
-              v-for="m in secondary"
-              :key="m.label"
-              class="secondary-card text-left"
-              @click="router.push(m.path)"
-            >
-              <div class="secondary-icon" :class="m.iconBg">
-                <component :is="m.icon" class="w-3.5 h-3.5" :class="m.iconFg" />
-              </div>
-              <span class="secondary-label">{{ m.label }}</span>
-            </button>
-          </div>
-        </section>
-
         <!-- Recent files + stats row -->
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
           <!-- Recent files -->
@@ -80,11 +60,11 @@
               <router-link
                 v-for="f in recent"
                 :key="f.id"
-                to="/library"
+                :to="{ path: '/library', query: { open: f.id } }"
                 class="recent-item"
               >
                 <div class="recent-icon">
-                  <FileText class="w-3.5 h-3.5" />
+                  <component :is="iconFor(f.type)" class="w-3.5 h-3.5" />
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="text-[12.5px] font-medium text-ink-primary truncate">{{ f.name }}</div>
@@ -96,9 +76,9 @@
           </section>
 
           <!-- Stats -->
-          <section class="lg:col-span-2 space-y-3">
+          <section class="lg:col-span-2 space-y-5">
             <h2 class="text-[13px] font-semibold text-ink-1">数据概览</h2>
-            <div class="stat-grid">
+            <div class="stat-grid mt-6">
               <div class="stat-card">
                 <div class="stat-num">{{ totalFiles }}</div>
                 <div class="stat-label">总文件数</div>
@@ -143,6 +123,13 @@ import {
   BookOpen,
   GraduationCap,
   ArrowRight,
+  Image as ImageIcon,
+  Music,
+  Lightbulb,
+  Network,
+  PenLine,
+  ClipboardList,
+  Video,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -207,6 +194,37 @@ const secondary = [
   { label: '设置', path: '/settings', icon: Settings, iconBg: 'bg-bg-subtle', iconFg: 'text-ink-tertiary' },
 ]
 
+function iconFor(type: string) {
+  switch (type) {
+    case 'ppt':
+    case 'svg_ppt':
+      return Presentation
+    case 'lecture':
+      return BookOpen
+    case 'outline':
+    case 'mindmap':
+      return Network
+    case 'speech':
+      return PenLine
+    case 'exercise':
+      return GraduationCap
+    case 'quiz':
+      return ClipboardList
+    case 'card':
+      return Lightbulb
+    case 'content_text':
+      return FileText
+    case 'content_audio':
+      return Music
+    case 'content_image':
+      return ImageIcon
+    case 'video':
+      return Video
+    default:
+      return FileText
+  }
+}
+
 const totalFiles = computed(() => fileStore.files.length + svgPptCount.value)
 const sessionCount = computed(() => sessionStore.sessions.length)
 
@@ -234,7 +252,7 @@ async function loadRecent() {
     await fileStore.fetchFiles()
     recent.value = [...fileStore.files]
       .sort((a, b) => (b.created < a.created ? -1 : 1))
-      .slice(0, 5)
+      .slice(0, 3)
   } catch {
     recent.value = []
   } finally {
@@ -304,7 +322,7 @@ onMounted(() => {
   color: var(--ink-tertiary);
   line-height: 1.6;
   margin: 0;
-  max-width: 420px;
+  max-width: 520px;
 }
 
 /* ── Primary cards ── */
@@ -433,7 +451,7 @@ onMounted(() => {
   background: var(--bg-surface);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 18px 16px;
   display: flex;
   flex-direction: column;
   gap: 4px;

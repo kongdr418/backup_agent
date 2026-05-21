@@ -231,16 +231,12 @@ const _ = computed(() => isLoading.value)
   justify-content: center;
   gap: 6px;
   border-radius: 10px;
-  background: rgb(var(--forest-rgb));
+  background: rgb(0, 0, 0);
   color: white;
   font-size: 13px;
   border: none;
   cursor: pointer;
   transition: all 250ms cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
-}
-.new-chat-btn:hover {
-  background: rgb(var(--forest-light-rgb));
 }
 
 .session-item {
@@ -259,9 +255,13 @@ const _ = computed(() => isLoading.value)
   color: rgb(var(--ink-1-rgb));
 }
 .session-item.is-active {
-  background: rgb(var(--forest-pale-rgb) / 0.5);
+  background: transparent;
   color: rgb(var(--ink-1-rgb));
   font-weight: 500;
+}
+.session-item.is-active:hover {
+  background: rgb(220, 220, 220);
+  color: rgb(var(--ink-1-rgb));
 }
 .session-item.is-active::before {
   content: '';
@@ -271,7 +271,7 @@ const _ = computed(() => isLoading.value)
   transform: translateY(-50%);
   width: 3px;
   height: 18px;
-  background: rgb(var(--forest-rgb));
+  background: rgb(var(--ink-3-rgb));
   border-radius: 0 3px 3px 0;
 }
 

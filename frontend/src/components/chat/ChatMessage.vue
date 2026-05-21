@@ -3,14 +3,6 @@
     class="chat-row"
     :class="message.role === 'user' ? 'is-user' : 'is-assistant'"
   >
-    <!-- Avatar (assistant 在左,user 在右) -->
-    <div
-      v-if="message.role === 'assistant'"
-      class="avatar avatar-assistant"
-    >
-      <Sparkles class="w-[14px] h-[14px]" />
-    </div>
-
     <!-- Body -->
     <div class="bubble-wrap">
       <!-- Text / Markdown 气泡 -->
@@ -22,7 +14,6 @@
         <div
           v-if="message.content || message.status !== 'streaming'"
           class="prose prose-bubble"
-          :class="message.role === 'user' ? 'prose-on-accent' : ''"
           v-html="rendered"
         />
         <div v-else class="streaming-dots">
@@ -107,14 +98,6 @@
         </button>
       </div>
     </div>
-
-    <!-- User avatar 在右 -->
-    <div
-      v-if="message.role === 'user'"
-      class="avatar avatar-user"
-    >
-      我
-    </div>
   </div>
 </template>
 
@@ -126,7 +109,6 @@ import {
   Copy,
   CircleAlert,
   Square,
-  Sparkles,
   RotateCcw,
 } from 'lucide-vue-next'
 import type { ChatMessage } from '@/types'
@@ -157,27 +139,24 @@ const rendered = computed(() => {
 const isExpanded = computed(() => chatView.expandedMessageId === props.message.id)
 
 function toggleExpand() {
-  const sid = sessionStore.currentSessionId
-  if (!sid) return
-  // 找到当前 chat scroll 容器的 scrollTop(简单实现:从 ChatView 提供)
-  const scrollEl = document.querySelector('.chat-scroll') as HTMLElement | null
-  const top = scrollEl?.scrollTop || 0
-  chatView.toggle(sid, props.message.id, top)
-}
-
-const copied = ref(false)
-async function copy() {
-  try {
-    await navigator.clipboard.writeText(props.message.content)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
-  } catch {
-    /* ignore */
+  if (isExpanded.value) {
+    chatView.collapse()
+  } else {
+    const scrollEl = document.querySelector('.chat-scroll') as HTMLElement
+    chatView.expand(sessionStore.currentSessionId, props.message.id, scrollEl?.scrollTop ?? 0)
   }
 }
 
-async function onRegenerate() {
-  await regenerate()
+const copied = ref(false)
+function copy() {
+  navigator.clipboard.writeText(props.message.content || '').then(() => {
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  })
+}
+
+function onRegenerate() {
+  regenerate(props.message.id)
 }
 </script>
 
@@ -185,44 +164,15 @@ async function onRegenerate() {
 /* ============ 行容器 ============ */
 .chat-row {
   display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  width: 100%;
+  align-items: flex-end;
+  gap: 10px;
+  animation: slideUpFade 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-
 .chat-row.is-user {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
 }
 .chat-row.is-assistant {
   justify-content: flex-start;
-}
-
-/* ============ Avatar ============ */
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.avatar-assistant {
-  background: linear-gradient(
-    135deg,
-    rgb(var(--forest-rgb)),
-    rgb(var(--nav-ppt-rgb))
-  );
-  color: white;
-  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
-}
-.avatar-user {
-  background: rgb(var(--bg-subtle-rgb));
-  color: rgb(var(--ink-1-rgb));
-  border: 1px solid rgb(var(--line-rgb));
 }
 
 /* ============ 气泡 wrap (左右轨道) ============ */
@@ -249,15 +199,14 @@ async function onRegenerate() {
   border-radius: 20px;
   padding: 14px 18px;
   font-size: 14.5px;
-  line-height: 1.7;
+  line-height: 1.75;
   word-break: break-word;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
 }
-
 .bubble-user {
-  background: rgb(var(--forest-rgb));
-  color: white;
-  border-bottom-right-radius: 6px;
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  color: rgb(var(--ink-1-rgb));
+  border-bottom-left-radius: 6px;
 }
 .bubble-assistant {
   background: rgb(var(--bg-surface-rgb));
@@ -275,56 +224,60 @@ async function onRegenerate() {
 .streaming-dots span {
   width: 6px;
   height: 6px;
-  border-radius: 9999px;
+  border-radius: 50%;
   background: rgb(var(--ink-4-rgb));
-  animation: dot-bounce 1.4s ease-in-out infinite;
+  animation: pulse-soft 1.4s ease-in-out infinite;
 }
-.streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
-.streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
+.streaming-dots span:nth-child(2) { animation-delay: 0.2s; }
+.streaming-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes dot-bounce {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
-  40% { transform: translateY(-4px); opacity: 1; }
-}
-
-/* ============ Status row(error / cancelled) ============ */
+/* ============ Status row ============ */
 .status-row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
-  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  margin-top: 4px;
 }
-.status-row.error { color: rgb(var(--danger-rgb)); }
-.status-row.cancelled { color: rgb(var(--ink-3-rgb)); }
-
+.status-row.error {
+  background: rgb(var(--danger-rgb) / 0.08);
+  color: rgb(var(--danger-rgb));
+  border: 1px solid rgb(var(--danger-rgb) / 0.20);
+}
+.status-row.cancelled {
+  background: rgb(var(--warning-rgb) / 0.08);
+  color: rgb(var(--warning-rgb));
+  border: 1px solid rgb(var(--warning-rgb) / 0.20);
+}
 .retry-btn {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 9px;
-  margin-left: 4px;
-  border-radius: 8px;
-  border: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-surface-rgb));
-  color: rgb(var(--ink-2-rgb));
-  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  transition: all 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 150ms;
 }
 .retry-btn:hover {
-  background: rgb(var(--forest-rgb));
-  color: white;
-  border-color: transparent;
+  background: rgb(var(--bg-subtle-rgb));
 }
 
-/* ============ Toolbar (hover 显示) ============ */
+/* ============ Action toolbar ============ */
 .toolbar {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   margin-top: 6px;
+  padding: 0 4px;
   opacity: 0;
-  transition: opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: fade-in 250ms ease-out forwards;
 }
 .chat-row:hover .toolbar {
   opacity: 1;
@@ -332,20 +285,22 @@ async function onRegenerate() {
 .tool-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: transparent;
-  border: 1px solid transparent;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
   color: rgb(var(--ink-3-rgb));
-  font-size: 11px;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: all 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 150ms;
 }
 .tool-btn:hover {
   background: rgb(var(--bg-subtle-rgb));
-  color: var(--ink-primary);
-  border-color: var(--line);
+  color: rgb(var(--ink-1-rgb));
+}
+.tool-btn.copied {
+  color: rgb(var(--success-rgb));
 }
 
 /* ============ Prose 气泡内 MD ============ */
@@ -359,25 +314,24 @@ async function onRegenerate() {
 :deep(.prose-bubble ul),
 :deep(.prose-bubble ol) {
   margin: 0.5em 0;
-  padding-left: 1.4em;
+  padding-left: 1.5em;
 }
 :deep(.prose-bubble li) { margin: 0.3em 0; }
 :deep(.prose-bubble strong) { font-weight: 600; }
 :deep(.prose-bubble code) {
   background: rgb(var(--bg-subtle-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 4px;
   padding: 0.1em 0.4em;
-  border-radius: 5px;
-  font-size: 0.86em;
-  font-family: 'JetBrains Mono', monospace;
-  color: rgb(var(--terra-rgb));
+  font-size: 12.5px;
 }
 :deep(.prose-bubble pre) {
   background: rgb(var(--bg-inset-rgb));
   border: 1px solid rgb(var(--line-rgb));
-  padding: 12px 14px;
-  border-radius: 10px;
-  overflow-x: auto;
+  border-radius: 8px;
+  padding: 12px 16px;
   margin: 0.6em 0;
+  overflow-x: auto;
   font-size: 13px;
 }
 :deep(.prose-bubble pre code) {
@@ -386,15 +340,16 @@ async function onRegenerate() {
   padding: 0;
 }
 
-/* User 气泡(蓝色背景)上的 prose 反色 */
-:deep(.prose-on-accent) { color: white; }
-:deep(.prose-on-accent strong) { color: white; }
-:deep(.prose-on-accent code) {
-  background: rgb(255 255 255 / 0.18);
-  color: white;
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-:deep(.prose-on-accent pre) {
-  background: rgb(0 0 0 / 0.20);
-  border-color: rgb(255 255 255 / 0.15);
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 </style>
