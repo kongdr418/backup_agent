@@ -44,10 +44,11 @@
 
         <!-- Generate button -->
         <NButton
-          type="primary"
-          block
+          color="#000000"
+          text-color="#ffffff"
           :disabled="!uploadFile || generating"
           :loading="generating"
+          block
           @click="onGenerate"
         >
           <template #icon>
