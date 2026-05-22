@@ -1,14 +1,13 @@
 <template>
   <header class="topbar glass-chrome">
     <div class="topbar-inner">
-      <!-- Logo -->
-      <router-link to="/" class="logo-cell">
-        <img src="@/assets/logo.svg" alt="智课源" class="h-9 w-auto" />
-        <span class="logo-text">智课源</span>
-      </router-link>
-
       <!-- 主导航 -->
       <nav class="nav-stack">
+        <router-link to="/" class="nav-pill logo-pill">
+          <img src="@/assets/logo.svg" alt="智创空间" class="h-11 w-auto" />
+          <span class="logo-text">智创空间</span>
+        </router-link>
+
         <router-link
           v-for="item in nav"
           :key="item.path"
@@ -105,42 +104,31 @@ defineExpose({ mode, effective })
   gap: 14px;
 }
 
-/* Logo */
-.logo-cell {
-  display: flex;
+/* Logo pill */
+.logo-pill {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 0 12px;
+  height: 34px;
+  border-radius: 9px;
   text-decoration: none;
-  flex-shrink: 0;
-  padding: 4px 6px;
-  border-radius: 10px;
-  transition: background-color var(--duration-base) var(--ease-out);
-}
-.logo-cell:hover {
-  background: rgb(var(--bg-subtle-rgb) / 0.5);
-}
-.logo-dot {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(
-    135deg,
-    rgb(var(--forest-rgb)) 0%,
-    rgb(var(--nav-ppt-rgb)) 100%
-  );
-  color: white;
-  box-shadow: 0 2px 8px -2px rgb(var(--forest-rgb) / 0.4);
+  transition:
+    color var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
 }
 .logo-text {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 400;
   letter-spacing: -0.01em;
   color: var(--ink-primary);
   white-space: nowrap;
+  line-height: 1;
+  height: 19.5px;
+  margin-top: 3px;
 }
 
 /* Nav stack */
@@ -177,13 +165,16 @@ defineExpose({ mode, effective })
 }
 
 /* Active state — warm palette colors */
-.nav-pill.is-active {
+.nav-pill.is-active,
+.logo-pill.is-active {
   color: var(--hue-active);
   background: rgb(var(--hue-active) / 0.10);
   font-weight: 500;
   position: relative;
 }
-.nav-pill.is-active::before {
+
+.nav-pill.is-active::before,
+.logo-pill.is-active::before {
   content: '';
   position: absolute;
   top: 0;
@@ -252,6 +243,7 @@ defineExpose({ mode, effective })
 @media (max-width: 1024px) {
   .nav-pill span { display: none; }
   .nav-pill { padding: 0 9px; }
-  .logo-text { display: none; }
+  .logo-pill span { display: none; }
+  .logo-pill { padding: 0 9px; }
 }
 </style>
