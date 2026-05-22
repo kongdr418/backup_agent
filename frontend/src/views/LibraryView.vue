@@ -1,98 +1,100 @@
 <template>
   <div class="library-layout">
-    <!-- Left Sidebar -->
-    <aside class="library-sidebar">
-      <nav class="sidebar-nav">
-        <button
-          v-for="item in sidebarItems"
-          :key="item.value"
-          class="sidebar-item"
-          :class="{ active: activeCat === item.value }"
-          @click="activeCat = item.value"
-        >
-          <component :is="item.icon" class="sidebar-icon" />
-          <span class="sidebar-label">{{ item.label }}</span>
-          <span class="sidebar-count">{{ countByCat(item.value) }}</span>
-        </button>
-      </nav>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="library-main">
-      <!-- Header -->
-      <header class="library-header">
-        <div class="header-left">
-          <h1 class="library-title">文件库</h1>
-          <p class="library-desc">管理所有 AI 生成的文件 — PPT / 讲义 / 图片 / 音频</p>
-        </div>
-        <div class="header-actions">
-          <button class="action-btn" @click="refresh" title="刷新">
-            <RefreshCw class="w-4 h-4" />
-          </button>
-          <button
-            v-if="allFiles.length > 0"
-            class="action-btn danger"
-            @click="askClearAll"
-            title="清空全部"
-          >
-            <Trash2 class="w-4 h-4" />
-          </button>
-        </div>
-      </header>
-
-      <!-- File Grid -->
-      <div class="library-content">
-        <div v-if="loading" class="loading-state">加载中...</div>
-
-        <EmptyState
-          v-else-if="filtered.length === 0"
-          :icon="FolderOpen"
-          title="暂无文件"
-          description="生成内容后会出现在这里"
-        />
-
-        <div v-else class="file-grid">
-          <button
-            v-for="f in filtered"
-            :key="f.id"
-            class="file-card"
-            @click="onOpen(f)"
-          >
-            <div class="card-icon-wrap" :class="iconBg(f.type)">
-              <component :is="iconFor(f.type)" class="card-icon" :class="iconFg(f.type)" />
-            </div>
-
-            <div class="card-menu">
-              <button class="menu-btn" @click.stop="toggleMenu(f.id)">
-                <MoreHorizontal class="w-4 h-4" />
-              </button>
-              <div v-if="openMenuId === f.id" class="menu-dropdown">
-                <button v-if="canRename(f.type)" class="menu-item" @click.stop="$emit('rename', f); openMenuId = null">
-                  <Pencil class="w-3.5 h-3.5" />
-                  重命名
-                </button>
-                <button class="menu-item danger" @click.stop="askDelete(f); openMenuId = null">
-                  <Trash2 class="w-3.5 h-3.5" />
-                  删除
-                </button>
-              </div>
-            </div>
-
-            <div class="card-body">
-              <div class="card-name" :title="f.name">{{ f.name }}</div>
-            </div>
-
-            <div class="card-footer">
-              <span class="card-type">{{ f.type_label }}</span>
-              <span class="card-dot">·</span>
-              <span class="card-size">{{ f.size_formatted }}</span>
-              <span class="card-dot">·</span>
-              <span class="card-date">{{ f.created }}</span>
-            </div>
-          </button>
-        </div>
+    <!-- Header (full width) -->
+    <header class="library-header">
+      <div class="header-left">
+        <h1 class="library-title">文件库</h1>
+        <p class="library-desc">管理所有 AI 生成的文件 — PPT / 讲义 / 图片 / 音频</p>
       </div>
-    </main>
+      <div class="header-actions">
+        <button class="action-btn" @click="refresh" title="刷新">
+          <RefreshCw class="w-4 h-4" />
+        </button>
+        <button
+          v-if="allFiles.length > 0"
+          class="action-btn danger"
+          @click="askClearAll"
+          title="清空全部"
+        >
+          <Trash2 class="w-4 h-4" />
+        </button>
+      </div>
+    </header>
+
+    <!-- Body: Sidebar + Main -->
+    <div class="library-body">
+      <!-- Left Sidebar -->
+      <aside class="library-sidebar">
+        <nav class="sidebar-nav">
+          <button
+            v-for="item in sidebarItems"
+            :key="item.value"
+            class="sidebar-item"
+            :class="{ active: activeCat === item.value }"
+            @click="activeCat = item.value"
+          >
+            <component :is="item.icon" class="sidebar-icon" />
+            <span class="sidebar-label">{{ item.label }}</span>
+            <span class="sidebar-count">{{ countByCat(item.value) }}</span>
+          </button>
+        </nav>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="library-main">
+        <div class="library-content">
+          <div v-if="loading" class="loading-state">加载中...</div>
+
+          <EmptyState
+            v-else-if="filtered.length === 0"
+            :icon="FolderOpen"
+            title="暂无文件"
+            description="生成内容后会出现在这里"
+          />
+
+          <div v-else class="file-grid">
+            <button
+              v-for="f in filtered"
+              :key="f.id"
+              class="file-card"
+              @click="onOpen(f)"
+            >
+              <div class="card-icon-wrap" :class="iconBg(f.type)">
+                <component :is="iconFor(f.type)" class="card-icon" :class="iconFg(f.type)" />
+              </div>
+
+              <div class="card-menu">
+                <button class="menu-btn" @click.stop="toggleMenu(f.id)">
+                  <MoreHorizontal class="w-4 h-4" />
+                </button>
+                <div v-if="openMenuId === f.id" class="menu-dropdown">
+                  <button v-if="canRename(f.type)" class="menu-item" @click.stop="$emit('rename', f); openMenuId = null">
+                    <Pencil class="w-3.5 h-3.5" />
+                    重命名
+                  </button>
+                  <button class="menu-item danger" @click.stop="askDelete(f); openMenuId = null">
+                    <Trash2 class="w-3.5 h-3.5" />
+                    删除
+                  </button>
+                </div>
+              </div>
+
+              <div class="card-body">
+                <div class="card-name" :title="f.name">{{ f.name }}</div>
+              </div>
+
+              <div class="card-footer">
+                <span class="card-type">{{ f.type_label }}</span>
+                <span class="card-dot">·</span>
+                <span class="card-size">{{ f.size_formatted }}</span>
+                <span class="card-dot">·</span>
+                <span class="card-date">{{ f.created }}</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
 
     <PreviewDrawer v-model:show="previewOpen" :file="previewFile" />
 
@@ -364,7 +366,27 @@ onMounted(async () => {
 /* Layout */
 .library-layout {
   display: flex;
+  flex-direction: column;
   height: 100%;
+}
+
+/* Header */
+.library-header {
+  height: 74px;
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-surface);
+}
+
+/* Body */
+.library-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Sidebar */
@@ -448,28 +470,17 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-/* Header */
-.library-header {
-  padding: 24px 32px 20px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-surface);
-}
-
 .header-left {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  gap: 12px;
 }
 
 .library-title {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--ink-primary);
   margin: 0;
   line-height: 1.3;

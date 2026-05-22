@@ -169,7 +169,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { NSelect, useDialog, useMessage } from 'naive-ui'
 import {
   Upload,
@@ -182,15 +183,16 @@ import {
   Loader2,
   Sparkles,
 } from 'lucide-vue-next'
+import { useVideoStore } from '@/stores/videoStore'
+
+const videoStore = useVideoStore()
+const { generating, progress, progressMessage } = storeToRefs(videoStore)
 
 const loading = ref(false)
-const generating = ref(false)
-const progress = ref(0)
-const progressMessage = ref('')
 const uploadFile = ref<File | null>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const selectedVoice = ref('mimo_default')
+const selectedVoice = ref(videoStore.voice || 'mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 const dialog = useDialog()
 const message = useMessage()
@@ -209,6 +211,23 @@ const voiceOptions = [
 
 onMounted(() => {
   refreshList()
+
+  // 如果有未完成的任务，恢复轮询
+  if (videoStore.activeJobId && videoStore.generating) {
+    videoStore.startPolling(
+      () => {
+        message.success('视频生成完成')
+        refreshList()
+      },
+      (errMsg) => {
+        message.error('生成失败: ' + errMsg)
+      },
+    )
+  }
+})
+
+onUnmounted(() => {
+  videoStore.stopPolling()
 })
 
 function triggerUpload() {
@@ -279,7 +298,7 @@ async function onGenerate() {
     const data = await res.json()
     await doGenerate(data.path)
   } catch (e) {
-    generating.value = false
+    videoStore.clearActiveJob()
   }
 }
 
@@ -294,35 +313,28 @@ async function doGenerate(pptxPath: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pptx_path: pptxPath, voice: selectedVoice.value }),
     })
+    const data = await res.json()
 
-    const reader = res.body?.getReader()
-    const decoder = new TextDecoder()
-
-    while (reader) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      const text = decoder.decode(value)
-      const lines = text.split('\n')
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.done) {
-              generating.value = false
-              refreshList()
-              uploadFile.value = null
-            } else {
-              progress.value = data.progress || 0
-              progressMessage.value = data.message || ''
-            }
-          } catch {}
-        }
-      }
+    if (!data.success || !data.job_id) {
+      throw new Error(data.error || '启动生成失败')
     }
+
+    // 持久化到 store，刷新后可恢复
+    videoStore.setActiveJob(data.job_id, pptxPath, selectedVoice.value)
+
+    // 开始轮询进度
+    videoStore.startPolling(
+      () => {
+        message.success('视频生成完成')
+        refreshList()
+        uploadFile.value = null
+      },
+      (errMsg) => {
+        message.error('生成失败: ' + errMsg)
+      },
+    )
   } catch {
-    generating.value = false
+    videoStore.clearActiveJob()
   }
 }
 

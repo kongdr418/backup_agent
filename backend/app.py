@@ -16,6 +16,7 @@ import os
 import shutil
 import logging
 import sys
+import threading
 from datetime import datetime
 
 # ==================== 日志配置 ====================
@@ -57,6 +58,9 @@ def get_memory_manager():
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
+
+# 视频生成任务追踪（内存字典，job_id → 状态）
+video_jobs = {}
 
 app = Flask(__name__)
 CORS(app)
@@ -1370,12 +1374,29 @@ def ppt_video_generate():
     if not pptx_path or not os.path.exists(pptx_path):
         return jsonify({'success': False, 'error': '未找到 PPT 文件'}), 400
 
-    def generate():
+    # 生成 job_id（用于任务追踪）
+    job_topic = topic or os.path.splitext(os.path.basename(pptx_path))[0]
+    job_id = f"{datetime.now().strftime('%Y-%m-%d')}-{job_topic.replace(' ', '_').replace('/', '_')}"
+
+    # 注册任务到追踪字典
+    video_jobs[job_id] = {
+        'status': 'generating',
+        'progress': 0,
+        'message': '准备开始...',
+        'pptx_path': pptx_path,
+        'voice': voice,
+    }
+
+    def _run_generation():
+        """在后台线程中执行视频生成"""
         try:
             generator = VideoGenerator()
 
             def progress_callback(progress, message):
-                yield f"data: {json.dumps({'progress': progress, 'message': message}, ensure_ascii=False)}\n\n"
+                if job_id in video_jobs:
+                    video_jobs[job_id]['progress'] = progress
+                    video_jobs[job_id]['message'] = message
+                yield ""  # 占位，保持生成器格式
 
             result = generator.generate_video(
                 pptx_path=pptx_path,
@@ -1384,23 +1405,50 @@ def ppt_video_generate():
                 progress_callback=progress_callback
             )
 
-            final_result = None
+            # 消费生成器，触发实际执行
             for r in result:
-                if isinstance(r, dict):
-                    final_result = r
-                else:
-                    yield r
+                pass
 
-            yield f"data: {json.dumps({'done': True, 'success': True, **final_result}, ensure_ascii=False)}\n\n"
+            if job_id in video_jobs:
+                video_jobs[job_id]['status'] = 'done'
+                video_jobs[job_id]['progress'] = 1.0
+                video_jobs[job_id]['message'] = '视频生成完成'
+
+            request_logger.info(f'[PPT-VIDEO] 任务完成: {job_id}')
 
         except Exception as e:
             request_logger.error(f'[PPT-VIDEO] 生成失败: {e}')
-            yield f"data: {json.dumps({'done': True, 'success': False, 'error': str(e)}, ensure_ascii=False)}\n\n"
+            if job_id in video_jobs:
+                video_jobs[job_id]['status'] = 'error'
+                video_jobs[job_id]['message'] = str(e)
 
-    response = Response(generate(), mimetype='text/event-stream')
-    response.headers['X-Accel-Buffering'] = 'no'
-    response.headers['Cache-Control'] = 'no-cache'
-    return response
+    # 启动后台线程，不依赖 HTTP 连接
+    t = threading.Thread(target=_run_generation, daemon=True)
+    t.start()
+
+    # 立即返回 job_id，前端通过轮询获取进度
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/ppt-video/status/<job_id>', methods=['GET'])
+def ppt_video_status(job_id):
+    """查询视频生成任务状态"""
+    # 先查内存中的活跃任务
+    if job_id in video_jobs:
+        job = video_jobs[job_id]
+        return jsonify({
+            'status': job['status'],
+            'progress': job['progress'],
+            'message': job['message'],
+        })
+
+    # 内存中没有，检查磁盘上是否已完成
+    video_dir = os.path.join(BACKEND_DIR, 'generated_videos', job_id)
+    video_file = os.path.join(video_dir, '07-video.mp4')
+    if os.path.exists(video_file):
+        return jsonify({'status': 'done', 'progress': 1.0, 'message': '视频生成完成'})
+
+    return jsonify({'status': 'not_found', 'progress': 0, 'message': '任务不存在'}), 404
 
 
 @app.route('/api/ppt-video/list', methods=['GET'])
