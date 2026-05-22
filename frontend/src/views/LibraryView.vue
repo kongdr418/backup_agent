@@ -674,9 +674,11 @@ onMounted(async () => {
   font-weight: 500;
   color: var(--ink-primary);
   line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .card-footer {
