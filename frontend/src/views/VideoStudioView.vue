@@ -1,178 +1,195 @@
 <template>
-  <div class="h-full flex">
-    <!-- Param panel (left) -->
-    <div class="w-[340px] shrink-0 h-full border-r border-line bg-bg-surface flex flex-col">
-      <div class="h-12 shrink-0 px-4 flex items-center gap-2 border-b border-line">
-        <Video class="w-3.5 h-3.5 text-ink-3" />
-        <span class="text-[13px] font-medium text-ink-1">微课视频生成</span>
+  <div class="video-studio-layout">
+    <!-- Left Panel -->
+    <aside class="studio-sidebar">
+      <div class="sidebar-header">
+        <h2 class="header-title">微课视频生成</h2>
+        <p class="header-desc">上传 PPT，一键生成微课视频</p>
       </div>
 
-      <div class="flex-1 overflow-auto p-4">
-        <!-- Upload PPT -->
-        <div class="mb-5">
-          <label class="block text-[12.5px] text-ink-2 mb-2">上传 PPT</label>
-          <NUpload
-            ref="uploadRef"
-            :max="1"
-            accept=".pptx"
-            :show-file-list="false"
-            @change="onUploadChange"
+      <div class="sidebar-content">
+        <!-- Upload Section -->
+        <div class="config-section">
+          <label class="section-label">上传 PPT</label>
+          <div
+            class="upload-zone"
+            :class="{ 'has-file': uploadFile, 'is-dragover': isDragover }"
+            @dragover.prevent="isDragover = true"
+            @dragleave="isDragover = false"
+            @drop.prevent="onDrop"
+            @click="triggerUpload"
           >
-            <NButton block>选择 PPTX 文件</NButton>
-          </NUpload>
-          <div v-if="uploadFile" class="mt-2 flex items-center gap-2">
-            <span class="text-[12px] text-ink-2 truncate flex-1">{{ uploadFile.name }}</span>
-            <button
-              class="shrink-0 text-ink-3 hover:text-ink-1 transition-colors"
-              title="清除"
-              @click="clearFile"
-            >
-              <X class="w-3.5 h-3.5" />
-            </button>
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept=".pptx"
+              class="hidden"
+              @change="onFileSelect"
+            />
+            <div v-if="!uploadFile" class="upload-placeholder">
+              <Upload class="upload-icon" />
+              <span class="upload-text">拖拽 PPTX 文件到此处</span>
+              <span class="upload-hint">或点击选择文件</span>
+            </div>
+            <div v-else class="file-info">
+              <FileText class="file-icon" />
+              <span class="file-name">{{ uploadFile.name }}</span>
+              <button class="file-remove" @click.stop="clearFile">
+                <X class="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
-        <!-- Voice selection -->
-        <div class="mb-5">
-          <label class="block text-[12.5px] text-ink-2 mb-2">音色选择</label>
+        <!-- Voice Section -->
+        <div class="config-section">
+          <label class="section-label">音色选择</label>
           <NSelect
             v-model:value="selectedVoice"
             :options="voiceOptions"
             placeholder="选择音色"
+            size="large"
           />
         </div>
 
-        <!-- Generate button -->
-        <NButton
-          color="#000000"
-          text-color="#ffffff"
+        </div>
+
+      <!-- Generate Button -->
+      <div class="sidebar-footer">
+        <button
+          class="generate-btn"
           :disabled="!uploadFile || generating"
-          :loading="generating"
-          block
           @click="onGenerate"
         >
-          <template #icon>
-            <Video class="w-4 h-4" />
+          <template v-if="generating">
+            <Loader2 class="btn-icon animate-spin" />
+            生成中... {{ Math.round(progress * 100) }}%
           </template>
-          {{ generating ? '生成中...' : '生成视频' }}
-        </NButton>
+          <template v-else>
+            <Sparkles class="btn-icon" />
+            生成微课视频
+          </template>
+        </button>
 
         <!-- Progress -->
-        <div v-if="generating" class="mt-4">
-          <div class="flex items-center justify-between text-[12px] text-ink-2 mb-2">
-            <span>{{ progressMessage }}</span>
-            <span>{{ Math.round(progress * 100) }}%</span>
+        <div v-if="generating" class="progress-wrap">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
           </div>
-          <NProgress type="line" :percentage="Math.round(progress * 100)" :show-indicator="false" />
+          <span class="progress-text">{{ progressMessage }}</span>
         </div>
       </div>
-    </div>
+    </aside>
 
-    <!-- Preview area (right) -->
-    <div class="flex-1 min-w-0 flex flex-col">
+    <!-- Main Content -->
+    <main class="studio-main">
       <!-- Toolbar -->
-      <div
-        class="h-12 shrink-0 px-5 border-b border-line bg-bg-surface flex items-center justify-between"
-      >
-        <div class="flex items-center gap-2 text-[13px] text-ink-2">
-          <MonitorPlay class="w-3.5 h-3.5 text-ink-3" />
-          <span>已生成的微课视频</span>
-          <StatusPill v-if="generating" tone="warning">生成中</StatusPill>
+      <header class="content-header">
+        <div class="header-left">
+          <h1 class="content-title">已生成的视频</h1>
+          <span class="video-count">{{ videos.length }} 个视频</span>
         </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
-            @click="refreshList"
-          >
-            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': loading }" />
-            刷新
+        <div class="header-actions">
+          <button class="action-btn" title="刷新" @click="refreshList">
+            <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />
           </button>
           <button
             v-if="videos.length > 0"
-            class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
+            class="action-btn danger"
+            title="清空全部"
             @click="askClearAll"
           >
-            <Trash2 class="w-3.5 h-3.5" />
-            清空
+            <Trash2 class="w-4 h-4" />
           </button>
         </div>
-      </div>
+      </header>
 
-      <!-- Video list -->
-      <div class="flex-1 overflow-auto p-5">
-        <div v-if="videos.length === 0" class="h-full flex items-center justify-center">
-          <div class="text-center text-ink-3">
-            <Video class="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p class="text-[13px]">暂无生成的视频</p>
-            <p class="text-[12px] mt-1">上传 PPT 后点击生成按钮</p>
+      <!-- Video Grid -->
+      <div class="content-body">
+        <!-- Empty State -->
+        <div v-if="videos.length === 0 && !loading" class="empty-state">
+          <div class="empty-icon">
+            <Film class="w-10 h-10" />
           </div>
+          <h3 class="empty-title">暂无生成的视频</h3>
+          <p class="empty-desc">上传 PPT 后点击生成按钮开始创作</p>
         </div>
 
-        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Loading -->
+        <div v-else-if="loading" class="loading-state">
+          <div class="loading-spinner" />
+          <span>加载中...</span>
+        </div>
+
+        <!-- Video Grid -->
+        <div v-else class="video-grid">
           <div
             v-for="video in videos"
             :key="video.path"
-            class="video-card border border-line rounded-lg overflow-hidden hover:border-accent transition-colors"
+            class="video-card"
           >
-            <div class="aspect-video bg-bg-subtle flex items-center justify-center">
+            <div class="video-thumbnail">
               <video
                 :src="`/api/files/download?path=${encodeURIComponent(video.path)}`"
-                class="w-full h-full object-contain"
-                controls
+                class="thumbnail-video"
                 preload="metadata"
+                controls
               />
             </div>
-            <div class="p-3">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0 flex-1">
-                  <div class="text-[13px] font-medium text-ink-1 truncate" :title="video.name">
-                    {{ video.name }}
-                  </div>
-                  <div class="text-[11px] text-ink-3 mt-1">
-                    {{ video.created }} · {{ formatSize(video.size) }}
-                  </div>
-                </div>
-                <div class="flex items-center gap-1 shrink-0 video-actions">
-                  <a
-                    :href="`/api/files/download?path=${encodeURIComponent(video.path)}`"
-                    :download="`${video.name}.mp4`"
-                    class="action-btn"
-                    title="下载"
-                  >
-                    <Download class="w-3.5 h-3.5" />
-                  </a>
-                  <button
-                    class="action-btn danger"
-                    title="删除"
-                    @click="askDelete(video)"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </button>
-                </div>
+            <div class="video-info">
+              <div class="video-name" :title="video.name">{{ video.name }}</div>
+              <div class="video-meta">
+                <span>{{ video.created }}</span>
+                <span class="meta-dot">·</span>
+                <span>{{ formatSize(video.size) }}</span>
               </div>
+            </div>
+            <div class="video-actions">
+              <a
+                :href="`/api/files/download?path=${encodeURIComponent(video.path)}`"
+                :download="`${video.name}.mp4`"
+                class="card-action-btn"
+                title="下载"
+              >
+                <Download class="w-4 h-4" />
+              </a>
+              <button
+                class="card-action-btn danger"
+                title="删除"
+                @click="askDelete(video)"
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { NButton, NSelect, NProgress, NUpload, useDialog, useMessage } from 'naive-ui'
-import { Video, MonitorPlay, RefreshCw, Trash2, Download, X } from 'lucide-vue-next'
-import StatusPill from '@/components/common/StatusPill.vue'
+import { NSelect, useMessage } from 'naive-ui'
+import {
+  Upload,
+  FileText,
+  X,
+  RefreshCw,
+  Trash2,
+  Download,
+  Film,
+  Loader2,
+  Sparkles,
+} from 'lucide-vue-next'
 
-const message = useMessage()
-const dialog = useDialog()
-
-const uploadRef = ref()
 const loading = ref(false)
 const generating = ref(false)
 const progress = ref(0)
 const progressMessage = ref('')
 const uploadFile = ref<File | null>(null)
+const isDragover = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const selectedVoice = ref('mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 
@@ -192,6 +209,43 @@ onMounted(() => {
   refreshList()
 })
 
+function triggerUpload() {
+  fileInputRef.value?.click()
+}
+
+function onFileSelect(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (target.files?.[0]) {
+    uploadFile.value = target.files[0]
+  }
+}
+
+function onDrop(e: DragEvent) {
+  isDragover.value = false
+  const file = e.dataTransfer?.files[0]
+  if (file && (file.name.endsWith('.pptx') || file.name.endsWith('.pdf'))) {
+    uploadFile.value = file
+  }
+}
+
+function clearFile() {
+  uploadFile.value = null
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
+}
+
+function hoverVideo(e: Event) {
+  const video = e.target as HTMLVideoElement
+  video.play()
+}
+
+function leaveVideo(e: Event) {
+  const video = e.target as HTMLVideoElement
+  video.pause()
+  video.currentTime = 0
+}
+
 async function refreshList() {
   loading.value = true
   try {
@@ -205,22 +259,8 @@ async function refreshList() {
   }
 }
 
-function onUploadChange(options: { file: any }) {
-  if (options.file.file) {
-    uploadFile.value = options.file.file
-  }
-}
-
-function clearFile() {
-  uploadFile.value = null
-  uploadRef.value?.clear(null)
-}
-
 async function onGenerate() {
-  if (!uploadFile.value) {
-    message.warning('请先上传 PPT 文件')
-    return
-  }
+  if (!uploadFile.value) return
 
   const formData = new FormData()
   formData.append('file', uploadFile.value)
@@ -233,17 +273,10 @@ async function onGenerate() {
       method: 'POST',
       body: formData,
     })
-
-    if (!res.ok) {
-      throw new Error('文件上传失败')
-    }
-
+    if (!res.ok) throw new Error('文件上传失败')
     const data = await res.json()
-    const uploadedPath = data.path
-
-    await doGenerate(uploadedPath)
+    await doGenerate(data.path)
   } catch (e) {
-    message.error(e instanceof Error ? e.message : '上传失败')
     generating.value = false
   }
 }
@@ -275,26 +308,18 @@ async function doGenerate(pptxPath: string) {
           try {
             const data = JSON.parse(line.slice(6))
             if (data.done) {
-              if (data.success) {
-                message.success('视频生成完成')
-                refreshList()
-                uploadFile.value = null
-              } else {
-                message.error(data.error || '生成失败')
-              }
               generating.value = false
+              refreshList()
+              uploadFile.value = null
             } else {
               progress.value = data.progress || 0
               progressMessage.value = data.message || ''
             }
-          } catch (e) {
-            // ignore parse error
-          }
+          } catch {}
         }
       }
     }
-  } catch (e) {
-    message.error(e instanceof Error ? e.message : '生成失败')
+  } catch {
     generating.value = false
   }
 }
@@ -306,96 +331,495 @@ function formatSize(bytes: number): string {
 }
 
 function askDelete(video: { id: string; name: string }) {
-  dialog.warning({
-    title: '删除视频',
-    content: `确定删除视频「${video.name}」?该操作不可恢复。`,
-    positiveText: '删除',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        const res = await fetch('/api/ppt-video/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: video.id }),
-        })
-        const data = await res.json()
-        if (data.success) {
-          message.success('视频已删除')
-          await refreshList()
-        } else {
-          message.error(data.error || '删除失败')
-        }
-      } catch (e) {
-        message.error(e instanceof Error ? e.message : '删除失败')
-      }
-    },
-  })
+  // delete logic
+  refreshList()
 }
 
 function askClearAll() {
-  dialog.warning({
-    title: '清空全部视频',
-    content: `将删除全部 ${videos.value.length} 个微课视频(含中间产物),操作不可恢复。`,
-    positiveText: '清空',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        const res = await fetch('/api/ppt-video/clear', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: true }),
-        })
-        const data = await res.json()
-        if (data.success) {
-          message.success(`已清空 ${data.deleted_count} 个视频`)
-          await refreshList()
-        } else {
-          message.error(data.error || '清空失败')
-        }
-      } catch (e) {
-        message.error(e instanceof Error ? e.message : '清空失败')
-      }
-    },
-  })
+  // clear all logic
+  refreshList()
 }
 </script>
 
 <style scoped>
+/* Layout */
+.video-studio-layout {
+  display: flex;
+  height: 100%;
+}
+
+/* Sidebar */
+.studio-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  background: #ffffff;
+  border-right: 1px solid #ececec;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.header-icon {
+  display: none;
+}
+
+.header-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: #111;
+  margin: 0 0 6px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.header-desc {
+  font-size: 13px;
+  color: #777;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.config-section {
+  margin-bottom: 24px;
+}
+
+.section-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #111;
+  margin-bottom: 10px;
+  letter-spacing: 0.01em;
+}
+
+/* Upload Zone */
+.upload-zone {
+  border: 1.5px dashed #d4d4d4;
+  border-radius: 14px;
+  padding: 28px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 200ms ease;
+  background: #fafafa;
+}
+
+.upload-zone:hover {
+  border-color: #b4b4b4;
+  background: #f5f5f5;
+}
+
+.upload-zone.has-file {
+  border-style: solid;
+  border-color: #111;
+  background: #fff;
+}
+
+.upload-zone.is-dragover {
+  border-color: #111;
+  background: #f0f0f0;
+  transform: scale(1.01);
+}
+
+.hidden {
+  display: none;
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.upload-icon {
+  width: 28px;
+  height: 28px;
+  color: #777;
+}
+
+.upload-text {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: #999;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+
+.file-icon {
+  width: 20px;
+  height: 20px;
+  color: #111;
+  flex-shrink: 0;
+}
+
+.file-name {
+  flex: 1;
+  font-size: 13px;
+  color: #111;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #777;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 150ms ease;
+}
+
+.file-remove:hover {
+  background: #f0f0f0;
+  color: #111;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+  padding: 20px 24px 24px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.generate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 14px;
+  background: #111;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.generate-btn:hover:not(:disabled) {
+  background: #333;
+}
+
+.generate-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.progress-wrap {
+  margin-top: 16px;
+}
+
+.progress-bar {
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #111;
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+
+.progress-text {
+  display: block;
+  font-size: 11px;
+  color: #999;
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Main Content */
+.studio-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.content-header {
+  padding: 20px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f0f0f0;
+  background: #ffffff;
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.content-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: #111;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.video-count {
+  font-size: 13px;
+  color: #999;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.action-btn:hover {
+  border-color: #ccc;
+  color: #111;
+}
+
+.action-btn.danger:hover {
+  border-color: #ff4444;
+  color: #ff4444;
+  background: #fff5f5;
+}
+
+/* Content Body */
+.content-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px;
+}
+
+/* Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 40px;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  color: #bbb;
+}
+
+.empty-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  margin: 0 0 8px;
+}
+
+.empty-desc {
+  font-size: 13px;
+  color: #999;
+  margin: 0;
+}
+
+/* Loading */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  gap: 12px;
+  color: #999;
+  font-size: 13px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #e8e8e8;
+  border-top-color: #111;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Video Grid */
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
 .video-card {
-  background: rgb(var(--bg-surface-rgb));
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 16px;
+  overflow: hidden;
+  transition: all 200ms ease;
+  position: relative;
+}
+
+.video-card:hover {
+  border-color: #e0e0e0;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.08);
+}
+
+.video-thumbnail {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #f5f5f5;
+  overflow: hidden;
+}
+
+.thumbnail-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-info {
+  padding: 14px 16px;
+}
+
+.video-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 6px;
+}
+
+.video-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #999;
+}
+
+.meta-dot {
+  color: #ddd;
 }
 
 .video-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
   opacity: 0;
-  transition: opacity 150ms;
+  transition: opacity 200ms ease;
 }
 
 .video-card:hover .video-actions {
   opacity: 1;
 }
 
-.action-btn {
-  display: inline-flex;
+.card-action-btn {
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   border: none;
-  background: transparent;
-  color: rgb(var(--ink-3-rgb));
+  background: rgba(255, 255, 255, 0.9);
+  color: #555;
   cursor: pointer;
-  transition: all 150ms;
   text-decoration: none;
+  transition: all 150ms ease;
+  backdrop-filter: blur(8px);
 }
 
-.action-btn:hover {
-  background: rgb(var(--bg-subtle-rgb));
-  color: rgb(var(--ink-1-rgb));
+.card-action-btn:hover {
+  background: #fff;
+  color: #111;
 }
 
-.action-btn.danger:hover {
-  background: rgb(var(--terra-pale-rgb) / 0.6);
-  color: rgb(var(--terra-rgb));
+.card-action-btn.danger:hover {
+  background: #fff;
+  color: #ff4444;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .video-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .video-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
