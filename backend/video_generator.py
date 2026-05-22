@@ -767,10 +767,11 @@ class VideoGenerator:
         # 烧录字幕（ASS 已由 _generate_subtitles 直接生成，跳过 ffmpeg 默认转换）
         ass_path = output_dir / "06-subtitles.ass"
         video_path = output_dir / "07-video.mp4"
+        temp_video = output_dir / "07-video.tmp.mp4"
         if not ass_path.exists():
             raise FileNotFoundError(f"字幕文件不存在: {ass_path}")
 
-        # ass 滤镜使用纯文件名（无路径），在 output_dir 中运行 ffmpeg 避免路径解析问题
+        # 先写临时文件，完成后原子 rename，避免前端加载到未写完的文件
         subprocess.run([
             "ffmpeg", "-y",
             "-i", str(preview),
@@ -779,9 +780,10 @@ class VideoGenerator:
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
-            str(video_path)
+            str(temp_video)
         ], check=True, capture_output=True, cwd=str(output_dir))
 
+        temp_video.rename(video_path)
         return video_path
 
     def _copy_assets(
