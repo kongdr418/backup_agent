@@ -170,7 +170,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { NSelect, useMessage } from 'naive-ui'
+import { NSelect, useDialog, useMessage } from 'naive-ui'
 import {
   Upload,
   FileText,
@@ -192,6 +192,8 @@ const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const selectedVoice = ref('mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
+const dialog = useDialog()
+const message = useMessage()
 
 const voiceOptions = [
   { label: '默认', value: 'mimo_default' },
@@ -331,13 +333,57 @@ function formatSize(bytes: number): string {
 }
 
 function askDelete(video: { id: string; name: string }) {
-  // delete logic
-  refreshList()
+  dialog.warning({
+    title: '删除视频',
+    content: `确定删除视频「${video.name}」?该操作不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fetch('/api/ppt-video/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: video.id }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          message.success('视频已删除')
+          await refreshList()
+        } else {
+          message.error(data.error || '删除失败')
+        }
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '删除失败')
+      }
+    },
+  })
 }
 
 function askClearAll() {
-  // clear all logic
-  refreshList()
+  dialog.warning({
+    title: '清空全部视频',
+    content: `将删除全部 ${videos.value.length} 个微课视频(含中间产物),操作不可恢复。`,
+    positiveText: '清空',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fetch('/api/ppt-video/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          message.success(`已清空 ${data.deleted_count} 个视频`)
+          await refreshList()
+        } else {
+          message.error(data.error || '清空失败')
+        }
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '清空失败')
+      }
+    },
+  })
 }
 </script>
 
