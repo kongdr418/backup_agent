@@ -6,9 +6,6 @@
     </div>
     <div v-else-if="error" class="error-state">
       <p>{{ error }}</p>
-      <a :href="downloadUrl" target="_blank" rel="noopener" class="download-fallback">
-        <Download class="w-4 h-4" /> 下载 DOCX
-      </a>
     </div>
     <div v-else class="preview-body" v-html="html" />
   </div>
@@ -16,7 +13,6 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import { Download } from 'lucide-vue-next'
 import { fileDownloadUrl } from '@/api/files'
 
 const props = defineProps<{ path: string; name: string }>()
@@ -24,14 +20,12 @@ const props = defineProps<{ path: string; name: string }>()
 const html = ref('')
 const loading = ref(false)
 const error = ref('')
-const downloadUrl = ref('')
 
 async function load() {
   if (!props.path) return
   loading.value = true
   error.value = ''
   html.value = ''
-  downloadUrl.value = fileDownloadUrl(props.path)
 
   try {
     const res = await fetch(fileDownloadUrl(props.path))
@@ -92,25 +86,8 @@ watch(() => props.path, load)
 .error-state {
   padding: 30px 20px;
   text-align: center;
-  color: rgb(var(--ink-3-rgb));
+  color: rgb(var(--danger-rgb));
   font-size: 13px;
-}
-
-.download-fallback {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: rgb(var(--accent-rgb));
-  color: white;
-  font-size: 13px;
-  text-decoration: none;
-  transition: opacity 200ms;
-}
-.download-fallback:hover {
-  opacity: 0.85;
 }
 
 .preview-body {

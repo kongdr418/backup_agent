@@ -16,6 +16,12 @@
             <span class="meta-label">时间</span>
             <span class="meta-value">{{ file.created }}</span>
           </div>
+          <div class="meta-actions">
+            <a :href="downloadHref" target="_blank" rel="noopener" class="meta-download-btn">
+              <Download class="w-3.5 h-3.5" />
+              下载
+            </a>
+          </div>
         </div>
 
         <!-- Image preview -->
@@ -100,6 +106,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, defineAsyncComponent } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
+import { Download } from 'lucide-vue-next'
 import type { GeneratedFile } from '@/types'
 import { graphicImageUrl, videoAudioUrl } from '@/api/preview'
 import { pptDownloadUrl as pptSvgDownloadUrl } from '@/api/pptSvg'
@@ -190,5 +197,26 @@ function audioUrl(name: string) {
 .meta-value {
   color: rgb(var(--ink-2-rgb));
   font-weight: 500;
+}
+
+.meta-actions {
+  margin-left: auto;
+}
+
+.meta-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgb(var(--accent-rgb));
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: opacity 200ms;
+}
+.meta-download-btn:hover {
+  opacity: 0.85;
 }
 </style>

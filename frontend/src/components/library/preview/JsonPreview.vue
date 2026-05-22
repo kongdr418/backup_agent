@@ -44,7 +44,6 @@ const isArray = (v: unknown): v is unknown[] => Array.isArray(v)
 const isPrimitive = (v: unknown): boolean =>
   v === null || typeof v !== 'object'
 
-// Inline recursive JSON tree component
 const JsonNode = defineComponent({
   name: 'JsonNode',
   props: {
