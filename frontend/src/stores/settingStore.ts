@@ -98,8 +98,21 @@ export const useSettingStore = defineStore('setting', () => {
       for (const [pid, p] of Object.entries(data.providers)) {
         if (!providersConfig.value[pid]) {
           providersConfig.value[pid] = { apiKey: '', baseUrl: p.defaultBaseUrl }
-        } else if (!providersConfig.value[pid].baseUrl) {
-          providersConfig.value[pid].baseUrl = p.defaultBaseUrl
+        } else {
+          // 如果用户未自定义过 baseUrl（与旧 defaultBaseUrl 相同），则同步更新为新的 defaultBaseUrl
+          const oldDefaults = [
+            'https://open.bigmodel.cn/api/paas/v4',
+            'https://api.deepseek.com',
+            'https://api.openai.com/v1',
+            'https://api.moonshot.cn/v1',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'https://api.siliconflow.cn/v1',
+            'https://api.minimax.chat/v1/text/chatcompletion_v2',
+          ]
+          const current = providersConfig.value[pid].baseUrl
+          if (!current || oldDefaults.includes(current)) {
+            providersConfig.value[pid].baseUrl = p.defaultBaseUrl
+          }
         }
       }
     } finally {

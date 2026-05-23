@@ -1317,6 +1317,8 @@ class MiniMaxAgent:
         # 根据 provider_type 或模型选择 API 提供商
         if provider_type == 'minimax' or (not provider_type and not model.startswith('deepseek') and not api_key):
             return self._call_minimax(model, messages_with_context, message, stream, api_key)
+        elif provider_type == 'anthropic':
+            return self._call_anthropic_compatible(model, messages_with_context, message, stream, api_key, base_url)
         else:
             return self._call_openai_compatible(model, messages_with_context, message, stream, api_key, base_url)
     
@@ -1423,6 +1425,104 @@ class MiniMaxAgent:
             return f"请求失败: {str(e)}"
         except (KeyError, json.JSONDecodeError) as e:
             return f"解析响应失败: {str(e)}"
+
+    def _call_anthropic_compatible(self, model: str, messages: list, message: str, stream: bool,
+                                    api_key: str = '', base_url: str = ''):
+        """调用 Anthropic 兼容 API（智谱 GLM）"""
+        import requests as req
+
+        if not api_key:
+            return "错误: 未配置 API Key，请在设置中填写"
+
+        if not base_url:
+            base_url = "https://open.bigmodel.cn/api/anthropic"
+
+        # 从 messages 中提取 system message
+        system_content = ''
+        chat_messages = []
+        for m in messages:
+            if m.get('role') == 'system':
+                system_content = m.get('content', '')
+            else:
+                chat_messages.append(m)
+
+        payload = {
+            'model': model,
+            'max_tokens': 2000,
+            'messages': chat_messages,
+        }
+        if system_content:
+            payload['system'] = system_content
+
+        headers = {
+            'x-api-key': api_key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+        }
+
+        if stream:
+            payload['stream'] = True
+            return self._anthropic_compatible_stream(base_url, headers, payload, message)
+        else:
+            try:
+                resp = req.post(
+                    f"{base_url}/v1/messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = ''
+                for block in data.get('content', []):
+                    if block.get('type') == 'text':
+                        text += block.get('text', '')
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": text
+                })
+                self.memory.log_interaction(message, text)
+                return text
+            except Exception as e:
+                return f"请求失败: {str(e)}"
+
+    def _anthropic_compatible_stream(self, base_url: str, headers: dict, payload: dict, message: str):
+        """Anthropic 兼容流式响应"""
+        import requests as req
+
+        def generate():
+            full_content = ""
+            try:
+                with req.post(f"{base_url}/v1/messages", headers=headers, json=payload, stream=True, timeout=120) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith('data: '):
+                            continue
+                        data_str = line[6:]
+                        if data_str.strip() == '[DONE]':
+                            break
+                        try:
+                            event = json.loads(data_str)
+                            event_type = event.get('type', '')
+                            if event_type == 'content_block_delta':
+                                delta = event.get('delta', {})
+                                if delta.get('type') == 'text_delta':
+                                    text = delta.get('text', '')
+                                    full_content += text
+                                    yield text
+                        except json.JSONDecodeError:
+                            continue
+
+                if full_content:
+                    self.conversation_history.append({
+                        "role": "assistant",
+                        "content": full_content
+                    })
+                    self.memory.log_interaction(message, full_content)
+            except Exception as e:
+                yield f"\n[请求失败: {str(e)}]"
+
+        return generate()
 
     def _call_openai_compatible(self, model: str, messages: list, message: str, stream: bool,
                                  api_key: str = '', base_url: str = ''):

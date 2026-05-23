@@ -460,9 +460,10 @@ PROVIDERS = {
     'zhipu': {
         'id': 'zhipu',
         'name': '智谱 GLM',
-        'type': 'openai',
-        'defaultBaseUrl': 'https://open.bigmodel.cn/api/paas/v4',
+        'type': 'anthropic',
+        'defaultBaseUrl': 'https://open.bigmodel.cn/api/anthropic',
         'models': [
+            {'id': 'glm-5.1', 'name': 'GLM-5.1', 'contextWindow': 131072, 'maxOutput': 8192},
             {'id': 'glm-4.5', 'name': 'GLM-4.5', 'contextWindow': 131072, 'maxOutput': 8192},
             {'id': 'glm-4.5-air', 'name': 'GLM-4.5 Air', 'contextWindow': 131072, 'maxOutput': 8192},
             {'id': 'glm-4.5-flash', 'name': 'GLM-4.5 Flash', 'contextWindow': 131072, 'maxOutput': 4096},
@@ -665,6 +666,8 @@ def verify_model():
             return _verify_minimax_tts(api_key, base_url, model_id)
         elif provider_type == 'openai-tts':
             return _verify_openai_tts(api_key, base_url, model_id)
+        elif provider_type == 'anthropic':
+            return _verify_anthropic(api_key, base_url, model_id)
         else:
             return _verify_openai_compatible(api_key, base_url, model_id)
     except Exception as e:
@@ -705,7 +708,56 @@ def _verify_openai_compatible(api_key: str, base_url: str, model_id: str):
         return jsonify({'success': False, 'message': msg})
 
 
-def _safe_json(resp):
+def _verify_anthropic(api_key: str, base_url: str, model_id: str):
+    """验证 Anthropic 兼容 API"""
+    import requests as req
+    try:
+        resp = req.post(
+            f"{base_url}/v1/messages",
+            headers={
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            },
+            json={
+                'model': model_id,
+                'max_tokens': 64,
+                'messages': [{'role': 'user', 'content': 'Say "OK" if you can hear me.'}],
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            text = ''
+            for block in data.get('content', []):
+                if block.get('type') == 'text':
+                    text += block.get('text', '')
+            return jsonify({
+                'success': True,
+                'message': '连接成功',
+                'response': text.strip(),
+            })
+        else:
+            error_str = resp.text
+            if resp.status_code == 401:
+                msg = 'API Key 无效或已过期'
+            elif resp.status_code == 404:
+                msg = '模型未找到，请检查模型 ID 或 Base URL'
+            elif resp.status_code == 429:
+                msg = 'API 请求频率超限，请稍后再试'
+            else:
+                try:
+                    err = resp.json()
+                    msg = err.get('error', {}).get('message', error_str)
+                except Exception:
+                    msg = error_str
+            return jsonify({'success': False, 'message': msg})
+    except req.exceptions.Timeout:
+        return jsonify({'success': False, 'message': '连接超时，请检查网络或 Base URL'})
+    except req.exceptions.ConnectionError:
+        return jsonify({'success': False, 'message': '无法连接到 API 服务器，请检查 Base URL'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
     """安全解析 JSON 响应，失败则返回空字典"""
     try:
         return resp.json() if resp.text else {}
