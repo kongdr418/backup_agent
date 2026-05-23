@@ -85,7 +85,7 @@
 
         <!-- ==================== 内容生成模型 ==================== -->
         <section class="surface-card p-5">
-          <SectionTitle :icon="FileText" title="内容生成模型" subtitle="讲稿、大纲、习题、测验、知识卡片、思维导图等（仅支持 OpenAI 兼容 API）" />
+          <SectionTitle :icon="FileText" title="内容生成模型" subtitle="讲稿、大纲、习题、测验、知识卡片、思维导图等" />
           <div class="space-y-4">
             <div>
               <label class="block text-[12px] font-medium text-ink-2 mb-1.5">服务商</label>
@@ -164,7 +164,7 @@
 
         <!-- ==================== PPT 生成模型 ==================== -->
         <section class="surface-card p-5">
-          <SectionTitle :icon="Presentation" title="PPT 生成模型" subtitle="PPT 工作台使用的模型（仅支持 OpenAI 兼容 API）" />
+          <SectionTitle :icon="Presentation" title="PPT 生成模型" subtitle="PPT 工作台使用的模型" />
           <div class="space-y-4">
             <div>
               <label class="block text-[12px] font-medium text-ink-2 mb-1.5">服务商</label>
@@ -411,10 +411,10 @@ const providerOptions = computed(() =>
   })),
 )
 
-// 内容生成 / PPT 生成只能用 OpenAI 兼容的 provider
+// 内容生成 / PPT 生成支持 OpenAI 兼容和 Anthropic 兼容的 provider
 const openaiProviderOptions = computed(() =>
   Object.values(store.providers)
-    .filter((p: ProviderInfo) => p.type === 'openai')
+    .filter((p: ProviderInfo) => p.type === 'openai' || p.type === 'anthropic')
     .map((p) => ({
       label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`,
       value: p.id,

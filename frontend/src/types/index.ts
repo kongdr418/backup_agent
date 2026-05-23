@@ -220,6 +220,7 @@ export interface PptGenerateParams {
   detail_level?: PptDetail
   model?: string
   api_key?: string
+  base_url?: string
   canvas_format?: PptCanvas
 }
 

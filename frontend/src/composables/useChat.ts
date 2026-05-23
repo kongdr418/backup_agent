@@ -72,6 +72,7 @@ export function useChat() {
         contentModel: settingStore.settings.content_model,
         contentApiKey: settingStore.getEffectiveContentApiKey(),
         contentBaseUrl: settingStore.getEffectiveContentBaseUrl(),
+        contentProviderType: settingStore.getContentProviderType(),
       })
 
       for await (const ev of stream) {

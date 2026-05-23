@@ -22,6 +22,8 @@ from ppt_engine.agents.design_strategist import create_design_spec
 from ppt_engine.agents.svg_executor import generate_svg_pages
 from ppt_engine.config import DESIGN_STYLES, WORKSPACES_DIR, get_deepseek_api_key
 from ppt_engine.llm.deepseek_provider import DeepSeekProvider
+from ppt_engine.llm.anthropic_provider import AnthropicProvider
+from ppt_engine.llm.base import LLMProvider
 
 
 @dataclass
@@ -48,6 +50,17 @@ class PipelineEvent:
 class PPTPipeline:
     """SVG-based PPT generation pipeline."""
 
+    @staticmethod
+    def _create_llm(api_key: str, base_url: str | None, provider_name: str) -> LLMProvider:
+        """根据 base_url 选择 LLM provider。"""
+        is_anthropic = (
+            "/api/anthropic" in (base_url or "")
+            or provider_name == "zhipu"
+        )
+        if is_anthropic:
+            return AnthropicProvider(api_key=api_key, base_url=base_url, provider_name=provider_name)
+        return DeepSeekProvider(api_key=api_key, base_url=base_url, provider_name=provider_name)
+
     async def generate(
         self,
         topic: str,
@@ -55,6 +68,7 @@ class PPTPipeline:
         provider: str = "deepseek",
         model: str = "deepseek-v4-flash",
         api_key: str | None = None,
+        base_url: str | None = None,
         language: str = "zh",
         num_slides: int | None = None,
         detail_level: str = "normal",
@@ -70,11 +84,11 @@ class PPTPipeline:
         if not api_key:
             api_key = get_deepseek_api_key()
         if not api_key:
-            yield PipelineEvent("init", "error", "未配置 DeepSeek API Key", 0.0)
+            yield PipelineEvent("init", "error", "未配置 API Key", 0.0)
             return
 
-        # Create LLM provider
-        llm = DeepSeekProvider(api_key=api_key, provider_name=provider)
+        # Create LLM provider based on base_url
+        llm: LLMProvider = self._create_llm(api_key, base_url, provider)
 
         # Create job workspace
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

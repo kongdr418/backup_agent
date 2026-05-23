@@ -10,6 +10,7 @@ export async function sendChat(message: string, sessionId: string, opts?: {
   contentModel?: string
   contentApiKey?: string
   contentBaseUrl?: string
+  contentProviderType?: string
 }) {
   const res = await client.post<{ response: string; history: ChatMessage[] }>('/api/chat', {
     message,
@@ -21,6 +22,7 @@ export async function sendChat(message: string, sessionId: string, opts?: {
     content_model: opts?.contentModel,
     content_api_key: opts?.contentApiKey,
     content_base_url: opts?.contentBaseUrl,
+    content_provider_type: opts?.contentProviderType,
   })
   return res.data
 }
@@ -47,6 +49,7 @@ export interface ChatStreamArgs {
   contentModel?: string
   contentApiKey?: string
   contentBaseUrl?: string
+  contentProviderType?: string
 }
 
 export function chatStream(args: ChatStreamArgs): AsyncGenerator<SseEvent, void, void> {
@@ -63,6 +66,7 @@ export function chatStream(args: ChatStreamArgs): AsyncGenerator<SseEvent, void,
       content_model: args.contentModel,
       content_api_key: args.contentApiKey,
       content_base_url: args.contentBaseUrl,
+      content_provider_type: args.contentProviderType,
     },
     signal: args.signal,
   })

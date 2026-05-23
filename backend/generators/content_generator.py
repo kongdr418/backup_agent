@@ -371,15 +371,9 @@ class ContentGenerator:
     # ========== 以下方法保持原有设计不变 ==========
 
     def _call_llm(self, prompt: str, system_msg: str = "你是一个专业的内容创作专家") -> str:
-        """调用大语言模型 API - 保持原有设计"""
-        from generators.shared_config import get_content_llm_config
-        model, api_key, base_url = get_content_llm_config()
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key, base_url=base_url)
-
-        response = client.chat.completions.create(
-            model=model,
+        """调用大语言模型 API"""
+        from generators.shared_config import content_llm_call
+        return content_llm_call(
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt}
@@ -387,8 +381,6 @@ class ContentGenerator:
             temperature=0.7,
             max_tokens=2000
         )
-
-        return response.choices[0].message.content
 
     def _generate_short_video_script(self, knowledge: str) -> str:
         """生成具备多维协同与教研逻辑的专业短视频脚本"""

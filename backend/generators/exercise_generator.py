@@ -292,15 +292,8 @@ D. 选项4
 
     def _call_llm(self, prompt: str) -> str:
         """调用大语言模型"""
-        from generators.shared_config import get_content_llm_config
-        model, api_key, base_url = get_content_llm_config()
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
-        response = client.chat.completions.create(
-            model=model,
+        from generators.shared_config import content_llm_call
+        return content_llm_call(
             messages=[
                 {"role": "system", "content": "你是一位专业的教育工作者，擅长编写高质量的习题集。"},
                 {"role": "user", "content": prompt}
@@ -308,7 +301,6 @@ D. 选项4
             temperature=0.7,
             max_tokens=4000
         )
-        return response.choices[0].message.content
 
 
 if __name__ == "__main__":

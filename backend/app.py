@@ -93,10 +93,12 @@ def _apply_content_llm_config(data: dict):
     content_model = data.get('content_model', '')
     content_api_key = data.get('content_api_key', '')
     content_base_url = data.get('content_base_url', '')
-    if content_model or content_api_key or content_base_url:
+    content_provider_type = data.get('content_provider_type', '')
+    if content_model or content_api_key or content_base_url or content_provider_type:
         try:
             from generators.shared_config import set_content_llm_config
-            set_content_llm_config(model=content_model, api_key=content_api_key, base_url=content_base_url)
+            set_content_llm_config(model=content_model, api_key=content_api_key,
+                                   base_url=content_base_url, provider_type=content_provider_type)
         except Exception:
             pass
 
@@ -1597,6 +1599,7 @@ def ppt_svg_generate():
     detail_level = data.get('detail_level', 'normal')
     model = data.get('model', 'deepseek-v4-flash')
     api_key = data.get('api_key')
+    base_url = data.get('base_url')
 
     if not topic:
         return jsonify({'error': '课程主题不能为空'}), 400
@@ -1611,6 +1614,7 @@ def ppt_svg_generate():
             topic,
             model=model,
             api_key=api_key,
+            base_url=base_url,
             language=language,
             num_slides=num_slides,
             style=style,
