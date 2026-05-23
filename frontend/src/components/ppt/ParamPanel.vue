@@ -1,9 +1,9 @@
 <template>
-  <div class="h-full overflow-y-auto bg-bg-surface border-r border-line">
-    <div class="p-5 space-y-5">
+  <div class="param-panel">
+    <div class="param-content">
       <!-- Topic -->
-      <section>
-        <label class="block text-[12px] font-medium text-ink-2 mb-1.5">
+      <section class="param-section">
+        <label class="param-label">
           课程主题 <span class="text-rose-500">*</span>
         </label>
         <n-input
@@ -16,18 +16,15 @@
       </section>
 
       <!-- Style -->
-      <section>
-        <div class="flex items-center justify-between mb-2">
-          <label class="text-[12px] font-medium text-ink-2">设计风格</label>
-        </div>
-        <div class="flex flex-col gap-2">
+      <section class="param-section">
+        <label class="param-label">设计风格</label>
+        <div class="style-list">
           <StyleCard
             v-for="opt in styleOptions"
             :key="opt.value"
             :label="opt.label"
             :description="opt.desc"
             :icon="opt.icon"
-            :tone="opt.tone"
             :selected="local.style === opt.value"
             @select="local.style = opt.value"
           />
@@ -35,19 +32,15 @@
       </section>
 
       <!-- Pages -->
-      <section>
-        <div class="flex items-center justify-between mb-2">
-          <label class="text-[12px] font-medium text-ink-2">页数</label>
-          <span class="text-[12px] text-ink-3">{{ pageDisplay }}</span>
+      <section class="param-section">
+        <div class="param-row">
+          <label class="param-label">页数</label>
+          <span class="param-value">{{ pageDisplay }}</span>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="page-control">
           <button
-            class="px-2 py-1 rounded-md text-[12px] border transition-colors"
-            :class="
-              local.num_slides == null
-                ? 'border-ink-1 bg-bg-subtle text-ink-1'
-                : 'border-line text-ink-3 hover:border-ink-4'
-            "
+            class="auto-btn"
+            :class="{ active: local.num_slides == null }"
             @click="local.num_slides = undefined"
           >
             自动
@@ -63,8 +56,8 @@
       </section>
 
       <!-- Detail level -->
-      <section>
-        <label class="block text-[12px] font-medium text-ink-2 mb-2">详细程度</label>
+      <section class="param-section">
+        <label class="param-label">详细程度</label>
         <n-radio-group v-model:value="local.detail_level" :disabled="disabled" size="small">
           <n-radio-button value="brief">简略</n-radio-button>
           <n-radio-button value="normal">正常</n-radio-button>
@@ -73,8 +66,8 @@
       </section>
 
       <!-- Language -->
-      <section>
-        <label class="block text-[12px] font-medium text-ink-2 mb-2">语言</label>
+      <section class="param-section">
+        <label class="param-label">语言</label>
         <n-radio-group v-model:value="local.language" :disabled="disabled" size="small">
           <n-radio-button value="zh">中文</n-radio-button>
           <n-radio-button value="en">English</n-radio-button>
@@ -82,8 +75,8 @@
       </section>
 
       <!-- Canvas format -->
-      <section>
-        <label class="block text-[12px] font-medium text-ink-2 mb-2">画布比例</label>
+      <section class="param-section">
+        <label class="param-label">画布比例</label>
         <n-radio-group v-model:value="local.canvas_format" :disabled="disabled" size="small">
           <n-radio-button value="ppt169">16:9 (推荐)</n-radio-button>
           <n-radio-button value="ppt43">4:3</n-radio-button>
@@ -91,45 +84,42 @@
       </section>
 
       <!-- Advanced -->
-      <details class="group">
-        <summary
-          class="cursor-pointer list-none text-[12px] text-ink-3 inline-flex items-center gap-1 hover:text-ink-1"
-        >
+      <details class="advanced-group">
+        <summary class="advanced-toggle">
           <ChevronRight
-            class="w-3 h-3 transition-transform group-open:rotate-90"
+            class="w-3.5 h-3.5 transition-transform"
           />
           高级设置
         </summary>
-
-        <div class="mt-3">
-          <p class="text-[11px] text-ink-4">模型在「设置 → PPT 生成模型」中统一配置</p>
+        <div class="advanced-body">
+          <p class="advanced-hint">模型在「设置 → PPT 生成模型」中统一配置</p>
         </div>
       </details>
+    </div>
 
-      <!-- Action -->
-      <div class="pt-2 sticky bottom-0 bg-bg-surface">
-        <button
-          v-if="!disabled"
-          class="w-full h-10 rounded-lg bg-brand text-white text-[13.5px] font-medium hover:bg-brand-hover disabled:opacity-50 disabled:hover:bg-brand transition-colors inline-flex items-center justify-center gap-2"
-          :disabled="!canSubmit"
-          @click="$emit('generate')"
-        >
-          <Sparkles class="w-3.5 h-3.5" />
-          开始生成
-        </button>
+    <!-- Action -->
+    <div class="action-area">
+      <button
+        v-if="!disabled"
+        class="generate-btn"
+        :disabled="!canSubmit"
+        @click="$emit('generate')"
+      >
+        <Wand2 class="w-4 h-4" />
+        开始生成
+      </button>
 
-        <button
-          v-else
-          class="w-full h-10 rounded-lg bg-rose-50 text-rose-600 text-[13.5px] font-medium hover:bg-rose-100 transition-colors inline-flex items-center justify-center gap-2"
-          @click="$emit('cancel')"
-        >
-          <Square class="w-3.5 h-3.5" />
-          停止生成
-        </button>
-        <p class="text-[11px] text-ink-4 mt-2 text-center leading-relaxed">
-          生成耗时与页数相关，通常需要 6~7 分钟，页数较多时可能超过 10 分钟
-        </p>
-      </div>
+      <button
+        v-else
+        class="cancel-btn"
+        @click="$emit('cancel')"
+      >
+        <Square class="w-4 h-4" />
+        停止生成
+      </button>
+      <p class="action-hint">
+        生成耗时与页数相关，通常需要 6~7 分钟，页数较多时可能超过 10 分钟
+      </p>
     </div>
   </div>
 </template>
@@ -144,7 +134,7 @@ import {
   Cpu,
   LayoutGrid,
   ChevronRight,
-  Sparkles,
+  Wand2,
   Square,
 } from 'lucide-vue-next'
 import StyleCard from './StyleCard.vue'
@@ -178,13 +168,12 @@ const styleOptions: Array<{
   label: string
   desc: string
   icon: typeof GraduationCap
-  tone: 'slate' | 'emerald' | 'amber' | 'sky' | 'violet'
 }> = [
-  { value: 'education', label: '教育课件', desc: '简洁清晰,适合教学场景', icon: GraduationCap, tone: 'sky' },
-  { value: 'academic', label: '学术', desc: '严谨规范,论文报告范式', icon: Microscope, tone: 'slate' },
-  { value: 'consulting', label: '咨询', desc: '商务专业,数据驱动叙事', icon: Briefcase, tone: 'amber' },
-  { value: 'tech', label: '科技', desc: '现代极简,产品介绍风', icon: Cpu, tone: 'violet' },
-  { value: 'general', label: '通用', desc: '中性百搭,适配各类话题', icon: LayoutGrid, tone: 'emerald' },
+  { value: 'education', label: '教育课件', desc: '简洁清晰，适合教学场景', icon: GraduationCap },
+  { value: 'academic', label: '学术', desc: '严谨规范，论文报告范式', icon: Microscope },
+  { value: 'consulting', label: '咨询', desc: '商务专业，数据驱动叙事', icon: Briefcase },
+  { value: 'tech', label: '科技', desc: '现代极简，产品介绍风', icon: Cpu },
+  { value: 'general', label: '通用', desc: '中性百搭，适配各类话题', icon: LayoutGrid },
 ]
 
 const sliderValue = computed({
@@ -202,3 +191,182 @@ const canSubmit = computed(
   () => !!local.topic && local.topic.trim().length > 0 && !props.disabled,
 )
 </script>
+
+<style scoped>
+.param-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.param-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.param-section {
+  margin-bottom: 20px;
+}
+
+.param-section:last-child {
+  margin-bottom: 0;
+}
+
+.param-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(var(--ink-1-rgb));
+  margin-bottom: 8px;
+  letter-spacing: 0.01em;
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.param-value {
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+}
+
+.style-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.page-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auto-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-3-rgb));
+  cursor: pointer;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+
+.auto-btn:hover {
+  border-color: rgb(var(--line-strong-rgb));
+  color: rgb(var(--ink-2-rgb));
+}
+
+.auto-btn.active {
+  border-color: rgb(var(--ink-1-rgb));
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+
+/* Advanced */
+.advanced-group {
+  margin-top: 4px;
+}
+
+.advanced-toggle {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+  transition: color 150ms ease;
+}
+
+.advanced-toggle:hover {
+  color: rgb(var(--ink-2-rgb));
+}
+
+.advanced-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-group[open] .advanced-toggle :deep(svg) {
+  transform: rotate(90deg);
+}
+
+.advanced-body {
+  margin-top: 10px;
+}
+
+.advanced-hint {
+  font-size: 11px;
+  color: rgb(var(--ink-4-rgb));
+  line-height: 1.5;
+}
+
+/* Action Area */
+.action-area {
+  flex-shrink: 0;
+  padding: 16px 24px 20px;
+  border-top: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.generate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.generate-btn:hover:not(:disabled) {
+  background: rgb(var(--ink-2-rgb));
+}
+
+.generate-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cancel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: rgb(254 226 226);
+  color: rgb(185 28 28);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.cancel-btn:hover {
+  background: rgb(254 202 202);
+}
+
+.action-hint {
+  font-size: 11px;
+  color: rgb(var(--ink-4-rgb));
+  margin-top: 10px;
+  text-align: center;
+  line-height: 1.5;
+}
+</style>

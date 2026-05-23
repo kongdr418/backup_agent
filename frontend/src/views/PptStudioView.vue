@@ -1,5 +1,5 @@
 <template>
-  <div class="ppt-studio-root h-full flex">
+  <div class="ppt-studio-layout">
     <!-- Mobile: overlay backdrop -->
     <div class="ppt-overlay" :class="{ open: drawerOpen }" @click="drawerOpen = false" />
 
@@ -21,67 +21,70 @@
       </div>
     </div>
 
-    <!-- Param panel (desktop) -->
-    <div class="ppt-param-desktop w-[340px] shrink-0 h-full">
-      <ParamPanel
-        v-model="store.params"
-        :disabled="store.isGenerating"
-        @generate="onGenerate"
-        @cancel="store.cancel()"
-      />
-    </div>
+    <!-- Desktop: Sidebar -->
+    <aside class="studio-sidebar">
+      <div class="sidebar-header">
+        <h2 class="header-title">PPT 工作台</h2>
+        <p class="header-desc">多 Agent SVG 流水线生成</p>
+      </div>
+      <div class="sidebar-content">
+        <ParamPanel
+          v-model="store.params"
+          :disabled="store.isGenerating"
+          @generate="onGenerate"
+          @cancel="store.cancel()"
+        />
+      </div>
+    </aside>
 
-    <!-- Preview area -->
-    <div class="flex-1 min-w-0 flex flex-col">
-      <!-- Toolbar -->
-      <div
-        class="h-12 shrink-0 px-5 border-b border-line bg-bg-surface flex items-center justify-between"
-      >
-        <div class="flex items-center gap-2 text-[13px] text-ink-2">
-          <Wand2 class="w-3.5 h-3.5 text-ink-3" />
-          <span class="hidden md:inline">多 Agent SVG 流水线</span>
-          <span class="text-[11px] text-ink-4 flex items-center gap-1 ml-1">
-            <Cpu class="w-3 h-3" />
-            {{ pptModelLabel }}
-          </span>
-          <button
-            class="ppt-mobile-param-btn md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12.5px] text-ink-2 border border-line active:bg-bg-subtle transition-colors"
-            @click="drawerOpen = true"
-          >
-            <SlidersHorizontal class="w-3.5 h-3.5" />
-            参数
-          </button>
+    <!-- Main Content -->
+    <main class="studio-main">
+      <header class="content-header">
+        <div class="header-left">
+          <h1 class="content-title">SVG 预览</h1>
+          <span class="text-[13px] text-ink-3 hidden md:inline">{{ pptModelLabel }}</span>
           <StatusPill :tone="statusTone">{{ statusText }}</StatusPill>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="header-actions">
           <button
-            class="h-8 px-2.5 rounded-md text-[12.5px] text-ink-2 border border-line hover:bg-bg-subtle inline-flex items-center gap-1.5 transition-colors"
+            class="video-mobile-create-btn md:hidden action-btn"
+            title="参数"
+            @click="drawerOpen = true"
+          >
+            <SlidersHorizontal class="w-4 h-4" />
+          </button>
+          <button
+            class="action-btn history-btn"
+            title="历史记录"
             @click="openHistory"
           >
-            <History class="w-3.5 h-3.5" />
-            <span class="hidden md:inline">历史</span>
-            <span v-if="store.jobs.length" class="text-ink-3">({{ store.jobs.length }})</span>
+            <History class="w-4 h-4" />
+            <span class="btn-label">历史</span>
+            <span v-if="store.jobs.length" class="btn-badge">{{ store.jobs.length }}</span>
           </button>
         </div>
-      </div>
+      </header>
 
-      <PreviewStage
-        :status="store.gen.status"
-        :stage="store.gen.stage"
-        :message="store.gen.message"
-        :progress="store.gen.progress"
-        :slides="store.gen.slides"
-        :active-idx="activeIdx"
-        :total-slides="store.gen.totalSlides"
-        :pptx-filename="store.gen.pptxFilename"
-        :can-download="store.canDownload"
-        :started-at="store.gen.startedAt"
-        :finished-at="store.gen.finishedAt"
-        @select-slide="(i) => (activeIdx = i)"
-        @download="onDownload"
-        @reset="onReset"
-      />
-    </div>
+      <!-- Content Body -->
+      <div class="content-body">
+        <PreviewStage
+          :status="store.gen.status"
+          :stage="store.gen.stage"
+          :message="store.gen.message"
+          :progress="store.gen.progress"
+          :slides="store.gen.slides"
+          :active-idx="activeIdx"
+          :total-slides="store.gen.totalSlides"
+          :pptx-filename="store.gen.pptxFilename"
+          :can-download="store.canDownload"
+          :started-at="store.gen.startedAt"
+          :finished-at="store.gen.finishedAt"
+          @select-slide="(i) => (activeIdx = i)"
+          @download="onDownload"
+          @reset="onReset"
+        />
+      </div>
+    </main>
 
     <HistoryDrawer
       v-model:show="historyOpen"
@@ -96,7 +99,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Wand2, History, SlidersHorizontal, X, Cpu } from 'lucide-vue-next'
+import { History, SlidersHorizontal, X } from 'lucide-vue-next'
 import { useMessage, useDialog } from 'naive-ui'
 
 import ParamPanel from '@/components/ppt/ParamPanel.vue'
@@ -265,18 +268,183 @@ function onClearAllJobs() {
 </script>
 
 <style scoped>
-/* Mobile drawer elements — hidden on desktop */
+/* ============ Layout ============ */
+.ppt-studio-layout {
+  display: flex;
+  height: 100%;
+}
+
+/* ============ Sidebar ============ */
+.studio-sidebar {
+  width: 340px;
+  flex-shrink: 0;
+  background: rgb(var(--bg-surface-rgb));
+  border-right: 1px solid rgb(var(--line-rgb));
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  height: 74px;
+  padding: 0 24px;
+  border-bottom: 1px solid rgb(var(--line-rgb));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+  margin: 0 0 4px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.header-desc {
+  font-size: 13px;
+  color: rgb(var(--ink-3-rgb));
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ============ Main Content ============ */
+.studio-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.content-header {
+  height: 74px;
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.content-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+  margin: 0;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 10px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.action-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+  border-color: rgb(var(--line-strong-rgb));
+}
+
+.btn-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+/* Mobile-only param button stays icon-only */
+.video-mobile-create-btn {
+  width: 38px;
+  padding: 0;
+}
+
+.content-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ============ Mobile drawer elements — hidden on desktop ============ */
 @media (min-width: 768px) {
   .ppt-overlay,
   .ppt-drawer,
-  .ppt-mobile-param-btn {
+  .video-mobile-create-btn {
     display: none !important;
   }
 }
 
 @media (max-width: 767px) {
-  .ppt-param-desktop {
+  .studio-sidebar {
     display: none !important;
+  }
+
+  .ppt-studio-layout {
+    flex-direction: column;
+  }
+
+  .studio-main {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .content-header {
+    height: auto;
+    padding: 12px 16px;
+  }
+
+  .content-title {
+    font-size: 17px;
+  }
+
+  .content-body {
+    padding: 0;
   }
 
   /* Overlay backdrop */
@@ -306,7 +474,7 @@ function onClearAllJobs() {
     left: 0;
     width: min(300px, 85vw);
     z-index: 80;
-    background: var(--bg-surface);
+    background: rgb(var(--bg-surface-rgb));
     box-shadow: 4px 0 32px rgb(0 0 0 / 0.15);
     transform: translateX(-100%);
     transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -320,14 +488,14 @@ function onClearAllJobs() {
     align-items: center;
     justify-content: space-between;
     padding: 14px 16px;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid rgb(var(--line-rgb));
     flex-shrink: 0;
   }
 
   .ppt-drawer-title {
     font-size: 15px;
     font-weight: 600;
-    color: var(--ink-primary);
+    color: rgb(var(--ink-1-rgb));
   }
 
   .ppt-drawer-close {
@@ -339,12 +507,12 @@ function onClearAllJobs() {
     justify-content: center;
     border: none;
     background: transparent;
-    color: var(--ink-secondary);
+    color: rgb(var(--ink-2-rgb));
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   .ppt-drawer-close:active {
-    background: var(--bg-subtle);
+    background: rgb(var(--bg-subtle-rgb));
   }
 
   .ppt-drawer-body {

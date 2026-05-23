@@ -1,29 +1,29 @@
 <template>
   <div class="progress-bar">
-    <div class="flex items-center justify-between mb-2">
-      <div class="flex items-center gap-2">
-        <component :is="stageIcon" class="w-3.5 h-3.5" :class="stageIconCls" />
-        <span class="text-[13px] font-medium text-ink-1">{{ stageLabel }}</span>
+    <div class="progress-header">
+      <div class="progress-status">
+        <component :is="stageIcon" class="status-icon" :class="stageIconCls" />
+        <span class="status-label">{{ stageLabel }}</span>
       </div>
-      <span class="text-[12px] text-ink-3 tabular-nums">{{ Math.round(progress) }}%</span>
+      <span class="progress-pct">{{ Math.round(progress) }}%</span>
     </div>
 
     <!-- Bar -->
-    <div class="h-1.5 bg-bg-subtle rounded-full overflow-hidden mb-2">
+    <div class="progress-track">
       <div
-        class="h-full transition-all duration-300 rounded-full"
+        class="progress-fill"
         :class="barCls"
         :style="{ width: `${Math.max(2, Math.min(progress, 100))}%` }"
       />
     </div>
 
     <!-- Message + page count -->
-    <div class="flex items-center justify-between text-[11.5px] text-ink-3 mb-2.5">
-      <span class="truncate flex-1">{{ message || '准备中...' }}</span>
-      <span v-if="totalSlides" class="ml-3 shrink-0 tabular-nums">{{ doneSlides }} / {{ totalSlides }} 页</span>
+    <div class="progress-meta">
+      <span class="meta-message">{{ message || '准备中...' }}</span>
+      <span v-if="totalSlides" class="meta-count">{{ doneSlides }} / {{ totalSlides }} 页</span>
     </div>
 
-    <!-- Stage timeline — single row: dots + labels -->
+    <!-- Stage timeline -->
     <div class="stage-row">
       <template v-for="(s, i) in stages" :key="s.key">
         <div class="stage-dot" :class="stageDotCls(s.key)" />
@@ -34,7 +34,7 @@
 
     <div
       v-if="status === 'streaming' && stage === 'svg_generation' && (doneSlides || 0) > 0"
-      class="mt-2 text-[10.5px] text-ink-4"
+      class="stage-hint"
     >
       页面并发生成，预览顺序可能与页码不一致
     </div>
@@ -101,26 +101,127 @@ const stageIcon = computed(() => {
 })
 
 const stageIconCls = computed(() => {
-  if (props.status === 'error') return 'text-rose-500'
-  if (props.status === 'cancelled') return 'text-ink-3'
-  if (props.status === 'done') return 'text-emerald-500'
-  return 'text-brand animate-spin'
+  if (props.status === 'error') return 'icon-error'
+  if (props.status === 'cancelled') return 'icon-neutral'
+  if (props.status === 'done') return 'icon-done'
+  return 'icon-active'
 })
 
 const barCls = computed(() => {
-  if (props.status === 'error') return 'bg-rose-400'
-  if (props.status === 'cancelled') return 'bg-ink-3'
-  if (props.status === 'done') return 'bg-emerald-500'
-  return 'bg-brand'
+  if (props.status === 'error') return 'fill-error'
+  if (props.status === 'cancelled') return 'fill-neutral'
+  if (props.status === 'done') return 'fill-done'
+  return 'fill-active'
 })
 </script>
 
 <style scoped>
 .progress-bar {
-  padding: 12px 16px;
+  padding: 14px 18px;
   background: rgb(var(--bg-surface-rgb));
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 12px;
+}
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.progress-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.icon-error {
+  color: rgb(var(--danger-rgb));
+}
+
+.icon-neutral {
+  color: rgb(var(--ink-3-rgb));
+}
+
+.icon-done {
+  color: rgb(var(--success-rgb));
+}
+
+.icon-active {
+  color: rgb(var(--ink-1-rgb));
+  animation: spin 1s linear infinite;
+}
+
+.status-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.progress-pct {
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-track {
+  height: 3px;
+  background: rgb(var(--bg-subtle-rgb));
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+
+.fill-error {
+  background: rgb(var(--danger-rgb));
+}
+
+.fill-neutral {
+  background: rgb(var(--ink-3-rgb));
+}
+
+.fill-done {
+  background: rgb(var(--ink-1-rgb));
+}
+
+.fill-active {
+  background: rgb(var(--ink-1-rgb));
+}
+
+.progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  margin-bottom: 12px;
+}
+
+.meta-message {
+  color: rgb(var(--ink-3-rgb));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.meta-count {
+  color: rgb(var(--ink-3-rgb));
+  margin-left: 12px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Stage timeline */
@@ -129,49 +230,71 @@ const barCls = computed(() => {
   align-items: center;
   gap: 0;
 }
+
 .stage-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
   transition: background 200ms ease;
 }
+
 .dot-active {
-  background: rgb(var(--accent-rgb));
-  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.2);
+  background: rgb(var(--ink-1-rgb));
 }
+
 .dot-done {
-  background: rgb(var(--emerald-500, #10b981));
+  background: rgb(var(--ink-1-rgb));
 }
+
 .dot-error {
-  background: rgb(var(--rose-400, #fb7185));
+  background: rgb(var(--danger-rgb));
 }
+
 .dot-pending {
   background: rgb(var(--bg-subtle-rgb));
   border: 1.5px solid rgb(var(--line-rgb));
+  width: 6px;
+  height: 6px;
 }
+
 .stage-label {
   font-size: 10px;
   color: rgb(var(--ink-4-rgb));
   white-space: nowrap;
   margin: 0 4px;
 }
+
 .stage-label.label-active {
-  color: rgb(var(--ink-1-rgb));
+  color: rgb(var(--ink-2-rgb));
   font-weight: 500;
 }
+
 .stage-label.label-done {
   color: rgb(var(--ink-2-rgb));
 }
+
 .stage-line {
   flex: 1;
-  height: 1.5px;
+  height: 1px;
   background: rgb(var(--line-rgb));
   margin: 0 2px;
   border-radius: 1px;
   transition: background 200ms ease;
 }
+
 .line-done {
-  background: rgb(var(--emerald-500, #10b981));
+  background: rgb(var(--ink-2-rgb));
+}
+
+.stage-hint {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: rgb(var(--ink-4-rgb));
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>
