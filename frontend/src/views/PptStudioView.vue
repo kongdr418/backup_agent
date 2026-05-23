@@ -109,11 +109,13 @@ import StatusPill from '@/components/common/StatusPill.vue'
 
 import { usePptStore } from '@/stores/pptStore'
 import { usePptStream } from '@/composables/usePptStream'
+import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { useSettingStore } from '@/stores/settingStore'
 
 const store = usePptStore()
 const settingStore = useSettingStore()
+useRefreshGuard()
 
 const pptModelLabel = computed(() => {
   const providerId = settingStore.settings.ppt_provider

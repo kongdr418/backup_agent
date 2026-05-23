@@ -262,10 +262,12 @@ import {
 } from 'lucide-vue-next'
 import { useVideoStore } from '@/stores/videoStore'
 import { useSettingStore } from '@/stores/settingStore'
+import { useRefreshGuard } from '@/composables/useRefreshGuard'
 
 const videoStore = useVideoStore()
 const settingStore = useSettingStore()
 const { generating, progress, progressMessage } = storeToRefs(videoStore)
+useRefreshGuard()
 
 const loading = ref(false)
 const drawerOpen = ref(false)

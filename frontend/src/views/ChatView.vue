@@ -174,6 +174,7 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useChatViewStore } from '@/stores/chatViewStore'
 import { useChat } from '@/composables/useChat'
+import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import DocumentViewer from '@/components/chat/DocumentViewer.vue'
@@ -184,6 +185,7 @@ const chatStore = useChatStore()
 const chatView = useChatViewStore()
 const { messages, isLoading, sendMessage, cancel } = useChat()
 const dialog = useDialog()
+useRefreshGuard()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const mobileMenuOpen = ref(false)
