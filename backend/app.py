@@ -424,8 +424,6 @@ PROVIDERS = {
         'models': [
             {'id': 'deepseek-v4-pro', 'name': 'DeepSeek V4 Pro', 'contextWindow': 1048576, 'maxOutput': 384000},
             {'id': 'deepseek-v4-flash', 'name': 'DeepSeek V4 Flash', 'contextWindow': 1048576, 'maxOutput': 384000},
-            {'id': 'deepseek-chat', 'name': 'DeepSeek V3 (旧版)', 'contextWindow': 65536, 'maxOutput': 8192},
-            {'id': 'deepseek-reasoner', 'name': 'DeepSeek R1 (旧版)', 'contextWindow': 65536, 'maxOutput': 8192},
         ],
         'requiresApiKey': True,
     },
@@ -642,6 +640,10 @@ def verify_model():
     provider_id = (data.get('providerId') or '').strip()
     provider_type = (data.get('providerType') or 'openai').strip()
 
+    # 如果用户未提供 API Key，但 provider 在服务端已配置，则使用服务端 Key
+    if not api_key and provider_id in SERVER_API_KEYS:
+        api_key = SERVER_API_KEYS[provider_id]
+
     if not api_key:
         return jsonify({'success': False, 'message': '请填写 API Key'}), 400
 
@@ -823,8 +825,6 @@ def get_settings():
         'options': {
             'chat_model': [
                 {'value': 'MiniMax-M2.5-highspeed', 'label': 'MiniMax M2.5 高速'},
-                {'value': 'deepseek-chat', 'label': 'DeepSeek V3'},
-                {'value': 'deepseek-reasoner', 'label': 'DeepSeek R1'},
             ],
             'mimo_voice': [
                 {'value': 'mimo_default', 'label': 'MiMo-默认'},
