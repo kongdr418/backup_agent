@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import {
   NConfigProvider,
   NMessageProvider,
@@ -20,8 +20,16 @@ import {
 } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useTheme } from '@/composables/useTheme'
+import { useSettingStore } from '@/stores/settingStore'
 
 const { effective } = useTheme()
+const settingStore = useSettingStore()
+
+// 全局初始化：确保设置和 providers 在任何页面刷新时都能加载
+onMounted(() => {
+  settingStore.fetchSettings().catch(() => {})
+  settingStore.fetchProviders().catch(() => {})
+})
 
 const naiveTheme = computed(() => (effective.value === 'dark' ? darkTheme : null))
 

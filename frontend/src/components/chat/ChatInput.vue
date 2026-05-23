@@ -1,8 +1,8 @@
 <template>
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
-      <!-- Quick action chips -->
-      <div v-if="!isLoading && !chatView.isSplit" class="quick-chips flex gap-1 mb-2">
+      <!-- Quick action chips + model badge -->
+      <div v-if="!isLoading && !chatView.isSplit" class="quick-chips flex gap-1 mb-2 items-center">
         <button
           v-for="q in quickActions"
           :key="q.label"
@@ -12,6 +12,10 @@
           <component :is="q.icon" class="w-3.5 h-3.5" />
           {{ q.label }}
         </button>
+        <span class="text-[11px] text-ink-4 ml-auto shrink-0 flex items-center gap-1">
+          <Cpu class="w-3 h-3" />
+          {{ currentModelLabel }}
+        </span>
       </div>
 
       <!-- Format selector + Input bar -->
@@ -86,14 +90,25 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   Send, Square, FileText, BookOpen, Image as ImageIcon, Video,
-  GraduationCap, Lightbulb, List, ClipboardList, GitBranch
+  GraduationCap, Lightbulb, List, ClipboardList, GitBranch, Cpu
 } from 'lucide-vue-next'
 import { useChatViewStore } from '@/stores/chatViewStore'
+import { useSettingStore } from '@/stores/settingStore'
 
 defineProps<{ isLoading: boolean }>()
 const emit = defineEmits<{ send: [text: string]; cancel: [] }>()
 
 const chatView = useChatViewStore()
+const settingStore = useSettingStore()
+
+const currentModelLabel = computed(() => {
+  const providerId = settingStore.settings.chat_provider
+  const modelId = settingStore.settings.chat_model
+  const provider = settingStore.providers[providerId]
+  const model = provider?.models.find((m) => m.id === modelId)
+  if (model) return `${model.name}`
+  return modelId || '默认模型'
+})
 
 const input = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)

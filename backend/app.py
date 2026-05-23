@@ -8,6 +8,7 @@ load_dotenv()
 
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
@@ -76,12 +77,28 @@ API_KEY = os.environ.get('MINIMAX_API_KEY', '')
 sessions = {}
 
 
-def get_agent(session_id: str) -> MiniMaxAgent:
+def get_agent(session_id: str, model: str = None) -> MiniMaxAgent:
     """获取或创建 Agent 实例"""
     if session_id not in sessions:
-        agent = MiniMaxAgent(API_KEY, session_id)
+        agent = MiniMaxAgent(API_KEY, session_id, model=model)
         sessions[session_id] = agent
+    elif model and sessions[session_id].model != model:
+        # 模型变更时更新 agent 的模型
+        sessions[session_id].model = model
     return sessions[session_id]
+
+
+def _apply_content_llm_config(data: dict):
+    """将请求中的内容生成模型配置同步到 shared_config，使讲稿/大纲/习题等生成器使用正确模型"""
+    content_model = data.get('content_model', '')
+    content_api_key = data.get('content_api_key', '')
+    content_base_url = data.get('content_base_url', '')
+    if content_model or content_api_key or content_base_url:
+        try:
+            from generators.shared_config import set_content_llm_config
+            set_content_llm_config(model=content_model, api_key=content_api_key, base_url=content_base_url)
+        except Exception:
+            pass
 
 
 # ==================== 健康检查 & API 信息 ====================
@@ -139,8 +156,17 @@ def chat():
     data = request.json
     message = data.get('message', '').strip()
     session_id = data.get('session_id', 'default')
+    model = data.get('model', DEFAULT_SETTINGS.get('chat_model', 'MiniMax-M2.5-highspeed'))
+    api_key = data.get('api_key', '')
+    base_url = data.get('base_url', '')
+    provider_type = data.get('provider_type', '')
+
+    # 内容生成模型配置（用于讲稿、大纲、习题等生成器）
+    _apply_content_llm_config(data)
 
     request_logger.info(f'[CHAT] session_id: {session_id}')
+    request_logger.info(f'[CHAT] model: {model}')
+    request_logger.info(f'[CHAT] has_client_api_key: {bool(api_key)}')
     request_logger.info(f'[CHAT] message: {message[:100]}...' if len(message) > 100 else f'[CHAT] message: {message}')
 
     if not message:
@@ -148,10 +174,10 @@ def chat():
         return jsonify({'error': '消息不能为空'}), 400
 
     request_logger.info('[CHAT] 获取 Agent 实例')
-    agent = get_agent(session_id)
+    agent = get_agent(session_id, model=model)
 
     request_logger.info('[CHAT] 调用 agent.chat() - stream=False')
-    response = agent.chat(message, stream=False)
+    response = agent.chat(message, stream=False, model=model, api_key=api_key, base_url=base_url, provider_type=provider_type)
     request_logger.info(f'[CHAT] agent.chat() 返回，响应长度: {len(str(response))}')
 
     history = agent.get_history()
@@ -174,8 +200,17 @@ def chat_stream():
     data = request.json
     message = data.get('message', '').strip()
     session_id = data.get('session_id', 'default')
+    model = data.get('model', DEFAULT_SETTINGS.get('chat_model', 'MiniMax-M2.5-highspeed'))
+    api_key = data.get('api_key', '')
+    base_url = data.get('base_url', '')
+    provider_type = data.get('provider_type', '')
+
+    # 内容生成模型配置（用于讲稿、大纲、习题等生成器）
+    _apply_content_llm_config(data)
 
     request_logger.info(f'[STREAM] session_id: {session_id}')
+    request_logger.info(f'[STREAM] model: {model}')
+    request_logger.info(f'[STREAM] has_client_api_key: {bool(api_key)}')
     request_logger.info(f'[STREAM] message: {message[:100]}...' if len(message) > 100 else f'[STREAM] message: {message}')
 
     if not message:
@@ -183,11 +218,11 @@ def chat_stream():
         return jsonify({'error': '消息不能为空'}), 400
 
     request_logger.info('[STREAM] 获取 Agent 实例')
-    agent = get_agent(session_id)
+    agent = get_agent(session_id, model=model)
 
     def generate():
         request_logger.info('[STREAM] 调用 agent.chat() - stream=True')
-        result = agent.chat(message, stream=True)
+        result = agent.chat(message, stream=True, model=model, api_key=api_key, base_url=base_url, provider_type=provider_type)
 
         # 优先检查是否是 PPT 预览数据字典（注意：字典也有 __iter__，必须先检查）
         if isinstance(result, dict) and result.get('type') == 'ppt_preview':
@@ -368,14 +403,389 @@ def get_history():
     })
 
 
+# ==================== 模型 Provider 注册表 ====================
+
+PROVIDERS = {
+    'minimax': {
+        'id': 'minimax',
+        'name': 'MiniMax',
+        'type': 'minimax',
+        'defaultBaseUrl': 'https://api.minimax.chat/v1/text/chatcompletion_v2',
+        'models': [
+            {'id': 'MiniMax-M2.5-highspeed', 'name': 'MiniMax M2.5 高速', 'contextWindow': 16384, 'maxOutput': 4096},
+        ],
+        'requiresApiKey': True,
+    },
+    'deepseek': {
+        'id': 'deepseek',
+        'name': 'DeepSeek',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://api.deepseek.com',
+        'models': [
+            {'id': 'deepseek-v4-pro', 'name': 'DeepSeek V4 Pro', 'contextWindow': 1048576, 'maxOutput': 384000},
+            {'id': 'deepseek-v4-flash', 'name': 'DeepSeek V4 Flash', 'contextWindow': 1048576, 'maxOutput': 384000},
+            {'id': 'deepseek-chat', 'name': 'DeepSeek V3 (旧版)', 'contextWindow': 65536, 'maxOutput': 8192},
+            {'id': 'deepseek-reasoner', 'name': 'DeepSeek R1 (旧版)', 'contextWindow': 65536, 'maxOutput': 8192},
+        ],
+        'requiresApiKey': True,
+    },
+    'openai': {
+        'id': 'openai',
+        'name': 'OpenAI',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://api.openai.com/v1',
+        'models': [
+            {'id': 'gpt-5.4-mini', 'name': 'GPT-5.4 Mini', 'contextWindow': 400000, 'maxOutput': 16384},
+            {'id': 'gpt-5.4', 'name': 'GPT-5.4', 'contextWindow': 1050000, 'maxOutput': 32768},
+            {'id': 'gpt-5.4-nano', 'name': 'GPT-5.4 Nano', 'contextWindow': 400000, 'maxOutput': 16384},
+            {'id': 'o3', 'name': 'o3', 'contextWindow': 200000, 'maxOutput': 100000},
+            {'id': 'o4-mini', 'name': 'o4 Mini', 'contextWindow': 200000, 'maxOutput': 100000},
+            {'id': 'gpt-4o', 'name': 'GPT-4o', 'contextWindow': 128000, 'maxOutput': 16384},
+            {'id': 'gpt-4o-mini', 'name': 'GPT-4o Mini', 'contextWindow': 128000, 'maxOutput': 16384},
+        ],
+        'requiresApiKey': True,
+    },
+    'moonshot': {
+        'id': 'moonshot',
+        'name': 'Moonshot (Kimi)',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://api.moonshot.cn/v1',
+        'models': [
+            {'id': 'kimi-k2.6', 'name': 'Kimi K2.6', 'contextWindow': 262144, 'maxOutput': 8192},
+            {'id': 'kimi-k2-thinking', 'name': 'Kimi K2 Thinking', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'moonshot-v1-8k', 'name': 'Moonshot v1 8K', 'contextWindow': 8192, 'maxOutput': 4096},
+            {'id': 'moonshot-v1-32k', 'name': 'Moonshot v1 32K', 'contextWindow': 32768, 'maxOutput': 4096},
+            {'id': 'moonshot-v1-128k', 'name': 'Moonshot v1 128K', 'contextWindow': 131072, 'maxOutput': 4096},
+        ],
+        'requiresApiKey': True,
+    },
+    'zhipu': {
+        'id': 'zhipu',
+        'name': '智谱 GLM',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://open.bigmodel.cn/api/paas/v4',
+        'models': [
+            {'id': 'glm-4.5', 'name': 'GLM-4.5', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'glm-4.5-air', 'name': 'GLM-4.5 Air', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'glm-4.5-flash', 'name': 'GLM-4.5 Flash', 'contextWindow': 131072, 'maxOutput': 4096},
+            {'id': 'glm-4-plus', 'name': 'GLM-4 Plus', 'contextWindow': 131072, 'maxOutput': 4096},
+        ],
+        'requiresApiKey': True,
+    },
+    'qwen': {
+        'id': 'qwen',
+        'name': '通义千问',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        'models': [
+            {'id': 'qwen3.6-max-preview', 'name': 'Qwen3.6 Max Preview', 'contextWindow': 262144, 'maxOutput': 8192},
+            {'id': 'qwen3.6-plus', 'name': 'Qwen3.6 Plus', 'contextWindow': 1048576, 'maxOutput': 8192},
+            {'id': 'qwen3.6-flash', 'name': 'Qwen3.6 Flash', 'contextWindow': 1048576, 'maxOutput': 8192},
+            {'id': 'qwen-max', 'name': 'Qwen Max', 'contextWindow': 32768, 'maxOutput': 8192},
+            {'id': 'qwen-plus', 'name': 'Qwen Plus', 'contextWindow': 131072, 'maxOutput': 8192},
+        ],
+        'requiresApiKey': True,
+    },
+    'siliconflow': {
+        'id': 'siliconflow',
+        'name': 'SiliconFlow',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://api.siliconflow.cn/v1',
+        'models': [
+            {'id': 'deepseek-ai/DeepSeek-V4-Flash', 'name': 'DeepSeek V4 Flash (SF)', 'contextWindow': 1048576, 'maxOutput': 384000},
+            {'id': 'deepseek-ai/DeepSeek-V3.2', 'name': 'DeepSeek V3.2 (SF)', 'contextWindow': 65536, 'maxOutput': 8192},
+            {'id': 'Qwen/Qwen3.6-35B-A3B', 'name': 'Qwen3.6 35B (SF)', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'Qwen/Qwen3.6-27B', 'name': 'Qwen3.6 27B (SF)', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'deepseek-ai/DeepSeek-R1', 'name': 'DeepSeek R1 (SF)', 'contextWindow': 65536, 'maxOutput': 8192},
+        ],
+        'requiresApiKey': True,
+    },
+}
+
+# ==================== TTS Provider 注册表 ====================
+
+TTS_PROVIDERS = {
+    'minimax-tts': {
+        'id': 'minimax-tts',
+        'name': 'MiniMax TTS (MiMo)',
+        'type': 'minimax-tts',
+        'defaultBaseUrl': 'https://api.xiaomimimo.com/v1',
+        'models': [
+            {'id': 'mimo-v2.5-tts', 'name': 'MiMo V2.5 TTS'},
+        ],
+        'voices': [
+            {'id': 'mimo_default', 'name': '默认音色'},
+        ],
+        'requiresApiKey': True,
+    },
+    'openai-tts': {
+        'id': 'openai-tts',
+        'name': 'OpenAI TTS',
+        'type': 'openai-tts',
+        'defaultBaseUrl': 'https://api.openai.com/v1',
+        'models': [
+            {'id': 'gpt-4o-mini-tts', 'name': 'GPT-4o Mini TTS'},
+            {'id': 'tts-1', 'name': 'TTS-1'},
+            {'id': 'tts-1-hd', 'name': 'TTS-1 HD'},
+        ],
+        'voices': [
+            {'id': 'alloy', 'name': 'Alloy'},
+            {'id': 'ash', 'name': 'Ash'},
+            {'id': 'coral', 'name': 'Coral'},
+            {'id': 'echo', 'name': 'Echo'},
+            {'id': 'fable', 'name': 'Fable'},
+            {'id': 'nova', 'name': 'Nova'},
+            {'id': 'onyx', 'name': 'Onyx'},
+            {'id': 'sage', 'name': 'Sage'},
+            {'id': 'shimmer', 'name': 'Shimmer'},
+            {'id': 'verse', 'name': 'Verse'},
+        ],
+        'requiresApiKey': True,
+    },
+    'glm-tts': {
+        'id': 'glm-tts',
+        'name': '智谱 GLM TTS',
+        'type': 'openai-tts',
+        'defaultBaseUrl': 'https://open.bigmodel.cn/api/paas/v4',
+        'models': [
+            {'id': 'glm-tts', 'name': 'GLM TTS'},
+        ],
+        'voices': [
+            {'id': 'tongtong', 'name': '彤彤'},
+            {'id': 'chuichui', 'name': '锤锤'},
+            {'id': 'xiaochen', 'name': '小陈'},
+            {'id': 'jam', 'name': 'Jam'},
+            {'id': 'kazi', 'name': 'Kazi'},
+            {'id': 'douji', 'name': '豆几'},
+            {'id': 'luodo', 'name': '罗多'},
+        ],
+        'requiresApiKey': True,
+    },
+}
+
+# 服务端已配置的 API Keys（来自环境变量）
+SERVER_API_KEYS = {}
+if os.environ.get('MINIMAX_API_KEY'):
+    SERVER_API_KEYS['minimax'] = os.environ['MINIMAX_API_KEY']
+if os.environ.get('DEEPSEEK_API_KEY'):
+    SERVER_API_KEYS['deepseek'] = os.environ['DEEPSEEK_API_KEY']
+if os.environ.get('MIMO_API_KEY'):
+    SERVER_API_KEYS['minimax-tts'] = os.environ['MIMO_API_KEY']
+
+
+def _get_provider_for_model(model_id: str):
+    """根据 model ID 查找所属 provider"""
+    for pid, p in PROVIDERS.items():
+        for m in p['models']:
+            if m['id'] == model_id:
+                return pid, p, m
+    return None, None, None
+
+
 @app.route('/api/models', methods=['GET'])
 def get_models():
-    """获取可用模型列表"""
-    return jsonify({
-        'models': [
-            {'id': 'MiniMax-M2.5-highspeed', 'name': 'MiniMax-M2.5-highspeed', 'description': 'MiniMax M2.5 高速模型'},
-        ]
-    })
+    """获取可用模型列表（兼容旧接口）"""
+    models = []
+    for pid, p in PROVIDERS.items():
+        for m in p['models']:
+            models.append({
+                'id': m['id'],
+                'name': m['name'],
+                'description': f"{p['name']} · {m['id']}",
+                'provider': pid,
+            })
+    return jsonify({'models': models})
+
+
+@app.route('/api/providers', methods=['GET'])
+def get_providers():
+    """获取所有 provider 及模型列表（不含 API Key）"""
+    result = {}
+    for pid, p in PROVIDERS.items():
+        result[pid] = {
+            'id': p['id'],
+            'name': p['name'],
+            'type': p['type'],
+            'defaultBaseUrl': p['defaultBaseUrl'],
+            'models': p['models'],
+            'requiresApiKey': p['requiresApiKey'],
+            'isServerConfigured': pid in SERVER_API_KEYS,
+        }
+    return jsonify({'providers': result})
+
+
+@app.route('/api/tts-providers', methods=['GET'])
+def get_tts_providers():
+    """获取所有 TTS provider 及模型/音色列表"""
+    result = {}
+    for pid, p in TTS_PROVIDERS.items():
+        result[pid] = {
+            'id': p['id'],
+            'name': p['name'],
+            'type': p['type'],
+            'defaultBaseUrl': p['defaultBaseUrl'],
+            'models': p['models'],
+            'voices': p.get('voices', []),
+            'requiresApiKey': p['requiresApiKey'],
+            'isServerConfigured': pid in SERVER_API_KEYS,
+        }
+    return jsonify({'providers': result})
+
+
+@app.route('/api/verify-model', methods=['POST'])
+def verify_model():
+    """验证模型连接 - 发送测试消息确认 API Key 可用"""
+    data = request.json
+    api_key = (data.get('apiKey') or '').strip()
+    base_url = (data.get('baseUrl') or '').strip()
+    model_id = (data.get('model') or '').strip()
+    provider_id = (data.get('providerId') or '').strip()
+    provider_type = (data.get('providerType') or 'openai').strip()
+
+    if not api_key:
+        return jsonify({'success': False, 'message': '请填写 API Key'}), 400
+
+    if not model_id:
+        return jsonify({'success': False, 'message': '请选择模型'}), 400
+
+    if not base_url and provider_id in PROVIDERS:
+        base_url = PROVIDERS[provider_id]['defaultBaseUrl']
+    if not base_url and provider_id in TTS_PROVIDERS:
+        base_url = TTS_PROVIDERS[provider_id]['defaultBaseUrl']
+
+    if not base_url:
+        return jsonify({'success': False, 'message': '无法确定 API 地址'}), 400
+
+    try:
+        if provider_type == 'minimax':
+            return _verify_minimax(api_key, base_url, model_id)
+        elif provider_type == 'minimax-tts':
+            return _verify_minimax_tts(api_key, base_url, model_id)
+        elif provider_type == 'openai-tts':
+            return _verify_openai_tts(api_key, base_url, model_id)
+        else:
+            return _verify_openai_compatible(api_key, base_url, model_id)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+def _verify_openai_compatible(api_key: str, base_url: str, model_id: str):
+    """验证 OpenAI 兼容 API"""
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=15)
+
+    try:
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[{'role': 'user', 'content': 'Say "OK" if you can hear me.'}],
+            max_tokens=64,
+        )
+        text = response.choices[0].message.content or ''
+        return jsonify({
+            'success': True,
+            'message': '连接成功',
+            'response': text.strip(),
+        })
+    except Exception as e:
+        error_str = str(e)
+        if '401' in error_str or 'Unauthorized' in error_str or 'Incorrect API key' in error_str:
+            msg = 'API Key 无效或已过期'
+        elif '404' in error_str or 'not found' in error_str.lower():
+            msg = '模型未找到，请检查模型 ID 或 Base URL'
+        elif '429' in error_str:
+            msg = 'API 请求频率超限，请稍后再试'
+        elif 'timeout' in error_str.lower() or 'timed out' in error_str.lower():
+            msg = '连接超时，请检查网络或 Base URL'
+        elif 'Connection' in error_str or 'ENOTFOUND' in error_str or 'ECONNREFUSED' in error_str:
+            msg = '无法连接到 API 服务器，请检查 Base URL'
+        else:
+            msg = error_str
+        return jsonify({'success': False, 'message': msg})
+
+
+def _safe_json(resp):
+    """安全解析 JSON 响应，失败则返回空字典"""
+    try:
+        return resp.json() if resp.text else {}
+    except Exception:
+        return {}
+
+
+def _verify_minimax_tts(api_key: str, base_url: str, model_id: str):
+    """验证 MiniMax TTS (MiMo) — chat completions + audio 格式"""
+    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    # OpenAI SDK 会自动拼接 /chat/completions，这里手动拼接
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        'model': model_id,
+        'messages': [
+            {'role': 'user', 'content': '请朗读'},
+            {'role': 'assistant', 'content': 'OK'},
+        ],
+        'max_tokens': 64,
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code == 200:
+            return jsonify({'success': True, 'message': '连接成功'})
+        elif resp.status_code == 401 or resp.status_code == 403:
+            return jsonify({'success': False, 'message': 'API Key 无效或已过期'})
+        elif resp.status_code == 404:
+            return jsonify({'success': False, 'message': f'端点不存在 (404)，请检查 Base URL: {url}'})
+        else:
+            error_data = _safe_json(resp)
+            msg = error_data.get('error', {}).get('message', '') or resp.text[:200]
+            return jsonify({'success': False, 'message': msg})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+def _verify_openai_tts(api_key: str, base_url: str, model_id: str):
+    """验证 OpenAI TTS / GLM TTS — /audio/speech 端点"""
+    url = f"{base_url.rstrip('/')}/audio/speech"
+    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    payload = {
+        'model': model_id,
+        'input': 'OK',
+        'voice': 'alloy',
+        'response_format': 'mp3',
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            return jsonify({'success': True, 'message': '连接成功'})
+        elif resp.status_code == 401 or resp.status_code == 403:
+            return jsonify({'success': False, 'message': 'API Key 无效或已过期'})
+        elif resp.status_code == 404:
+            return jsonify({'success': False, 'message': f'端点不存在 (404)，请检查 Base URL: {url}'})
+        else:
+            error_data = _safe_json(resp)
+            msg = error_data.get('error', {}).get('message', '') or resp.text[:200]
+            return jsonify({'success': False, 'message': msg})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+def _verify_minimax(api_key: str, base_url: str, model_id: str):
+    """验证 MiniMax API"""
+    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    payload = {
+        'model': model_id,
+        'messages': [{'role': 'user', 'content': 'Say "OK" if you can hear me.'}],
+        'max_tokens': 64,
+    }
+    try:
+        resp = requests.post(base_url, headers=headers, json=payload, timeout=15)
+        if resp.status_code == 200:
+            data = _safe_json(resp)
+            text = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            return jsonify({'success': True, 'message': '连接成功', 'response': text.strip()})
+        elif resp.status_code == 401:
+            return jsonify({'success': False, 'message': 'API Key 无效或已过期'})
+        else:
+            return jsonify({'success': False, 'message': f'HTTP {resp.status_code}: {resp.text[:200]}'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 
 # ==================== 设置 API ====================
@@ -384,7 +794,16 @@ DEFAULT_SETTINGS = {
     'mimo_voice': 'mimo_default',
     'mimo_style': '',
     'aspect_ratio': '3:4',
-    'cover_style': 'infographic'
+    'cover_style': 'infographic',
+    'chat_model': 'MiniMax-M2.5-highspeed',
+    'chat_provider': 'minimax',
+    'content_model': 'deepseek-v4-flash',
+    'content_provider': 'deepseek',
+    'ppt_model': 'deepseek-v4-flash',
+    'ppt_provider': 'deepseek',
+    'tts_provider': 'minimax-tts',
+    'tts_model': 'mimo-v2.5-tts',
+    'tts_voice': 'mimo_default',
 }
 
 # 存储用户设置（简单实现，生产环境应使用数据库）
@@ -402,6 +821,11 @@ def get_settings():
     return jsonify({
         'settings': settings,
         'options': {
+            'chat_model': [
+                {'value': 'MiniMax-M2.5-highspeed', 'label': 'MiniMax M2.5 高速'},
+                {'value': 'deepseek-chat', 'label': 'DeepSeek V3'},
+                {'value': 'deepseek-reasoner', 'label': 'DeepSeek R1'},
+            ],
             'mimo_voice': [
                 {'value': 'mimo_default', 'label': 'MiMo-默认'},
                 {'value': 'default_zh', 'label': 'MiMo-中文女声'},
@@ -1359,6 +1783,10 @@ def ppt_video_generate():
     pptx_path = data.get('pptx_path')
     topic = data.get('topic')
     voice = data.get('voice', 'mimo_default')
+    tts_provider = data.get('tts_provider', '')
+    tts_api_key = data.get('tts_api_key', '')
+    tts_base_url = data.get('tts_base_url', '')
+    tts_model = data.get('tts_model', '')
 
     # 如果没有指定路径，尝试获取最新生成的 PPT
     if not pptx_path:
@@ -1390,7 +1818,18 @@ def ppt_video_generate():
     def _run_generation():
         """在后台线程中执行视频生成"""
         try:
-            generator = VideoGenerator()
+            # 加载用户设置的 TTS 配置
+            memory = get_memory_manager()
+            config = memory.get_config()
+            saved_settings = config.get('content_settings', {})
+            tts_config = {
+                'provider': tts_provider or saved_settings.get('tts_provider') or 'minimax-tts',
+                'api_key': tts_api_key or os.environ.get('MIMO_API_KEY', ''),
+                'base_url': tts_base_url or saved_settings.get('tts_base_url') or '',
+                'model': tts_model or saved_settings.get('tts_model') or 'mimo-v2.5-tts',
+                'voice': voice,
+            }
+            generator = VideoGenerator(tts_config=tts_config)
 
             def progress_callback(progress, message):
                 if job_id in video_jobs:

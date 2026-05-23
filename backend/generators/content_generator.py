@@ -22,11 +22,6 @@ logger = logging.getLogger('MiniMaxAgent.content')
 class ContentGenerator:
     """自媒体内容生成器"""
 
-    # API 配置 - 从环境变量读取
-    DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
-    DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-    DEEPSEEK_MODEL = "deepseek-chat"
-
     MIMO_API_KEY = os.environ.get('MIMO_API_KEY', '')
     MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
     MIMO_MODEL = "mimo-v2.5-tts"
@@ -377,15 +372,14 @@ class ContentGenerator:
 
     def _call_llm(self, prompt: str, system_msg: str = "你是一个专业的内容创作专家") -> str:
         """调用大语言模型 API - 保持原有设计"""
+        from generators.shared_config import get_content_llm_config
+        model, api_key, base_url = get_content_llm_config()
         from openai import OpenAI
 
-        client = OpenAI(
-            api_key=self.DEEPSEEK_API_KEY,
-            base_url=self.DEEPSEEK_BASE_URL
-        )
+        client = OpenAI(api_key=api_key, base_url=base_url)
 
         response = client.chat.completions.create(
-            model=self.DEEPSEEK_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt}

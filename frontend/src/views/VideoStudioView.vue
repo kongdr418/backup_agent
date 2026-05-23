@@ -261,8 +261,10 @@ import {
   Plus,
 } from 'lucide-vue-next'
 import { useVideoStore } from '@/stores/videoStore'
+import { useSettingStore } from '@/stores/settingStore'
 
 const videoStore = useVideoStore()
+const settingStore = useSettingStore()
 const { generating, progress, progressMessage } = storeToRefs(videoStore)
 
 const loading = ref(false)
@@ -401,7 +403,14 @@ async function doGenerate(pptxPath: string) {
     const res = await fetch('/api/ppt-video/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pptx_path: pptxPath, voice: selectedVoice.value }),
+      body: JSON.stringify({
+        pptx_path: pptxPath,
+        voice: selectedVoice.value || settingStore.settings.tts_voice,
+        tts_api_key: settingStore.getEffectiveTTSApiKey(),
+        tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+        tts_model: settingStore.settings.tts_model,
+        tts_provider: settingStore.settings.tts_provider,
+      }),
     })
     const data = await res.json()
 

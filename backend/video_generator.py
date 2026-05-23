@@ -10,6 +10,7 @@ import json
 import base64
 import subprocess
 import shutil
+import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -18,18 +19,13 @@ from typing import Dict, List, Optional
 class VideoGenerator:
     """PPT 视频生成器"""
 
-    # MIMO-TTS API 配置
-    MIMO_API_KEY = os.environ.get('MIMO_API_KEY', '')
-    MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
-    MIMO_MODEL = "mimo-v2.5-tts"
-    MIMO_VOICE = "mimo_default"
-
-    def __init__(self, workspace_dir: str = None):
+    def __init__(self, workspace_dir: str = None, tts_config: dict = None):
         """
         初始化视频生成器
 
         Args:
             workspace_dir: 工作目录，默认为 backend/generators/generated_videos
+            tts_config: TTS 配置字典 {provider, api_key, base_url, model, voice}
         """
         if workspace_dir is None:
             backend_dir = Path(__file__).resolve().parent
@@ -37,11 +33,19 @@ class VideoGenerator:
         self.workspace_dir = Path(workspace_dir)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
+        # TTS 配置，优先使用传入的配置，fallback 到环境变量
+        tts = tts_config or {}
+        self.tts_provider = tts.get('provider') or 'minimax-tts'
+        self.tts_api_key = tts.get('api_key') or os.environ.get('MIMO_API_KEY', '')
+        self.tts_base_url = tts.get('base_url') or 'https://api.xiaomimimo.com/v1'
+        self.tts_model = tts.get('model') or 'mimo-v2.5-tts'
+        self.tts_voice = tts.get('voice') or 'mimo_default'
+
     def generate_video(
         self,
         pptx_path: str,
         topic: str = None,
-        voice: str = "mimo_default",
+        voice: str = None,
         progress_callback=None
     ):
         """
@@ -50,7 +54,7 @@ class VideoGenerator:
         Args:
             pptx_path: PPTX 文件路径
             topic: 视频主题（用于输出目录命名）
-            voice: MIMO-TTS 语音（默认: mimo_default）
+            voice: TTS 语音（默认使用配置中的 voice）
             progress_callback: 进度回调函数
 
         Returns:
@@ -240,9 +244,14 @@ class VideoGenerator:
             f"LLM 生成讲稿中 ({len(missing_pages)} 页)..."
         )
 
-        api_key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+        try:
+            from generators.shared_config import get_content_llm_config
+            model, api_key, base_url = get_content_llm_config()
+        except Exception:
+            model, api_key, base_url = "deepseek-chat", "", "https://api.deepseek.com"
+
         if not api_key:
-            print("[VIDEO] DEEPSEEK_API_KEY 未配置，跳过 LLM 讲稿生成")
+            print("[VIDEO] 内容生成 API Key 未配置，跳过 LLM 讲稿生成")
             return
 
         try:
@@ -294,11 +303,11 @@ class VideoGenerator:
         try:
             client = OpenAI(
                 api_key=api_key,
-                base_url="https://api.deepseek.com",
+                base_url=base_url,
                 timeout=30.0,
             )
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model=model,
                 messages=[
                     {"role": "system", "content": "你是一位中文教学讲解专家，擅长把课件内容转化为自然流畅的口播讲稿。封面、目录、过渡页要简短，正文页要详细，节奏分明。"},
                     {"role": "user", "content": prompt},
@@ -356,29 +365,63 @@ class VideoGenerator:
 
         return None
 
-    def _generate_mimo_audio(self, voiceover_text: str, voice: str = "") -> bytes:
-        """调用 MiMo V2-TTS 生成音频"""
+    def _generate_tts_audio(self, voiceover_text: str, voice: str = "") -> bytes:
+        """根据 TTS provider 类型分发到对应的 API 实现"""
+        if self.tts_provider == 'minimax-tts':
+            return self._generate_minimax_tts(voiceover_text, voice)
+        elif self.tts_provider in ('openai-tts', 'glm-tts'):
+            return self._generate_openai_tts(voiceover_text, voice)
+        else:
+            # 默认尝试 MiniMax 格式
+            return self._generate_minimax_tts(voiceover_text, voice)
+
+    def _generate_minimax_tts(self, voiceover_text: str, voice: str = "") -> bytes:
+        """MiniMax TTS (MiMo): chat completions + audio 参数格式"""
         from openai import OpenAI
 
         client = OpenAI(
-            api_key=self.MIMO_API_KEY,
-            base_url=self.MIMO_BASE_URL
+            api_key=self.tts_api_key,
+            base_url=self.tts_base_url
         )
 
         response = client.chat.completions.create(
-            model=self.MIMO_MODEL,
+            model=self.tts_model,
             messages=[
                 {"role": "user", "content": "请朗读以下内容"},
                 {"role": "assistant", "content": voiceover_text}
             ],
             audio={
                 "format": "wav",
-                "voice": voice or self.MIMO_VOICE
+                "voice": voice or self.tts_voice
             }
         )
 
         audio_data = response.choices[0].message.audio.data
         return base64.b64decode(audio_data)
+
+    def _generate_openai_tts(self, voiceover_text: str, voice: str = "") -> bytes:
+        """OpenAI / GLM TTS: /v1/audio/speech 端点格式"""
+        url = f"{self.tts_base_url.rstrip('/')}/audio/speech"
+        headers = {
+            "Authorization": f"Bearer {self.tts_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.tts_model,
+            "input": voiceover_text,
+            "voice": voice or self.tts_voice,
+            "response_format": "wav",
+        }
+        if self.tts_provider == 'glm-tts':
+            payload["speed"] = 1.0
+            payload["volume"] = 1.0
+
+        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        if not resp.ok:
+            error_text = resp.text[:300]
+            raise RuntimeError(f"TTS API 错误 ({resp.status_code}): {error_text}")
+
+        return resp.content
 
     def _generate_audio(
         self,
@@ -396,8 +439,8 @@ class VideoGenerator:
             script = slide["script"] or f"这是第{i}页内容，请观看。"
             outfile = audio_dir / f"page_{i}.wav"
 
-            # 调用 MIMO-TTS API 生成配音
-            audio_bytes = self._generate_mimo_audio(script, voice)
+            # 调用 TTS API 生成配音
+            audio_bytes = self._generate_tts_audio(script, voice)
             with open(outfile, "wb") as f:
                 f.write(audio_bytes)
 

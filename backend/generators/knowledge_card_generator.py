@@ -255,13 +255,15 @@ type: knowledge_card
 
     def _call_llm(self, prompt: str) -> str:
         """调用大语言模型"""
+        from generators.shared_config import get_content_llm_config
+        model, api_key, base_url = get_content_llm_config()
         from openai import OpenAI
         client = OpenAI(
-            api_key=os.environ.get('DEEPSEEK_API_KEY', ''),
-            base_url="https://api.deepseek.com"
+            api_key=api_key,
+            base_url=base_url
         )
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model,
             messages=[
                 {"role": "system", "content": "你是一位教育专家，擅长将复杂知识提炼为简洁清晰的知识卡片。"},
                 {"role": "user", "content": prompt}

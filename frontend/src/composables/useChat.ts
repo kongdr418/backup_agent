@@ -4,10 +4,12 @@ import { genId } from '@/utils/id'
 import { chatStream } from '@/api/chat'
 import { useChatStore } from '@/stores/chatStore'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useSettingStore } from '@/stores/settingStore'
 
 export function useChat() {
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
+  const settingStore = useSettingStore()
   const error = ref<string>('')
 
   const sessionId = computed(() => sessionStore.currentSessionId)
@@ -59,7 +61,18 @@ export function useChat() {
     let streamingText = ''
 
     try {
-      const stream = chatStream({ message: trimmed, sessionId: sid, signal: ctrl.signal })
+      const stream = chatStream({
+        message: trimmed,
+        sessionId: sid,
+        signal: ctrl.signal,
+        model: settingStore.settings.chat_model,
+        apiKey: settingStore.getEffectiveApiKey(),
+        baseUrl: settingStore.getEffectiveBaseUrl(),
+        providerType: settingStore.getProviderType(),
+        contentModel: settingStore.settings.content_model,
+        contentApiKey: settingStore.getEffectiveContentApiKey(),
+        contentBaseUrl: settingStore.getEffectiveContentBaseUrl(),
+      })
 
       for await (const ev of stream) {
         if (ev.done) break

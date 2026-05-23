@@ -10,6 +10,7 @@ import os
 import re
 from datetime import datetime
 from typing import Generator, Optional
+from openai import OpenAI
 from generators.ppt_generator import PPTGenerator
 from ppt_preview import generate_text_preview, PPTPreviewer
 from generators.lecture_generator import LectureGenerator
@@ -30,9 +31,10 @@ class MiniMaxAgent:
     
     BASE_URL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
     
-    def __init__(self, api_key: str, session_id: str = None):
+    def __init__(self, api_key: str, session_id: str = None, model: str = None):
         self.api_key = api_key
         self.session_id = session_id or "default"
+        self.model = model or "MiniMax-M2.5-highspeed"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -84,6 +86,16 @@ class MiniMaxAgent:
     def update_content_settings(self, settings: dict):
         """更新内容生成设置"""
         self.content_generator.update_settings(settings)
+        # 同步内容生成 LLM 配置到 shared_config
+        try:
+            from generators.shared_config import set_content_llm_config
+            set_content_llm_config(
+                model=settings.get('content_model', ''),
+                api_key=settings.get('content_api_key', ''),
+                base_url=settings.get('content_base_url', '')
+            )
+        except Exception:
+            pass
     
     def check_teacher_request(self, message: str):
         """
@@ -1248,17 +1260,24 @@ class MiniMaxAgent:
         except Exception as e:
             yield f"❌ PPT 生成失败: {str(e)}"
     
-    def chat(self, message: str, stream: bool = False):
+    def chat(self, message: str, stream: bool = False, model: str = None,
+             api_key: str = '', base_url: str = '', provider_type: str = ''):
         """
-        发送消息给 MiniMax 模型
+        发送消息给 AI 模型
 
         Args:
             message: 用户输入的消息
             stream: 是否使用流式输出
+            model: 模型 ID
+            api_key: 客户端提供的 API Key（可选，优先级高于服务端）
+            base_url: 客户端提供的 Base URL（可选）
+            provider_type: minmax | openai
 
         Returns:
             完整回复字符串、流式生成器、或 PPT 预览字典
         """
+        model = model or self.model
+
         # 首先检查是否是教师辅助相关请求（PPT、讲义等）
         teacher_result = self.check_teacher_request(message)
         if teacher_result:
@@ -1294,48 +1313,12 @@ class MiniMaxAgent:
             messages_with_context = [system_message] + self.conversation_history
         else:
             messages_with_context = self.conversation_history
-        
-        payload = {
-            "model": "MiniMax-M2.5-highspeed",
-            "messages": messages_with_context,
-            "stream": stream,
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
-        
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers=self.headers,
-                json=payload,
-                stream=stream,
-                timeout=60
-            )
-            response.raise_for_status()
-            
-            if stream:
-                return self._handle_stream_with_memory(response, message)
-            else:
-                result = response.json()
-                assistant_message = result["choices"][0]["message"]["content"]
-                
-                # 添加助手回复到历史记录
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": assistant_message
-                })
-                
-                # 记录到会话记忆
-                self.memory.log_interaction(message, assistant_message)
 
-                return assistant_message
-                
-        except requests.exceptions.RequestException as e:
-            error_msg = f"请求失败: {str(e)}"
-            return error_msg
-        except (KeyError, json.JSONDecodeError) as e:
-            error_msg = f"解析响应失败: {str(e)}"
-            return error_msg
+        # 根据 provider_type 或模型选择 API 提供商
+        if provider_type == 'minimax' or (not provider_type and not model.startswith('deepseek') and not api_key):
+            return self._call_minimax(model, messages_with_context, message, stream, api_key)
+        else:
+            return self._call_openai_compatible(model, messages_with_context, message, stream, api_key, base_url)
     
     def _handle_stream(self, response) -> Generator[str, None, None]:
         """处理流式响应"""
@@ -1396,6 +1379,118 @@ class MiniMaxAgent:
             })
             # 记录到会话记忆
             self.memory.log_interaction(original_message, full_content)
+
+    def _call_minimax(self, model: str, messages: list, message: str, stream: bool, api_key: str = ''):
+        """调用 MiniMax API"""
+        # 优先使用客户端提供的 API Key，否则回退到初始化时的 key
+        effective_api_key = api_key or self.api_key
+        headers = {
+            "Authorization": f"Bearer {effective_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "temperature": 0.7,
+            "max_tokens": 2000
+        }
+
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers=headers,
+                json=payload,
+                stream=stream,
+                timeout=60
+            )
+            response.raise_for_status()
+
+            if stream:
+                return self._handle_stream_with_memory(response, message)
+            else:
+                result = response.json()
+                assistant_message = result["choices"][0]["message"]["content"]
+
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": assistant_message
+                })
+                self.memory.log_interaction(message, assistant_message)
+                return assistant_message
+
+        except requests.exceptions.RequestException as e:
+            return f"请求失败: {str(e)}"
+        except (KeyError, json.JSONDecodeError) as e:
+            return f"解析响应失败: {str(e)}"
+
+    def _call_openai_compatible(self, model: str, messages: list, message: str, stream: bool,
+                                 api_key: str = '', base_url: str = ''):
+        """调用 OpenAI 兼容 API（DeepSeek / OpenAI / Moonshot / Zhipu / Qwen / SiliconFlow 等）"""
+        # 优先使用客户端提供的 API Key，否则回退到服务端
+        if not api_key:
+            api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+
+        if not api_key:
+            return "错误: 未配置 API Key，请在设置中填写或配置服务端环境变量"
+
+        if not base_url:
+            base_url = "https://api.deepseek.com"
+
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=60)
+
+        # 确保有 system message
+        has_system = any(m.get("role") == "system" for m in messages)
+        if not has_system:
+            messages = [{"role": "system", "content": "你是一个友好、有知识的AI教师助手。"}] + messages
+
+        try:
+            if stream:
+                return self._openai_compatible_stream(client, model, messages, message)
+            else:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                assistant_message = response.choices[0].message.content
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": assistant_message
+                })
+                self.memory.log_interaction(message, assistant_message)
+                return assistant_message
+        except Exception as e:
+            return f"请求失败: {str(e)}"
+
+    def _openai_compatible_stream(self, client: OpenAI, model: str, messages: list, message: str):
+        """OpenAI 兼容流式响应"""
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2000,
+            stream=True
+        )
+
+        def generate():
+            full_content = ""
+            for chunk in response:
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        full_content += delta.content
+                        yield delta.content
+
+            if full_content:
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": full_content
+                })
+                self.memory.log_interaction(message, full_content)
+
+        return generate()
 
     def clear_history(self):
         """清空对话历史（保留长期记忆）"""

@@ -109,6 +109,19 @@ export interface ContentSettings {
   mimo_style: string
   aspect_ratio: string
   cover_style: string
+  // 对话模型
+  chat_model: string
+  chat_provider: string
+  // 内容生成模型（讲稿、大纲、习题、测验、知识卡片、思维导图等）
+  content_model: string
+  content_provider: string
+  // PPT 生成模型
+  ppt_model: string
+  ppt_provider: string
+  // TTS 语音合成模型
+  tts_provider: string
+  tts_model: string
+  tts_voice: string
   // PPT defaults (frontend-only extension, persisted via memory_manager config)
   ppt_default_style?: string
   ppt_default_pages?: number
@@ -132,6 +145,58 @@ export interface ModelInfo {
   id: string
   name: string
   description?: string
+  provider?: string
+  contextWindow?: number
+  maxOutput?: number
+}
+
+// ---------- Providers ----------
+
+export interface ProviderInfo {
+  id: string
+  name: string
+  type: 'minimax' | 'openai'
+  defaultBaseUrl: string
+  models: ModelInfo[]
+  requiresApiKey: boolean
+  isServerConfigured: boolean
+}
+
+export interface ProvidersResponse {
+  providers: Record<string, ProviderInfo>
+}
+
+export interface TTSVoiceInfo {
+  id: string
+  name: string
+}
+
+export interface TTSProviderInfo {
+  id: string
+  name: string
+  type: string
+  defaultBaseUrl: string
+  models: ModelInfo[]
+  voices: TTSVoiceInfo[]
+  requiresApiKey: boolean
+  isServerConfigured: boolean
+}
+
+export interface TTSProvidersResponse {
+  providers: Record<string, TTSProviderInfo>
+}
+
+export interface ProviderConfig {
+  apiKey: string
+  baseUrl: string
+}
+
+export interface VerifyModelRequest {
+  apiKey: string
+  baseUrl: string
+  model: string
+  providerId: string
+  providerType: string
 }
 
 // ---------- Memory ----------

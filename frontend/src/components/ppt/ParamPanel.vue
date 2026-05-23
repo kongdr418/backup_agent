@@ -100,24 +100,9 @@
           />
           高级设置
         </summary>
-        <div class="mt-3 space-y-3">
-          <div>
-            <label class="block text-[12px] font-medium text-ink-2 mb-1.5">模型</label>
-            <n-input v-model:value="local.model" placeholder="deepseek-v4-flash" :disabled="disabled" size="small" />
-          </div>
-          <div>
-            <label class="block text-[12px] font-medium text-ink-2 mb-1.5">
-              API Key (可选,覆盖服务端)
-            </label>
-            <n-input
-              v-model:value="local.api_key"
-              placeholder="留空则使用服务端配置"
-              type="password"
-              show-password-on="click"
-              :disabled="disabled"
-              size="small"
-            />
-          </div>
+
+        <div class="mt-3">
+          <p class="text-[11px] text-ink-4">模型在「设置 → PPT 生成模型」中统一配置</p>
         </div>
       </details>
 

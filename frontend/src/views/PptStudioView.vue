@@ -40,6 +40,10 @@
         <div class="flex items-center gap-2 text-[13px] text-ink-2">
           <Wand2 class="w-3.5 h-3.5 text-ink-3" />
           <span class="hidden md:inline">多 Agent SVG 流水线</span>
+          <span class="text-[11px] text-ink-4 flex items-center gap-1 ml-1">
+            <Cpu class="w-3 h-3" />
+            {{ pptModelLabel }}
+          </span>
           <button
             class="ppt-mobile-param-btn md:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12.5px] text-ink-2 border border-line active:bg-bg-subtle transition-colors"
             @click="drawerOpen = true"
@@ -92,7 +96,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Wand2, History, SlidersHorizontal, X } from 'lucide-vue-next'
+import { Wand2, History, SlidersHorizontal, X, Cpu } from 'lucide-vue-next'
 import { useMessage, useDialog } from 'naive-ui'
 
 import ParamPanel from '@/components/ppt/ParamPanel.vue'
@@ -103,8 +107,19 @@ import StatusPill from '@/components/common/StatusPill.vue'
 import { usePptStore } from '@/stores/pptStore'
 import { usePptStream } from '@/composables/usePptStream'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
+import { useSettingStore } from '@/stores/settingStore'
 
 const store = usePptStore()
+const settingStore = useSettingStore()
+
+const pptModelLabel = computed(() => {
+  const providerId = settingStore.settings.ppt_provider
+  const modelId = settingStore.settings.ppt_model
+  const provider = settingStore.providers[providerId]
+  const model = provider?.models.find((m) => m.id === modelId)
+  if (model) return `${model.name}`
+  return modelId || '默认模型'
+})
 const { generate } = usePptStream()
 const message = useMessage()
 const dialog = useDialog()
@@ -170,7 +185,13 @@ async function onGenerate() {
   }
   activeIdx.value = 0
   try {
-    await generate({ ...store.params })
+    // 注入设置中的 PPT 模型和 API Key
+    const paramsWithModel = {
+      ...store.params,
+      model: store.params.model || settingStore.settings.ppt_model,
+      api_key: store.params.api_key || settingStore.getEffectivePptApiKey(),
+    }
+    await generate(paramsWithModel)
     if (store.gen.status === 'done') {
       message.success('PPT 生成完成')
     } else if (store.gen.status === 'error') {
