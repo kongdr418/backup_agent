@@ -1,6 +1,6 @@
 <template>
   <div class="h-full flex flex-col">
-    <PageHeader title="仪表盘" description="智课源 · 后端教育内容生成" />
+    <PageHeader title="仪表盘" description="智创空间 · 后端教育内容生成" />
 
     <div class="flex-1 overflow-y-auto">
       <div class="max-w-5xl mx-auto px-6 py-8 space-y-8">
