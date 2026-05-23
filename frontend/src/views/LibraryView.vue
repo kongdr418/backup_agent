@@ -720,4 +720,85 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  .library-header {
+    height: auto;
+    padding: 12px 16px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-left {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .library-title {
+    font-size: 18px;
+  }
+
+  .library-desc {
+    display: none;
+  }
+
+  /* Sidebar → horizontal scroll tabs */
+  .library-body {
+    flex-direction: column;
+  }
+
+  .library-sidebar {
+    width: 100%;
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    gap: 4px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  .sidebar-item {
+    flex-shrink: 0;
+    width: auto;
+    padding: 0 14px;
+    height: 32px;
+    border-radius: 16px;
+    font-size: 12px;
+  }
+
+  .sidebar-label {
+    font-size: 12px;
+  }
+
+  .sidebar-count {
+    font-size: 11px;
+  }
+
+  /* Main content */
+  .library-content {
+    padding: 16px 12px;
+  }
+
+  .file-card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .card-name {
+    font-size: 13px;
+  }
+
+  .card-footer {
+    font-size: 11px;
+  }
+}
 </style>

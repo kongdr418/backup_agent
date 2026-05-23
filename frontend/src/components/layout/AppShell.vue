@@ -4,11 +4,13 @@
     <main class="shell-main">
       <router-view />
     </main>
+    <MobileBottomNav />
   </div>
 </template>
 
 <script setup lang="ts">
 import TopBar from './TopBar.vue'
+import MobileBottomNav from './MobileBottomNav.vue'
 </script>
 
 <style scoped>
@@ -24,6 +26,12 @@ import TopBar from './TopBar.vue'
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 顶栏 56px 已 sticky,这里不再扣 */
+}
+
+@media (max-width: 767px) {
+  .shell-main {
+    padding-bottom: 64px; /* 为 MobileBottomNav 留空间 */
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
 }
 </style>

@@ -484,4 +484,60 @@ onMounted(() => {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  .hero-block {
+    padding: 4px 0 0;
+  }
+
+  .hero-badge {
+    font-size: 10.5px;
+    margin-bottom: 8px;
+  }
+
+  .hero-title {
+    font-size: 24px;
+  }
+
+  .hero-sub {
+    font-size: 13px;
+    max-width: 100%;
+  }
+
+  .primary-card {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .primary-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  .primary-label {
+    font-size: 13px;
+  }
+
+  .primary-desc {
+    font-size: 11px;
+  }
+
+  .stat-grid {
+    gap: 8px;
+  }
+
+  .stat-card {
+    padding: 14px 12px;
+  }
+
+  .stat-num {
+    font-size: 18px;
+  }
+
+  .stat-label {
+    font-size: 10.5px;
+  }
+}
 </style>

@@ -1,6 +1,6 @@
 <template>
   <div class="h-full flex items-center justify-center px-6">
-    <div class="text-center max-w-sm">
+    <div class="empty-content text-center max-w-sm">
       <div
         v-if="icon"
         class="w-12 h-12 rounded-full bg-bg-subtle flex items-center justify-center mx-auto mb-4 text-ink-3"
@@ -27,3 +27,11 @@ defineProps<{
   description?: string
 }>()
 </script>
+
+<style scoped>
+@media (max-width: 767px) {
+  .empty-content {
+    max-width: 260px;
+  }
+}
+</style>

@@ -1,14 +1,17 @@
 <template>
   <div class="video-studio-layout">
-    <!-- Left Panel -->
-    <aside class="studio-sidebar">
-      <div class="sidebar-header">
-        <h2 class="header-title">微课视频生成</h2>
-        <p class="header-desc">上传 PPT，一键生成微课视频</p>
-      </div>
+    <!-- Mobile: overlay backdrop -->
+    <div class="video-overlay" :class="{ open: drawerOpen }" @click="drawerOpen = false" />
 
-      <div class="sidebar-content">
-        <!-- Upload Section -->
+    <!-- Mobile: slide-in drawer -->
+    <div class="video-drawer" :class="{ open: drawerOpen }">
+      <div class="video-drawer-header">
+        <span class="video-drawer-title">新建微课</span>
+        <button class="video-drawer-close" @click="drawerOpen = false">
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+      <div class="video-drawer-body">
         <div class="config-section">
           <label class="section-label">上传 PPT</label>
           <div
@@ -41,7 +44,6 @@
           </div>
         </div>
 
-        <!-- Voice Section -->
         <div class="config-section">
           <label class="section-label">音色选择</label>
           <NSelect
@@ -52,9 +54,81 @@
           />
         </div>
 
+        <button
+          class="generate-btn"
+          :disabled="!uploadFile || generating"
+          @click="onGenerate"
+        >
+          <template v-if="generating">
+            <Loader2 class="btn-icon animate-spin" />
+            生成中... {{ Math.round(progress * 100) }}%
+          </template>
+          <template v-else>
+            <Sparkles class="btn-icon" />
+            生成微课视频
+          </template>
+        </button>
+
+        <div v-if="generating" class="progress-wrap">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
+          </div>
+          <span class="progress-text">{{ progressMessage }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Desktop: Sidebar -->
+    <aside class="studio-sidebar">
+      <div class="sidebar-header">
+        <h2 class="header-title">微课视频生成</h2>
+        <p class="header-desc">上传 PPT，一键生成微课视频</p>
+      </div>
+
+      <div class="sidebar-content">
+        <div class="config-section">
+          <label class="section-label">上传 PPT</label>
+          <div
+            class="upload-zone"
+            :class="{ 'has-file': uploadFile, 'is-dragover': isDragover }"
+            @dragover.prevent="isDragover = true"
+            @dragleave="isDragover = false"
+            @drop.prevent="onDrop"
+            @click="triggerUpload"
+          >
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept=".pptx"
+              class="hidden"
+              @change="onFileSelect"
+            />
+            <div v-if="!uploadFile" class="upload-placeholder">
+              <Upload class="upload-icon" />
+              <span class="upload-text">拖拽 PPTX 文件到此处</span>
+              <span class="upload-hint">或点击选择文件</span>
+            </div>
+            <div v-else class="file-info">
+              <FileText class="file-icon" />
+              <span class="file-name">{{ uploadFile.name }}</span>
+              <button class="file-remove" @click.stop="clearFile">
+                <X class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         </div>
 
-      <!-- Generate Button -->
+        <div class="config-section">
+          <label class="section-label">音色选择</label>
+          <NSelect
+            v-model:value="selectedVoice"
+            :options="voiceOptions"
+            placeholder="选择音色"
+            size="large"
+          />
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <button
           class="generate-btn"
@@ -71,7 +145,6 @@
           </template>
         </button>
 
-        <!-- Progress -->
         <div v-if="generating" class="progress-wrap">
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
@@ -83,13 +156,19 @@
 
     <!-- Main Content -->
     <main class="studio-main">
-      <!-- Toolbar -->
       <header class="content-header">
         <div class="header-left">
           <h1 class="content-title">已生成的视频</h1>
           <span class="video-count">{{ videos.length }} 个视频</span>
         </div>
         <div class="header-actions">
+          <button
+            class="video-mobile-create-btn md:hidden action-btn"
+            title="新建"
+            @click="drawerOpen = true"
+          >
+            <Plus class="w-4 h-4" />
+          </button>
           <button class="action-btn" title="刷新" @click="refreshList">
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />
           </button>
@@ -106,22 +185,19 @@
 
       <!-- Video Grid -->
       <div class="content-body">
-        <!-- Empty State -->
         <div v-if="videos.length === 0 && !loading" class="empty-state">
           <div class="empty-icon">
             <Film class="w-10 h-10" />
           </div>
           <h3 class="empty-title">暂无生成的视频</h3>
-          <p class="empty-desc">上传 PPT 后点击生成按钮开始创作</p>
+          <p class="empty-desc">{{ emptyDesc }}</p>
         </div>
 
-        <!-- Loading -->
         <div v-else-if="loading" class="loading-state">
           <div class="loading-spinner" />
           <span>加载中...</span>
         </div>
 
-        <!-- Video Grid -->
         <div v-else class="video-grid">
           <div
             v-for="video in videos"
@@ -169,7 +245,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { NSelect, useDialog, useMessage } from 'naive-ui'
 import {
@@ -182,6 +258,7 @@ import {
   Film,
   Loader2,
   Sparkles,
+  Plus,
 } from 'lucide-vue-next'
 import { useVideoStore } from '@/stores/videoStore'
 
@@ -189,6 +266,13 @@ const videoStore = useVideoStore()
 const { generating, progress, progressMessage } = storeToRefs(videoStore)
 
 const loading = ref(false)
+const drawerOpen = ref(false)
+const isMobile = ref(window.innerWidth <= 767)
+const emptyDesc = computed(() =>
+  isMobile.value
+    ? '点击上方 + 按钮开始创作'
+    : '上传 PPT 后点击生成按钮开始创作',
+)
 const uploadFile = ref<File | null>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -211,6 +295,7 @@ const voiceOptions = [
 
 onMounted(() => {
   refreshList()
+  window.addEventListener('resize', onResize)
 
   // 如果有未完成的任务，恢复轮询
   if (videoStore.activeJobId && videoStore.generating) {
@@ -228,7 +313,12 @@ onMounted(() => {
 
 onUnmounted(() => {
   videoStore.stopPolling()
+  window.removeEventListener('resize', onResize)
 })
+
+function onResize() {
+  isMobile.value = window.innerWidth <= 767
+}
 
 function triggerUpload() {
   fileInputRef.value?.click()
@@ -880,6 +970,156 @@ function askClearAll() {
 @media (max-width: 900px) {
   .video-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ============ Mobile ============ */
+@media (min-width: 768px) {
+  .video-overlay,
+  .video-drawer,
+  .video-mobile-create-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Hide desktop sidebar */
+  .studio-sidebar {
+    display: none !important;
+  }
+
+  /* Overlay backdrop */
+  .video-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgb(0 0 0 / 0.35);
+    backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 250ms ease;
+  }
+  .video-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Slide-in drawer */
+  .video-drawer {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 85vw);
+    z-index: 80;
+    background: var(--bg-surface);
+    box-shadow: 4px 0 32px rgb(0 0 0 / 0.15);
+    transform: translateX(-100%);
+    transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .video-drawer.open {
+    transform: translateX(0);
+  }
+
+  .video-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+
+  .video-drawer-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink-primary);
+  }
+
+  .video-drawer-close {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .video-drawer-close:active {
+    background: var(--bg-subtle);
+  }
+
+  .video-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .video-drawer-body .generate-btn {
+    margin-top: 12px;
+  }
+
+  .video-drawer-body .progress-wrap {
+    margin-top: 12px;
+  }
+
+  .video-studio-layout {
+    flex-direction: column;
+  }
+
+  .studio-main {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .content-header {
+    height: auto;
+    padding: 12px 16px;
+  }
+
+  .content-title {
+    font-size: 17px;
+  }
+
+  .content-body {
+    padding: 16px 12px;
+  }
+
+  .video-grid {
+    gap: 12px;
+  }
+
+  .video-card {
+    border-radius: 12px;
+  }
+
+  .video-info {
+    padding: 10px 12px;
+  }
+
+  .video-name {
+    font-size: 12px;
+  }
+
+  .video-actions {
+    opacity: 1;
+  }
+
+  .card-action-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+
+  .empty-desc {
+    font-size: 12px;
   }
 }
 </style>

@@ -2,7 +2,7 @@
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
       <!-- Quick action chips -->
-      <div v-if="!isLoading && !chatView.isSplit" class="flex gap-1 mb-2">
+      <div v-if="!isLoading && !chatView.isSplit" class="quick-chips flex gap-1 mb-2">
         <button
           v-for="q in quickActions"
           :key="q.label"
@@ -83,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   Send, Square, FileText, BookOpen, Image as ImageIcon, Video,
   GraduationCap, Lightbulb, List, ClipboardList, GitBranch
@@ -145,7 +145,12 @@ const quickActions: QuickAction[] = [
   { label: '短视频脚本', prompt: '生成短视频：', icon: Video, supportsDocx: false },
 ]
 
-const placeholder = '描述你想生成的内容,例如：生成讲义：神经网络入门'
+const isMobile = ref(window.innerWidth <= 767)
+const placeholder = computed(() =>
+  isMobile.value
+    ? '输入主题开始生成...'
+    : '描述你想生成的内容，例如：生成讲义：神经网络入门',
+)
 
 function apply(q: QuickAction) {
   input.value = q.prompt
@@ -201,4 +206,25 @@ function send() {
     if (taRef.value) taRef.value.style.height = 'auto'
   })
 }
+
+function onResize() {
+  isMobile.value = window.innerWidth <= 767
+}
+
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => window.removeEventListener('resize', onResize))
 </script>
+
+<style scoped>
+@media (max-width: 767px) {
+  .quick-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .quick-chips::-webkit-scrollbar {
+    display: none;
+  }
+}
+</style>

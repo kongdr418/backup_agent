@@ -2,7 +2,7 @@
   <div class="h-full flex flex-col">
     <PageHeader title="设置" description="自定义 AI 内容生成的偏好选项" />
 
-    <div class="flex-1 overflow-y-auto p-6">
+    <div class="flex-1 overflow-y-auto p-6 settings-content">
       <div class="max-w-2xl mx-auto space-y-5">
         <!-- Section: PPT defaults (NEW) -->
         <section class="surface-card p-5">
@@ -171,3 +171,20 @@ onMounted(() => {
   })
 })
 </script>
+
+<style scoped>
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  .settings-content {
+    padding: 14px;
+  }
+
+  .settings-content :deep(.surface-card) {
+    padding: 16px !important;
+  }
+
+  .settings-content :deep(.grid) {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

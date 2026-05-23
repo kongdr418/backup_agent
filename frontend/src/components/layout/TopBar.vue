@@ -246,4 +246,11 @@ defineExpose({ mode, effective })
   .logo-pill span { display: none; }
   .logo-pill { padding: 0 9px; }
 }
+
+/* 手机端：隐藏 TopBar，导航由底部 MobileBottomNav 接管 */
+@media (max-width: 767px) {
+  .topbar {
+    display: none !important;
+  }
+}
 </style>

@@ -1,7 +1,57 @@
 <template>
   <div class="chat-shell">
-    <!-- Session list (glass sidebar) -->
-    <aside class="w-60 shrink-0 glass-sidebar flex flex-col">
+    <!-- Mobile sidebar overlay -->
+    <div class="mobile-overlay" :class="{ open: mobileMenuOpen }" @click="mobileMenuOpen = false" />
+    <aside class="mobile-sidebar glass-sidebar flex flex-col" :class="{ open: mobileMenuOpen }">
+      <div class="px-3 pt-3 pb-2">
+        <button class="new-chat-btn" @click="newChat(); mobileMenuOpen = false">
+          <Plus class="w-3.5 h-3.5" />
+          新对话
+        </button>
+      </div>
+
+      <div class="px-2 py-1 text-[10.5px] text-ink-4 uppercase tracking-wider font-medium">
+        会话历史
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+        <div
+          v-if="sessionStore.sessions.length === 0"
+          class="text-[12px] text-ink-4 px-2 py-4 text-center"
+        >
+          暂无对话
+        </div>
+
+        <div
+          v-for="s in sessionStore.sessions"
+          :key="s.id"
+          class="session-item"
+          :class="sessionStore.currentSessionId === s.id ? 'is-active' : ''"
+          @click="switchTo(s.id); mobileMenuOpen = false"
+        >
+          <MessageSquare class="w-3.5 h-3.5 shrink-0 mr-2 text-ink-3" />
+          <span class="flex-1 truncate">{{ s.name }}</span>
+          <button
+            class="session-action"
+            @click.stop="startRename(s.id, s.name)"
+            title="重命名"
+          >
+            <Pencil class="w-3 h-3" />
+          </button>
+          <button
+            v-if="sessionStore.sessions.length > 1"
+            class="session-action danger"
+            @click.stop="askDelete(s.id, s.name)"
+            title="删除"
+          >
+            <Trash2 class="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- PC sidebar -->
+    <aside class="pc-sidebar w-60 shrink-0 glass-sidebar flex flex-col">
       <div class="px-3 pt-3 pb-2">
         <button class="new-chat-btn" @click="newChat">
           <Plus class="w-3.5 h-3.5" />
@@ -56,6 +106,17 @@
     >
       <!-- Chat column -->
       <div class="chat-column">
+        <!-- Mobile hamburger -->
+        <div class="mobile-chat-header">
+          <button class="mobile-menu-btn" @click="mobileMenuOpen = !mobileMenuOpen">
+            <component :is="mobileMenuOpen ? X : Menu" class="w-5 h-5" />
+          </button>
+          <span class="mobile-chat-title">对话</span>
+          <button class="mobile-menu-btn" @click="newChat">
+            <Plus class="w-5 h-5" />
+          </button>
+        </div>
+
         <div ref="scrollEl" class="chat-scroll" :class="chatView.isSplit ? 'is-split' : ''">
           <div class="chat-stream">
             <EmptyState
@@ -108,7 +169,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NModal, NInput, useDialog } from 'naive-ui'
-import { Plus, MessageSquare, Pencil, Trash2, Sparkles } from 'lucide-vue-next'
+import { Plus, MessageSquare, Pencil, Trash2, Sparkles, Menu, X } from 'lucide-vue-next'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useChatViewStore } from '@/stores/chatViewStore'
@@ -125,6 +186,7 @@ const { messages, isLoading, sendMessage, cancel } = useChat()
 const dialog = useDialog()
 
 const scrollEl = ref<HTMLElement | null>(null)
+const mobileMenuOpen = ref(false)
 
 // 当前展开的消息
 const expandedMessage = computed(() => {
@@ -353,5 +415,128 @@ const _ = computed(() => isLoading.value)
 @keyframes doc-enter {
   0% { opacity: 0; transform: translateX(20px); }
   100% { opacity: 1; transform: translateX(0); }
+}
+
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  /* Hide PC sidebar on mobile */
+  .pc-sidebar {
+    display: none !important;
+  }
+  /* Mobile chat header */
+  .mobile-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    height: 48px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-surface);
+  }
+
+  .mobile-menu-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-secondary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-menu-btn:active {
+    background: rgb(var(--bg-subtle-rgb));
+  }
+
+  .mobile-chat-title {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ink-primary);
+  }
+
+  /* Mobile sidebar overlay */
+  .mobile-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgb(0 0 0 / 0.35);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+  .mobile-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  @keyframes overlay-in {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+
+  /* Mobile sidebar */
+  .mobile-sidebar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 260px;
+    z-index: 90;
+    transform: translateX(-100%);
+    transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+    background: var(--bg-surface);
+    border-right: 1px solid var(--line);
+    box-shadow: 4px 0 24px rgb(0 0 0 / 0.12);
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .mobile-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Chat stream */
+  .chat-stream {
+    max-width: 100%;
+    padding: 20px 16px;
+    gap: 20px;
+  }
+
+  /* Main grid */
+  .main-grid.is-split {
+    grid-template-columns: 1fr;
+  }
+
+  /* Document viewer full-screen on mobile */
+  .main-grid.is-split .doc-column {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: var(--bg-surface);
+    animation: doc-enter-mobile 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes doc-enter-mobile {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Hide new chat button in header on mobile since sidebar has one */
+  .mobile-chat-header .mobile-menu-btn:last-child {
+    /* Keep it — user might want quick new chat */
+  }
+}
+
+/* Hide mobile elements on desktop only */
+@media (min-width: 768px) {
+  .mobile-chat-header { display: none !important; }
+  .mobile-overlay { display: none !important; }
+  .mobile-sidebar { display: none !important; }
 }
 </style>

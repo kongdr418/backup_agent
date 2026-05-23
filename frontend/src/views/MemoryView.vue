@@ -160,3 +160,12 @@ function formatResult(r: Record<string, unknown>): string {
 
 onMounted(refresh)
 </script>
+
+<style scoped>
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  .p-6 {
+    padding: 14px;
+  }
+}
+</style>

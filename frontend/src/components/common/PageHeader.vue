@@ -45,4 +45,19 @@ defineProps<{
   line-height: 1.5;
   font-family: 'DM Sans', sans-serif;
 }
+
+/* ============ Mobile ============ */
+@media (max-width: 767px) {
+  .page-header {
+    padding: 18px 16px 14px;
+  }
+
+  .page-title {
+    font-size: 20px;
+  }
+
+  .page-desc {
+    font-size: 12px;
+  }
+}
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="420" placement="right">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right">
     <n-drawer-content title="历史记录" closable>
       <template #header>
         <div class="flex items-center justify-between w-full pr-4">
@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import { FolderOpen, Download, Trash2 } from 'lucide-vue-next'
 import type { PptJob } from '@/types'
@@ -93,6 +93,21 @@ const emit = defineEmits<{
 const visible = computed({
   get: () => props.show,
   set: (v: boolean) => emit('update:show', v),
+})
+
+const drawerWidth = ref(420)
+
+function updateWidth() {
+  drawerWidth.value = window.innerWidth <= 767 ? window.innerWidth : 420
+}
+
+onMounted(() => {
+  updateWidth()
+  window.addEventListener('resize', updateWidth)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateWidth)
 })
 
 function downloadUrl(jobId: string) {

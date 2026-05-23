@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="720" placement="right">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right">
     <n-drawer-content :title="file?.name || '预览'" closable>
       <template v-if="file">
         <!-- Meta info bar -->
@@ -104,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, defineAsyncComponent } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import { Download } from 'lucide-vue-next'
 import type { GeneratedFile } from '@/types'
@@ -127,6 +127,22 @@ const props = defineProps<{ show: boolean; file?: GeneratedFile | null }>()
 const emit = defineEmits<{ 'update:show': [v: boolean] }>()
 
 const visible = computed({ get: () => props.show, set: (v) => emit('update:show', v) })
+
+const drawerWidth = ref(720)
+const MOBILE_BREAKPOINT = 767
+
+function updateWidth() {
+  drawerWidth.value = window.innerWidth <= MOBILE_BREAKPOINT ? window.innerWidth : 720
+}
+
+onMounted(() => {
+  updateWidth()
+  window.addEventListener('resize', updateWidth)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateWidth)
+})
 
 const svgJobId = ref('')
 
