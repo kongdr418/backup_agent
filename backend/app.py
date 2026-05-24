@@ -794,11 +794,6 @@ def _verify_anthropic(api_key: str, base_url: str, model_id: str):
         return jsonify({'success': False, 'message': '无法连接到 API 服务器，请检查 Base URL'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
-    """安全解析 JSON 响应，失败则返回空字典"""
-    try:
-        return resp.json() if resp.text else {}
-    except Exception:
-        return {}
 
 
 def _verify_minimax_tts(api_key: str, base_url: str, model_id: str):
@@ -828,6 +823,14 @@ def _verify_minimax_tts(api_key: str, base_url: str, model_id: str):
             return jsonify({'success': False, 'message': msg})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+
+def _safe_json(resp):
+    """安全解析 JSON 响应，失败返回空字典"""
+    try:
+        return resp.json()
+    except Exception:
+        return {}
 
 
 def _verify_openai_tts(api_key: str, base_url: str, model_id: str):
