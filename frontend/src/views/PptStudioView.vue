@@ -110,6 +110,7 @@ import StatusPill from '@/components/common/StatusPill.vue'
 import { usePptStore } from '@/stores/pptStore'
 import { usePptStream } from '@/composables/usePptStream'
 import { useRefreshGuard } from '@/composables/useRefreshGuard'
+import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { useSettingStore } from '@/stores/settingStore'
 
@@ -210,7 +211,7 @@ async function onGenerate() {
 
 function onDownload() {
   if (!store.gen.jobId) return
-  const url = pptDownloadUrl(store.gen.jobId)
+  const url = `${pptDownloadUrl(store.gen.jobId)}?user_id=${encodeURIComponent(getUserId())}`
   window.open(url, '_blank', 'noopener')
 }
 

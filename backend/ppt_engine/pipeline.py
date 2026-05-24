@@ -69,6 +69,7 @@ class PPTPipeline:
         model: str = "deepseek-v4-flash",
         api_key: str | None = None,
         base_url: str | None = None,
+        user_id: str = "anonymous",
         language: str = "zh",
         num_slides: int | None = None,
         detail_level: str = "normal",
@@ -90,10 +91,14 @@ class PPTPipeline:
         # Create LLM provider based on base_url
         llm: LLMProvider = self._create_llm(api_key, base_url, provider)
 
-        # Create job workspace
+        # Create user-scoped job workspace
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         job_id = f"course_ppt_{timestamp}"
-        project_dir = WORKSPACES_DIR / job_id
+        workspace = WORKSPACES_DIR
+        if user_id != 'anonymous':
+            workspace = WORKSPACES_DIR / 'users' / user_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        project_dir = workspace / job_id
         project_dir.mkdir(parents=True, exist_ok=True)
 
         style_info = DESIGN_STYLES.get(style, DESIGN_STYLES["education"])

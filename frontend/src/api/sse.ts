@@ -1,4 +1,5 @@
 import type { SseEvent } from '@/types'
+import { getUserId } from '@/composables/useUserId'
 
 export interface SseRequest {
   url: string
@@ -24,7 +25,9 @@ export async function* sseFetch(req: SseRequest): AsyncGenerator<SseEvent, void,
       Accept: 'text/event-stream',
       ...req.headers,
     },
-    body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
+    body: req.body !== undefined
+      ? JSON.stringify({ ...req.body, user_id: getUserId() })
+      : undefined,
     signal: req.signal,
   })
 

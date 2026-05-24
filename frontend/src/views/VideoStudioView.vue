@@ -263,6 +263,7 @@ import {
 import { useVideoStore } from '@/stores/videoStore'
 import { useSettingStore } from '@/stores/settingStore'
 import { useRefreshGuard } from '@/composables/useRefreshGuard'
+import { getUserId } from '@/composables/useUserId'
 
 const videoStore = useVideoStore()
 const settingStore = useSettingStore()
@@ -364,7 +365,7 @@ function leaveVideo(e: Event) {
 async function refreshList() {
   loading.value = true
   try {
-    const res = await fetch('/api/ppt-video/list')
+    const res = await fetch(`/api/ppt-video/list?user_id=${encodeURIComponent(getUserId())}`)
     const data = await res.json()
     videos.value = data.videos || []
   } catch (e) {
@@ -379,6 +380,7 @@ async function onGenerate() {
 
   const formData = new FormData()
   formData.append('file', uploadFile.value)
+  formData.append('user_id', getUserId())
 
   progress.value = 0.05
   progressMessage.value = '上传文件中...'
@@ -412,6 +414,7 @@ async function doGenerate(pptxPath: string) {
         tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
         tts_model: settingStore.settings.tts_model,
         tts_provider: settingStore.settings.tts_provider,
+        user_id: getUserId(),
       }),
     })
     const data = await res.json()
@@ -456,7 +459,7 @@ function askDelete(video: { id: string; name: string }) {
         const res = await fetch('/api/ppt-video/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: video.id }),
+          body: JSON.stringify({ id: video.id, user_id: getUserId() }),
         })
         const data = await res.json()
         if (data.success) {
@@ -483,7 +486,7 @@ function askClearAll() {
         const res = await fetch('/api/ppt-video/clear', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: true }),
+          body: JSON.stringify({ confirm: true, user_id: getUserId() }),
         })
         const data = await res.json()
         if (data.success) {

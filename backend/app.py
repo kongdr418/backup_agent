@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import logging
+import re
 import sys
 import threading
 from datetime import datetime
@@ -63,6 +64,37 @@ GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 # 视频生成任务追踪（内存字典，job_id → 状态）
 video_jobs = {}
 
+
+def get_request_user_id() -> str:
+    """从请求中提取 user_id，校验格式，缺省返回 'anonymous'"""
+    uid = ''
+    if request.is_json:
+        uid = (request.json or {}).get('user_id', '')
+    if not uid:
+        uid = request.args.get('user_id', '')
+    if not uid:
+        uid = (request.form or {}).get('user_id', '')
+    if uid and re.match(r'^[a-zA-Z0-9_-]{1,128}$', uid):
+        return uid
+    return 'anonymous'
+
+
+def _scan_dir(base_dir: str, user_id: str) -> str:
+    """返回用户隔离的扫描目录。anonymous 降级为旧全局目录。"""
+    if user_id != 'anonymous':
+        path = os.path.join(base_dir, 'users', user_id)
+        os.makedirs(path, exist_ok=True)
+        return path
+    return base_dir
+
+
+def _user_output_dir(base_dir: str, user_id: str) -> str:
+    """返回用户隔离的输出目录并自动创建。"""
+    path = os.path.join(base_dir, 'users', user_id) if user_id != 'anonymous' else base_dir
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -77,13 +109,12 @@ API_KEY = os.environ.get('MINIMAX_API_KEY', '')
 sessions = {}
 
 
-def get_agent(session_id: str, model: str = None) -> MiniMaxAgent:
+def get_agent(session_id: str, model: str = None, user_id: str = 'anonymous') -> MiniMaxAgent:
     """获取或创建 Agent 实例"""
     if session_id not in sessions:
-        agent = MiniMaxAgent(API_KEY, session_id, model=model)
+        agent = MiniMaxAgent(API_KEY, session_id, model=model, user_id=user_id)
         sessions[session_id] = agent
     elif model and sessions[session_id].model != model:
-        # 模型变更时更新 agent 的模型
         sessions[session_id].model = model
     return sessions[session_id]
 
@@ -176,7 +207,8 @@ def chat():
         return jsonify({'error': '消息不能为空'}), 400
 
     request_logger.info('[CHAT] 获取 Agent 实例')
-    agent = get_agent(session_id, model=model)
+    user_id_chat = get_request_user_id()
+    agent = get_agent(session_id, model=model, user_id=user_id_chat)
 
     request_logger.info('[CHAT] 调用 agent.chat() - stream=False')
     response = agent.chat(message, stream=False, model=model, api_key=api_key, base_url=base_url, provider_type=provider_type)
@@ -220,7 +252,8 @@ def chat_stream():
         return jsonify({'error': '消息不能为空'}), 400
 
     request_logger.info('[STREAM] 获取 Agent 实例')
-    agent = get_agent(session_id, model=model)
+    user_id_chat = get_request_user_id()
+    agent = get_agent(session_id, model=model, user_id=user_id_chat)
 
     def generate():
         request_logger.info('[STREAM] 调用 agent.chat() - stream=True')
@@ -396,7 +429,8 @@ def get_history():
     request_logger.info('=' * 50)
     request_logger.info(f'[HISTORY] 收到获取历史请求, session_id: {session_id}')
 
-    agent = get_agent(session_id)
+    user_id_sess = get_request_user_id()
+    agent = get_agent(session_id, user_id=user_id_sess)
     history = agent.get_history()
     request_logger.info(f'[HISTORY] 返回历史记录，当前共 {len(history)} 条消息')
 
@@ -941,11 +975,12 @@ def update_settings():
 def get_files():
     """获取所有生成的文件列表"""
     request_logger.info('[FILES] 获取文件列表')
+    user_id = get_request_user_id()
 
     files = []
 
     # 扫描 PPT 文件
-    ppt_dir = os.path.join(GENERATORS_DIR, "generated_ppt")
+    ppt_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_ppt"), user_id)
     if os.path.exists(ppt_dir):
         for f in os.listdir(ppt_dir):
             if f.endswith('.pptx') and not f.startswith('~$'):
@@ -964,7 +999,7 @@ def get_files():
                 })
 
     # 扫描 SVG PPT 导出的 PPTX 文件
-    svg_ppt_dir = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    svg_ppt_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
     if os.path.exists(svg_ppt_dir):
         for job_dir in os.listdir(svg_ppt_dir):
             job_path = os.path.join(svg_ppt_dir, job_dir)
@@ -1005,7 +1040,7 @@ def get_files():
             })
 
     # 扫描讲义文件
-    lecture_dir = os.path.join(GENERATORS_DIR, "generated_lectures")
+    lecture_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_lectures"), user_id)
     if os.path.exists(lecture_dir):
         for f in os.listdir(lecture_dir):
             if f.endswith('.md'):
@@ -1024,7 +1059,7 @@ def get_files():
                 })
 
     # 扫描课程大纲文件
-    outline_dir = os.path.join(GENERATORS_DIR, "generated_outlines")
+    outline_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_outlines"), user_id)
     if os.path.exists(outline_dir):
         for f in os.listdir(outline_dir):
             if f.endswith(('.md', '.docx')):
@@ -1043,7 +1078,7 @@ def get_files():
                 })
 
     # 扫描讲稿文件
-    speech_dir = os.path.join(GENERATORS_DIR, "generated_speeches")
+    speech_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_speeches"), user_id)
     if os.path.exists(speech_dir):
         for f in os.listdir(speech_dir):
             if f.endswith(('.md', '.docx')):
@@ -1062,7 +1097,7 @@ def get_files():
                 })
 
     # 扫描习题集文件
-    exercise_dir = os.path.join(GENERATORS_DIR, "generated_exercises")
+    exercise_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_exercises"), user_id)
     if os.path.exists(exercise_dir):
         for f in os.listdir(exercise_dir):
             if f.endswith(('.md', '.docx')):
@@ -1081,7 +1116,7 @@ def get_files():
                 })
 
     # 扫描课堂测验文件
-    quiz_dir = os.path.join(GENERATORS_DIR, "generated_quizzes")
+    quiz_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_quizzes"), user_id)
     if os.path.exists(quiz_dir):
         for f in os.listdir(quiz_dir):
             if f.endswith(('.md', '.docx')):
@@ -1100,7 +1135,7 @@ def get_files():
                 })
 
     # 扫描知识卡片文件
-    card_dir = os.path.join(GENERATORS_DIR, "generated_cards")
+    card_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_cards"), user_id)
     if os.path.exists(card_dir):
         for f in os.listdir(card_dir):
             if f.endswith(('.md', '.docx')):
@@ -1119,7 +1154,7 @@ def get_files():
                 })
 
     # 扫描思维导图文件
-    mindmap_dir = os.path.join(GENERATORS_DIR, "generated_mindmaps")
+    mindmap_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_mindmaps"), user_id)
     if os.path.exists(mindmap_dir):
         for f in os.listdir(mindmap_dir):
             if f.endswith('.md'):
@@ -1138,7 +1173,7 @@ def get_files():
                 })
 
     # 扫描图文内容文本文件
-    content_text_dir = os.path.join(GENERATORS_DIR, "generated_content/text")
+    content_text_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/text"), user_id)
     if os.path.exists(content_text_dir):
         for f in os.listdir(content_text_dir):
             if f.endswith('.md'):
@@ -1159,7 +1194,7 @@ def get_files():
                 })
 
     # 扫描音频文件
-    content_audio_dir = os.path.join(GENERATORS_DIR, "generated_content/audio")
+    content_audio_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/audio"), user_id)
     if os.path.exists(content_audio_dir):
         for f in os.listdir(content_audio_dir):
             if f.endswith('.wav'):
@@ -1178,7 +1213,7 @@ def get_files():
                 })
 
     # 扫描图片文件
-    content_image_dir = os.path.join(GENERATORS_DIR, "generated_content/images")
+    content_image_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/images"), user_id)
     if os.path.exists(content_image_dir):
         for f in os.listdir(content_image_dir):
             if f.endswith(('.jpeg', '.jpg', '.png')):
@@ -1197,7 +1232,7 @@ def get_files():
                 })
 
     # 扫描微课视频文件
-    video_dir = os.path.join(BACKEND_DIR, "generated_videos")
+    video_dir = _scan_dir(os.path.join(BACKEND_DIR, "generated_videos"), user_id)
     if os.path.exists(video_dir):
         for item in os.listdir(video_dir):
             item_path = os.path.join(video_dir, item)
@@ -1280,8 +1315,9 @@ def rename_file():
     data = request.json
     old_path = data.get('path', '')
     new_name = data.get('new_name', '')
+    user_id = get_request_user_id()
 
-    request_logger.info(f'[FILES] 重命名文件: {old_path} -> {new_name}')
+    request_logger.info(f'[FILES] 重命名文件: {old_path} -> {new_name} (user: {user_id})')
 
     if not old_path or not os.path.exists(old_path):
         return jsonify({'success': False, 'error': '文件不存在'}), 404
@@ -1290,13 +1326,12 @@ def rename_file():
         return jsonify({'success': False, 'error': '无效的文件名'}), 400
 
     # 安全检查
-    allowed_dirs = [os.path.join(GENERATORS_DIR, d) for d in [
+    allowed_dirs = [_scan_dir(os.path.join(GENERATORS_DIR, d), user_id) for d in [
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
     ]]
-    # SVG PPT 在 BACKEND_DIR/generated_svg_ppt 下
-    svg_ppt_root = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    svg_ppt_root = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
     allowed_dirs.append(svg_ppt_root)
     abs_old = os.path.abspath(old_path)
     is_allowed = any(abs_old.startswith(d) for d in allowed_dirs)
@@ -1327,14 +1362,15 @@ def rename_file():
 
 @app.route('/api/files/clear', methods=['POST'])
 def clear_all_files():
-    """清空所有生成的文件"""
+    """清空当前用户所有生成的文件"""
     data = request.json
     confirm = data.get('confirm', False)
+    user_id = get_request_user_id()
 
     if not confirm:
         return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
 
-    request_logger.info('[FILES] 收到清空所有文件请求')
+    request_logger.info(f'[FILES] 收到清空文件请求 (user: {user_id})')
 
     allowed_dirs = [
         'generated_ppt', 'generated_lectures', 'generated_content',
@@ -1347,13 +1383,11 @@ def clear_all_files():
 
     for dir_name in allowed_dirs:
         if dir_name == 'generated_svg_ppt':
-            # SVG PPT 在 BACKEND_DIR 下，不在 generators 子目录
-            dir_path = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+            dir_path = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
         elif dir_name == 'generated_videos':
-            # 微课视频在 BACKEND_DIR 下
-            dir_path = os.path.join(BACKEND_DIR, 'generated_videos')
+            dir_path = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
         else:
-            dir_path = os.path.join(GENERATORS_DIR, dir_name)
+            dir_path = _scan_dir(os.path.join(GENERATORS_DIR, dir_name), user_id)
         if os.path.exists(dir_path):
             try:
                 if dir_name == 'generated_svg_ppt':
@@ -1502,7 +1536,8 @@ def save_memory_api():
     """保存当前对话到记忆"""
     data = request.json
     session_id = data.get('session_id', 'default')
-    agent = get_agent(session_id)
+    user_id_sess = get_request_user_id()
+    agent = get_agent(session_id, user_id=user_id_sess)
     result = agent._save_conversation_essence()
     return jsonify({'result': result})
 
@@ -1520,7 +1555,8 @@ def clear_daily_api():
     """清除当前会话记录"""
     data = request.json
     session_id = data.get('session_id', 'default')
-    agent = get_agent(session_id)
+    user_id_sess = get_request_user_id()
+    agent = get_agent(session_id, user_id=user_id_sess)
     agent.clear_history()
     agent.memory.clear_session_file()
     return jsonify({'success': True})
@@ -1600,6 +1636,7 @@ def ppt_svg_generate():
     model = data.get('model', 'deepseek-v4-flash')
     api_key = data.get('api_key')
     base_url = data.get('base_url')
+    user_id = get_request_user_id()
 
     if not topic:
         return jsonify({'error': '课程主题不能为空'}), 400
@@ -1615,6 +1652,7 @@ def ppt_svg_generate():
             model=model,
             api_key=api_key,
             base_url=base_url,
+            user_id=user_id,
             language=language,
             num_slides=num_slides,
             style=style,
@@ -1668,7 +1706,9 @@ def ppt_svg_generate():
 def ppt_svg_preview(job_id, slide_num):
     """获取指定页的 SVG 内容"""
     import glob
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    user_id = get_request_user_id()
+    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
+    base_dir = os.path.join(svg_base, job_id)
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -1696,7 +1736,9 @@ def ppt_svg_preview(job_id, slide_num):
 def ppt_svg_preview_all(job_id):
     """获取所有页的 SVG 内容"""
     import glob
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    user_id = get_request_user_id()
+    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
+    base_dir = os.path.join(svg_base, job_id)
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -1724,7 +1766,9 @@ def ppt_svg_preview_all(job_id):
 def ppt_svg_download(job_id):
     """下载生成的 PPTX 文件"""
     import glob
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt', job_id)
+    user_id = get_request_user_id()
+    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
+    base_dir = os.path.join(svg_base, job_id)
     exports_dir = os.path.join(base_dir, 'exports')
     if not os.path.exists(exports_dir):
         return jsonify({'error': '未找到导出文件'}), 404
@@ -1746,7 +1790,8 @@ def ppt_svg_download(job_id):
 @app.route('/api/ppt-svg/list', methods=['GET'])
 def ppt_svg_list():
     """列出所有已生成的 SVG PPT"""
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt')
+    user_id = get_request_user_id()
+    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
     if not os.path.exists(base_dir):
         return jsonify({'jobs': []})
 
@@ -1769,7 +1814,8 @@ def ppt_svg_list():
 @app.route('/api/ppt-svg/<job_id>', methods=['DELETE'])
 def ppt_svg_delete(job_id):
     """删除指定 SVG PPT 的全部输出"""
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt')
+    user_id = get_request_user_id()
+    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
     # 基本安全校验：job_id 不能含路径穿越字符
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'success': False, 'error': '非法 job_id'}), 400
@@ -1800,8 +1846,9 @@ def ppt_svg_clear_all():
     confirm = data.get('confirm', False)
     if not confirm:
         return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
+    user_id = get_request_user_id()
 
-    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt')
+    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
     if not os.path.exists(base_dir):
         return jsonify({'success': True, 'message': '已清空'})
 
@@ -1834,6 +1881,7 @@ def ppt_video_generate():
     }
     """
     data = request.json or {}
+    user_id = get_request_user_id()
 
     # 获取 PPTX 路径
     pptx_path = data.get('pptx_path')
@@ -1847,7 +1895,7 @@ def ppt_video_generate():
     # 如果没有指定路径，尝试获取最新生成的 PPT
     if not pptx_path:
         # 从 generated_ppt 目录获取最新的 pptx 文件
-        ppt_dir = os.path.join(GENERATORS_DIR, 'generated_ppt')
+        ppt_dir = _scan_dir(os.path.join(GENERATORS_DIR, 'generated_ppt'), user_id)
         if os.path.exists(ppt_dir):
             pptx_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
             if pptx_files:
@@ -1863,7 +1911,8 @@ def ppt_video_generate():
     job_id = f"{datetime.now().strftime('%Y-%m-%d')}-{job_topic.replace(' ', '_').replace('/', '_')}"
 
     # 注册任务到追踪字典
-    video_jobs[job_id] = {
+    tracking_key = f"{user_id}:{job_id}"
+    video_jobs[tracking_key] = {
         'status': 'generating',
         'progress': 0,
         'message': '准备开始...',
@@ -1885,12 +1934,13 @@ def ppt_video_generate():
                 'model': tts_model or saved_settings.get('tts_model') or 'mimo-v2.5-tts',
                 'voice': voice,
             }
-            generator = VideoGenerator(tts_config=tts_config)
+            video_workspace = _user_output_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
+            generator = VideoGenerator(workspace_dir=video_workspace, tts_config=tts_config)
 
             def progress_callback(progress, message):
-                if job_id in video_jobs:
-                    video_jobs[job_id]['progress'] = progress
-                    video_jobs[job_id]['message'] = message
+                if tracking_key in video_jobs:
+                    video_jobs[tracking_key]['progress'] = progress
+                    video_jobs[tracking_key]['message'] = message
                 yield ""  # 占位，保持生成器格式
 
             result = generator.generate_video(
@@ -1904,18 +1954,18 @@ def ppt_video_generate():
             for r in result:
                 pass
 
-            if job_id in video_jobs:
-                video_jobs[job_id]['status'] = 'done'
-                video_jobs[job_id]['progress'] = 1.0
-                video_jobs[job_id]['message'] = '视频生成完成'
+            if tracking_key in video_jobs:
+                video_jobs[tracking_key]['status'] = 'done'
+                video_jobs[tracking_key]['progress'] = 1.0
+                video_jobs[tracking_key]['message'] = '视频生成完成'
 
             request_logger.info(f'[PPT-VIDEO] 任务完成: {job_id}')
 
         except Exception as e:
             request_logger.error(f'[PPT-VIDEO] 生成失败: {e}')
-            if job_id in video_jobs:
-                video_jobs[job_id]['status'] = 'error'
-                video_jobs[job_id]['message'] = str(e)
+            if tracking_key in video_jobs:
+                video_jobs[tracking_key]['status'] = 'error'
+                video_jobs[tracking_key]['message'] = str(e)
 
     # 启动后台线程，不依赖 HTTP 连接
     t = threading.Thread(target=_run_generation, daemon=True)
@@ -1928,9 +1978,11 @@ def ppt_video_generate():
 @app.route('/api/ppt-video/status/<job_id>', methods=['GET'])
 def ppt_video_status(job_id):
     """查询视频生成任务状态"""
+    user_id = get_request_user_id()
+    tracking_key = f"{user_id}:{job_id}"
     # 先查内存中的活跃任务
-    if job_id in video_jobs:
-        job = video_jobs[job_id]
+    if tracking_key in video_jobs:
+        job = video_jobs[tracking_key]
         return jsonify({
             'status': job['status'],
             'progress': job['progress'],
@@ -1938,7 +1990,7 @@ def ppt_video_status(job_id):
         })
 
     # 内存中没有，检查磁盘上是否已完成
-    video_dir = os.path.join(BACKEND_DIR, 'generated_videos', job_id)
+    video_dir = os.path.join(_scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id), job_id)
     video_file = os.path.join(video_dir, '07-video.mp4')
     if os.path.exists(video_file):
         return jsonify({'status': 'done', 'progress': 1.0, 'message': '视频生成完成'})
@@ -1949,7 +2001,8 @@ def ppt_video_status(job_id):
 @app.route('/api/ppt-video/list', methods=['GET'])
 def ppt_video_list():
     """列出已生成的视频"""
-    video_dir = os.path.join(BACKEND_DIR, 'generated_videos')
+    user_id = get_request_user_id()
+    video_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
     if not os.path.exists(video_dir):
         return jsonify({'videos': []})
 
@@ -1979,11 +2032,12 @@ def ppt_video_delete():
     """删除指定的视频（含整个子目录）"""
     data = request.json or {}
     video_id = data.get('id', '')
+    user_id = get_request_user_id()
 
     if not video_id or '/' in video_id or '\\' in video_id or '..' in video_id:
         return jsonify({'success': False, 'error': '非法的视频 id'}), 400
 
-    video_root = os.path.abspath(os.path.join(BACKEND_DIR, 'generated_videos'))
+    video_root = os.path.abspath(_scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id))
     target = os.path.abspath(os.path.join(video_root, video_id))
     if not target.startswith(video_root) or not os.path.isdir(target):
         return jsonify({'success': False, 'error': '视频不存在'}), 404
@@ -2003,8 +2057,9 @@ def ppt_video_clear():
     data = request.json or {}
     if not data.get('confirm'):
         return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
+    user_id = get_request_user_id()
 
-    video_root = os.path.join(BACKEND_DIR, 'generated_videos')
+    video_root = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
     if not os.path.exists(video_root):
         return jsonify({'success': True, 'deleted_count': 0})
 

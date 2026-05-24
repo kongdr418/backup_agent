@@ -31,25 +31,36 @@ class MiniMaxAgent:
     
     BASE_URL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
     
-    def __init__(self, api_key: str, session_id: str = None, model: str = None):
+    def __init__(self, api_key: str, session_id: str = None, model: str = None, user_id: str = 'anonymous'):
         self.api_key = api_key
         self.session_id = session_id or "default"
         self.model = model or "MiniMax-M2.5-highspeed"
+        self.user_id = user_id
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         self.conversation_history = []
-        self.ppt_generator = PPTGenerator()
+
+        # 用户隔离的输出目录（路径与各生成器默认路径一致：generators/ 子目录）
+        _base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generators')
+        def _udir(subdir: str) -> str:
+            path = os.path.join(_base, subdir)
+            if user_id != 'anonymous':
+                path = os.path.join(path, 'users', user_id)
+            os.makedirs(path, exist_ok=True)
+            return path
+
+        self.ppt_generator = PPTGenerator(output_dir=_udir("generated_ppt"))
         self.ppt_previewer = PPTPreviewer()
-        self.lecture_generator = LectureGenerator()
-        self.content_generator = ContentGenerator()
-        self.course_outline_generator = CourseOutlineGenerator()
-        self.speech_generator = SpeechGenerator()
-        self.exercise_generator = ExerciseGenerator()
-        self.quiz_generator = QuizGenerator()
-        self.knowledge_card_generator = KnowledgeCardGenerator()
-        self.mindmap_generator = MindmapGenerator()
+        self.lecture_generator = LectureGenerator(output_dir=_udir("generated_lectures"))
+        self.content_generator = ContentGenerator(output_dir=_udir("generated_content"))
+        self.course_outline_generator = CourseOutlineGenerator(output_dir=_udir("generated_outlines"))
+        self.speech_generator = SpeechGenerator(output_dir=_udir("generated_speeches"))
+        self.exercise_generator = ExerciseGenerator(output_dir=_udir("generated_exercises"))
+        self.quiz_generator = QuizGenerator(output_dir=_udir("generated_quizzes"))
+        self.knowledge_card_generator = KnowledgeCardGenerator(output_dir=_udir("generated_cards"))
+        self.mindmap_generator = MindmapGenerator(output_dir=_udir("generated_mindmaps"))
         # 初始化记忆系统
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.memory = MemoryManager(base_dir, self.session_id)

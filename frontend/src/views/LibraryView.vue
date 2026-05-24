@@ -68,7 +68,7 @@
                   <MoreHorizontal class="w-4 h-4" />
                 </button>
                 <div v-if="openMenuId === f.id" class="menu-dropdown">
-                  <button v-if="canRename(f.type)" class="menu-item" @click.stop="$emit('rename', f); openMenuId = null">
+                  <button v-if="canRename(f.type)" class="menu-item" @click.stop="startRename(f); openMenuId = null">
                     <Pencil class="w-3.5 h-3.5" />
                     重命名
                   </button>

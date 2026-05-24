@@ -76,6 +76,7 @@ import { NDrawer, NDrawerContent } from 'naive-ui'
 import { FolderOpen, Download, Trash2 } from 'lucide-vue-next'
 import type { PptJob } from '@/types'
 import { pptDownloadUrl } from '@/api/pptSvg'
+import { getUserId } from '@/composables/useUserId'
 
 const props = defineProps<{
   show: boolean
@@ -111,6 +112,6 @@ onUnmounted(() => {
 })
 
 function downloadUrl(jobId: string) {
-  return pptDownloadUrl(jobId)
+  return `${pptDownloadUrl(jobId)}?user_id=${encodeURIComponent(getUserId())}`
 }
 </script>
