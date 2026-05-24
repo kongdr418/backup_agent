@@ -2,7 +2,9 @@
   <div class="shell">
     <TopBar />
     <main class="shell-main">
-      <router-view />
+      <Transition mode="out-in" name="page-slide">
+        <router-view />
+      </Transition>
     </main>
     <MobileBottomNav />
   </div>

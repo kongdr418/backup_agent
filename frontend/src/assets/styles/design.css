@@ -288,6 +288,32 @@ input, textarea, select {
 .stagger-children > *:nth-child(7) { animation-delay: 480ms; }
 .stagger-children > *:nth-child(8) { animation-delay: 560ms; }
 
+/* ── Page Route Transitions — smooth horizontal slide ── */
+.page-slide-enter-active {
+  animation: pageSlideIn 550ms var(--ease-out) forwards;
+}
+
+.page-slide-leave-active {
+  animation: pageSlideOut 400ms var(--ease-out) forwards;
+}
+
+@keyframes pageSlideIn {
+  from { opacity: 0.6; transform: translateX(28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pageSlideOut {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0.5; transform: translateX(-20px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-slide-enter-active,
+  .page-slide-leave-active {
+    animation-duration: 1ms !important;
+  }
+}
+
 /* ── Divider / Rule ── */
 .rule-amber {
   height: 1px;

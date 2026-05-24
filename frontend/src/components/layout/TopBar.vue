@@ -2,8 +2,8 @@
   <header class="topbar glass-chrome">
     <div class="topbar-inner">
       <!-- 主导航 -->
-      <nav class="nav-stack">
-        <router-link to="/" class="nav-pill logo-pill">
+      <nav ref="navRef" class="nav-stack">
+        <router-link to="/" class="nav-pill logo-pill" :ref="el => setPillRef('/', el)">
           <img src="@/assets/logo.svg" alt="智创空间" class="h-11 w-auto" />
           <span class="logo-text">智创空间</span>
         </router-link>
@@ -16,10 +16,13 @@
           :class="[
             isActive(item.path) ? `is-active hue-${item.hue}` : '',
           ]"
+          :ref="el => setPillRef(item.path, el)"
         >
           <component :is="item.icon" class="w-[14px] h-[14px] shrink-0" />
           <span>{{ item.label }}</span>
         </router-link>
+
+        <span ref="indicatorRef" class="nav-indicator" />
       </nav>
 
       <!-- 右侧动作 -->
@@ -42,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   LayoutDashboard,
@@ -82,6 +85,69 @@ function isActive(path: string): boolean {
   if (path === '/') return route.path === '/'
   return route.path === path || route.path.startsWith(`${path}/`)
 }
+
+/* ── Sliding indicator ── */
+const navRef = ref<HTMLElement | null>(null)
+const indicatorRef = ref<HTMLElement | null>(null)
+const pillRefs: Record<string, HTMLElement> = {}
+
+const INDICATOR_COLORS: Record<string, string> = {
+  '/': 'var(--nav-chat)',
+  '/chat': 'var(--nav-chat)',
+  '/ppt-studio': 'var(--nav-ppt)',
+  '/video-studio': 'var(--nav-ppt)',
+  '/library': 'var(--nav-library)',
+  '/memory': 'var(--nav-memory)',
+  '/settings': 'var(--nav-settings)',
+}
+
+function setPillRef(path: string, el: any) {
+  if (el?.$el) el = el.$el
+  if (el) pillRefs[path] = el
+}
+
+let firstMove = true
+
+const INDICATOR_W = 18
+
+function moveIndicator() {
+  const nav = navRef.value
+  const indicator = indicatorRef.value
+  if (!nav || !indicator) return
+
+  const activePath = route.path === '/'
+    ? '/'
+    : Object.keys(pillRefs).find(
+        (p) => p !== '/' && (route.path === p || route.path.startsWith(p + '/')),
+      ) || '/'
+
+  const pill = pillRefs[activePath]
+  if (!pill) return
+
+  const navRect = nav.getBoundingClientRect()
+  const pillRect = pill.getBoundingClientRect()
+  const color = INDICATOR_COLORS[activePath] || 'var(--forest)'
+
+  // Center the 18px indicator over the pill
+  const pillCenter = pillRect.left - navRect.left + pillRect.width / 2
+  const left = pillCenter - INDICATOR_W / 2
+
+  if (firstMove) {
+    indicator.style.transition = 'none'
+    indicator.style.left = left + 'px'
+    indicator.style.background = color
+    indicator.style.opacity = '1'
+    firstMove = false
+    nextTick(() => { indicator.style.transition = '' })
+  } else {
+    indicator.style.left = left + 'px'
+    indicator.style.background = color
+    indicator.style.opacity = '1'
+  }
+}
+
+onMounted(() => nextTick(moveIndicator))
+watch(() => route.fullPath, () => nextTick(moveIndicator))
 
 // expose for template
 defineExpose({ mode, effective })
@@ -133,6 +199,7 @@ defineExpose({ mode, effective })
 
 /* Nav stack */
 .nav-stack {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -170,20 +237,18 @@ defineExpose({ mode, effective })
   color: var(--hue-active);
   background: rgb(var(--hue-active) / 0.10);
   font-weight: 500;
-  position: relative;
 }
 
-.nav-pill.is-active::before,
-.logo-pill.is-active::before {
-  content: '';
+/* Sliding indicator bar */
+.nav-indicator {
   position: absolute;
   top: 0;
-  left: 50%;
-  transform: translateX(-50%);
   width: 18px;
   height: 2px;
   border-radius: 0 0 3px 3px;
-  background: var(--hue-active);
+  transition: left 350ms var(--ease-out), background 350ms, opacity 200ms;
+  pointer-events: none;
+  opacity: 0;
 }
 
 /* hue class — switch --hue-active to the module color */
