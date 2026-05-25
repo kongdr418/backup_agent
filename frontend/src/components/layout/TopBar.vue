@@ -110,6 +110,14 @@ let firstMove = true
 
 const INDICATOR_W = 18
 
+function showIndicator() {
+  const indicator = indicatorRef.value
+  if (!indicator) return
+  firstMove = false
+  indicator.style.opacity = '1'
+  nextTick(() => { indicator.style.transition = '' })
+}
+
 function moveIndicator() {
   const nav = navRef.value
   const indicator = indicatorRef.value
@@ -136,9 +144,7 @@ function moveIndicator() {
     indicator.style.transition = 'none'
     indicator.style.left = left + 'px'
     indicator.style.background = color
-    indicator.style.opacity = '1'
-    firstMove = false
-    nextTick(() => { indicator.style.transition = '' })
+    // 首次加载不立即显示，等二次校正后由 showIndicator() 统一显示
   } else {
     indicator.style.left = left + 'px'
     indicator.style.background = color
@@ -146,7 +152,20 @@ function moveIndicator() {
   }
 }
 
-onMounted(() => nextTick(moveIndicator))
+onMounted(() => {
+  nextTick(() => {
+    moveIndicator() // 预定位，opacity 仍为 0
+    // 等所有资源（字体、图片）加载完再一次性显示，消除闪烁
+    if (document.readyState === 'complete') {
+      // 页面已完全加载，稍等一下渲染稳定
+      setTimeout(() => { moveIndicator(); showIndicator() }, 100)
+    } else {
+      window.addEventListener('load', () => {
+        setTimeout(() => { moveIndicator(); showIndicator() }, 100)
+      }, { once: true })
+    }
+  })
+})
 watch(() => route.fullPath, () => nextTick(moveIndicator))
 
 // expose for template
