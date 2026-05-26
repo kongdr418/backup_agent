@@ -1,18 +1,23 @@
 <template>
   <div class="shell">
-    <TopBar />
+    <TopBar @open-settings="showSettings = true" />
     <main class="shell-main">
       <Transition mode="out-in" name="page-slide">
         <router-view />
       </Transition>
     </main>
     <MobileBottomNav />
+    <SettingsDialog :visible="showSettings" @close="showSettings = false" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import TopBar from './TopBar.vue'
 import MobileBottomNav from './MobileBottomNav.vue'
+import SettingsDialog from '@/views/SettingsDialog.vue'
+
+const showSettings = ref(false)
 </script>
 
 <style scoped>
@@ -20,7 +25,7 @@ import MobileBottomNav from './MobileBottomNav.vue'
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: transparent; /* 透明 — 让 mesh 透出来 */
+  background: transparent;
 }
 
 .shell-main {
@@ -32,7 +37,7 @@ import MobileBottomNav from './MobileBottomNav.vue'
 
 @media (max-width: 767px) {
   .shell-main {
-    padding-bottom: 64px; /* 为 MobileBottomNav 留空间 */
+    padding-bottom: 64px;
     padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
 }

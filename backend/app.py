@@ -869,9 +869,18 @@ def _verify_minimax(api_key: str, base_url: str, model_id: str):
     }
     try:
         resp = requests.post(base_url, headers=headers, json=payload, timeout=15)
+        data = _safe_json(resp)
         if resp.status_code == 200:
-            data = _safe_json(resp)
+            # MiniMax 对无效 Key 也返回 200，但 body 里有 base_resp.status_code
+            base_resp = data.get('base_resp', {})
+            if base_resp.get('status_code', 0) != 0:
+                msg = base_resp.get('status_msg', '') or f'status_code: {base_resp.get("status_code")}'
+                return jsonify({'success': False, 'message': msg})
+            if data.get('error'):
+                return jsonify({'success': False, 'message': str(data['error'])})
             text = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            if not text.strip():
+                return jsonify({'success': False, 'message': '返回内容为空，请检查 API Key'})
             return jsonify({'success': True, 'message': '连接成功', 'response': text.strip()})
         elif resp.status_code == 401:
             return jsonify({'success': False, 'message': 'API Key 无效或已过期'})

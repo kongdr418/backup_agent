@@ -29,6 +29,13 @@
       <div class="right-stack">
         <button
           class="action-btn"
+          title="设置"
+          @click="$emit('openSettings')"
+        >
+          <Settings class="w-[16px] h-[16px]" />
+        </button>
+        <button
+          class="action-btn"
           :title="`主题: ${mode} (生效: ${effective})`"
           @click="toggle"
         >
@@ -78,7 +85,6 @@ const nav: NavItem[] = [
   { path: '/video-studio', label: '微课', icon: Video, hue: 'ppt' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
   // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
-  { path: '/settings', label: '设置', icon: Settings, hue: 'settings' },
 ]
 
 function isActive(path: string): boolean {
@@ -98,7 +104,6 @@ const INDICATOR_COLORS: Record<string, string> = {
   '/video-studio': 'var(--nav-ppt)',
   '/library': 'var(--nav-library)',
   '/memory': 'var(--nav-memory)',
-  '/settings': 'var(--nav-settings)',
 }
 
 function setPillRef(path: string, el: any) {
@@ -154,16 +159,8 @@ function moveIndicator() {
 
 onMounted(() => {
   nextTick(() => {
-    moveIndicator() // 预定位，opacity 仍为 0
-    // 等所有资源（字体、图片）加载完再一次性显示，消除闪烁
-    if (document.readyState === 'complete') {
-      // 页面已完全加载，稍等一下渲染稳定
-      setTimeout(() => { moveIndicator(); showIndicator() }, 100)
-    } else {
-      window.addEventListener('load', () => {
-        setTimeout(() => { moveIndicator(); showIndicator() }, 100)
-      }, { once: true })
-    }
+    moveIndicator()
+    requestAnimationFrame(() => { moveIndicator(); showIndicator() })
   })
 })
 watch(() => route.fullPath, () => nextTick(moveIndicator))
