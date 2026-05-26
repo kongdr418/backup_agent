@@ -436,6 +436,10 @@ async function doGenerate(pptxPath: string) {
         tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
         tts_model: settingStore.settings.tts_model,
         tts_provider: settingStore.settings.tts_provider,
+        content_model: settingStore.settings.content_model,
+        content_api_key: settingStore.getEffectiveContentApiKey(),
+        content_base_url: settingStore.getEffectiveContentBaseUrl(),
+        content_provider_type: settingStore.getContentProviderType(),
         user_id: getUserId(),
       }),
     })
