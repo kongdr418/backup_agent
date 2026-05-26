@@ -13,6 +13,7 @@
               <n-select
                 v-model:value="settings.chat_provider"
                 :options="providerOptions"
+                :render-label="renderProviderLabel"
                 size="small"
                 style="max-width: 420px"
                 @update:value="(v: string) => onModuleProviderChange('chat', v)"
@@ -92,6 +93,7 @@
               <n-select
                 v-model:value="settings.content_provider"
                 :options="openaiProviderOptions"
+                :render-label="renderProviderLabel"
                 size="small"
                 style="max-width: 420px"
                 @update:value="(v: string) => onModuleProviderChange('content', v)"
@@ -171,6 +173,7 @@
               <n-select
                 v-model:value="settings.ppt_provider"
                 :options="openaiProviderOptions"
+                :render-label="renderProviderLabel"
                 size="small"
                 style="max-width: 420px"
                 @update:value="(v: string) => onModuleProviderChange('ppt', v)"
@@ -250,6 +253,7 @@
               <n-select
                 v-model:value="settings.tts_provider"
                 :options="ttsProviderOptions"
+                :render-label="renderProviderLabel"
                 size="small"
                 style="max-width: 420px"
                 @update:value="(v: string) => onTTSProviderChange(v)"
@@ -363,7 +367,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NSelect,
   NRadioGroup,
@@ -391,6 +395,42 @@ import SectionTitle from './_SettingsSection.vue'
 import { useSettingStore } from '@/stores/settingStore'
 import { verifyModel } from '@/api/providers'
 import type { ProviderInfo, TTSProviderInfo } from '@/types'
+
+const PROVIDER_LOGOS: Record<string, string> = {
+  minimax: '/logos/minimax.svg',
+  deepseek: '/logos/deepseek.svg',
+  openai: '/logos/openai.svg',
+  moonshot: '/logos/kimi.png',
+  zhipu: '/logos/glm.svg',
+  glm: '/logos/glm.svg',
+  qwen: '/logos/qwen.svg',
+  siliconflow: '/logos/siliconflow.svg',
+  'minimax-tts': '/logos/xiaomi.svg',
+}
+
+const MONO_LOGOS = new Set(['openai', 'deepseek', 'siliconflow'])
+
+function renderProviderLabel(option: { label: string; value: string }) {
+  const rawId = option.value as string
+  const icon = PROVIDER_LOGOS[rawId]
+  if (icon) {
+    const isMono = MONO_LOGOS.has(rawId)
+    return h('div', { class: 'flex items-center gap-2' }, [
+      h('img', { src: icon, alt: '', class: `w-4 h-4 rounded ${isMono ? 'dark:invert' : ''}`, style: 'display:block' }),
+      h('span', null, option.label),
+    ])
+  }
+  const fallbackId = rawId.replace(/-tts$/, '').replace(/-asr$/, '')
+  const fallbackIcon = PROVIDER_LOGOS[fallbackId]
+  if (fallbackIcon) {
+    const isMono = MONO_LOGOS.has(fallbackId)
+    return h('div', { class: 'flex items-center gap-2' }, [
+      h('img', { src: fallbackIcon, alt: '', class: `w-4 h-4 rounded ${isMono ? 'dark:invert' : ''}`, style: 'display:block' }),
+      h('span', null, option.label),
+    ])
+  }
+  return option.label
+}
 
 const store = useSettingStore()
 const message = useMessage()
