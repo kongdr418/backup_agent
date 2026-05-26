@@ -16,6 +16,25 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 
+TTS_PROVIDER_DEFAULTS = {
+    'mimo-tts': {
+        'base_url': 'https://api.xiaomimimo.com/v1',
+        'model': 'mimo-v2.5-tts',
+        'voice': 'mimo_default',
+    },
+    'openai-tts': {
+        'base_url': 'https://api.openai.com/v1',
+        'model': 'tts-1',
+        'voice': 'alloy',
+    },
+    'glm-tts': {
+        'base_url': 'https://open.bigmodel.cn/api/paas/v4',
+        'model': 'glm-tts',
+        'voice': 'tongtong',
+    },
+}
+
+
 class VideoGenerator:
     """PPT 视频生成器"""
 
@@ -33,13 +52,16 @@ class VideoGenerator:
         self.workspace_dir = Path(workspace_dir)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
-        # TTS 配置，优先使用传入的配置，fallback 到环境变量
+        # TTS 配置，优先使用传入的配置，fallback 到对应 provider 的默认值
         tts = tts_config or {}
-        self.tts_provider = tts.get('provider') or 'minimax-tts'
-        self.tts_api_key = tts.get('api_key') or os.environ.get('MIMO_API_KEY', '')
-        self.tts_base_url = tts.get('base_url') or 'https://api.xiaomimimo.com/v1'
-        self.tts_model = tts.get('model') or 'mimo-v2.5-tts'
-        self.tts_voice = tts.get('voice') or 'mimo_default'
+        self.tts_provider = tts.get('provider') or 'mimo-tts'
+        defaults = TTS_PROVIDER_DEFAULTS.get(self.tts_provider, TTS_PROVIDER_DEFAULTS['mimo-tts'])
+        self.tts_api_key = tts.get('api_key', '')
+        if not self.tts_api_key and self.tts_provider == 'mimo-tts':
+            self.tts_api_key = os.environ.get('MIMO_API_KEY', '')
+        self.tts_base_url = tts.get('base_url') or defaults['base_url']
+        self.tts_model = tts.get('model') or defaults['model']
+        self.tts_voice = tts.get('voice') or defaults['voice']
 
     def generate_video(
         self,
@@ -367,15 +389,16 @@ class VideoGenerator:
 
     def _generate_tts_audio(self, voiceover_text: str, voice: str = "") -> bytes:
         """根据 TTS provider 类型分发到对应的 API 实现"""
-        if self.tts_provider == 'minimax-tts':
-            return self._generate_minimax_tts(voiceover_text, voice)
-        elif self.tts_provider in ('openai-tts', 'glm-tts'):
+        if self.tts_provider == 'mimo-tts':
+            return self._generate_mimo_tts(voiceover_text, voice)
+        elif self.tts_provider == 'glm-tts':
+            return self._generate_glm_tts(voiceover_text, voice)
+        elif self.tts_provider == 'openai-tts':
             return self._generate_openai_tts(voiceover_text, voice)
         else:
-            # 默认尝试 MiniMax 格式
-            return self._generate_minimax_tts(voiceover_text, voice)
+            return self._generate_mimo_tts(voiceover_text, voice)
 
-    def _generate_minimax_tts(self, voiceover_text: str, voice: str = "") -> bytes:
+    def _generate_mimo_tts(self, voiceover_text: str, voice: str = "") -> bytes:
         """MiniMax TTS (MiMo): chat completions + audio 参数格式"""
         from openai import OpenAI
 
@@ -400,7 +423,7 @@ class VideoGenerator:
         return base64.b64decode(audio_data)
 
     def _generate_openai_tts(self, voiceover_text: str, voice: str = "") -> bytes:
-        """OpenAI / GLM TTS: /v1/audio/speech 端点格式"""
+        """OpenAI TTS: /v1/audio/speech 端点格式"""
         url = f"{self.tts_base_url.rstrip('/')}/audio/speech"
         headers = {
             "Authorization": f"Bearer {self.tts_api_key}",
@@ -412,9 +435,6 @@ class VideoGenerator:
             "voice": voice or self.tts_voice,
             "response_format": "wav",
         }
-        if self.tts_provider == 'glm-tts':
-            payload["speed"] = 1.0
-            payload["volume"] = 1.0
 
         resp = requests.post(url, json=payload, headers=headers, timeout=60)
         if not resp.ok:
@@ -422,6 +442,32 @@ class VideoGenerator:
             raise RuntimeError(f"TTS API 错误 ({resp.status_code}): {error_text}")
 
         return resp.content
+
+    def _generate_glm_tts(self, voiceover_text: str, voice: str = "") -> bytes:
+        """GLM TTS: 使用智谱官方 zai-sdk"""
+        import tempfile
+        from zai import ZhipuAiClient
+
+        client = ZhipuAiClient(api_key=self.tts_api_key)
+        response = client.audio.speech(
+            model=self.tts_model,
+            input=voiceover_text,
+            voice=voice or self.tts_voice,
+            response_format="wav",
+            speed=1.0,
+            volume=1.0,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            response.stream_to_file(tmp_path)
+            return Path(tmp_path).read_bytes()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _generate_audio(
         self,

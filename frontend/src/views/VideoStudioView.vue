@@ -47,10 +47,11 @@
         <div class="config-section">
           <label class="section-label">音色选择</label>
           <NSelect
-            v-model:value="selectedVoice"
+            :value="selectedVoice"
             :options="voiceOptions"
             placeholder="选择音色"
             size="large"
+            @update:value="onVoiceChange"
           />
         </div>
 
@@ -121,10 +122,11 @@
         <div class="config-section">
           <label class="section-label">音色选择</label>
           <NSelect
-            v-model:value="selectedVoice"
+            :value="selectedVoice"
             :options="voiceOptions"
             placeholder="选择音色"
             size="large"
+            @update:value="onVoiceChange"
           />
         </div>
       </div>
@@ -245,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { NSelect, useDialog, useMessage } from 'naive-ui'
 import {
@@ -281,22 +283,42 @@ const emptyDesc = computed(() =>
 const uploadFile = ref<File | null>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const selectedVoice = ref(videoStore.voice || settingStore.settings.tts_voice || 'mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 const dialog = useDialog()
 const message = useMessage()
 
-const voiceOptions = [
-  { label: '默认', value: 'mimo_default' },
-  { label: '冰糖', value: '冰糖' },
-  { label: '茉莉', value: '茉莉' },
-  { label: '苏打', value: '苏打' },
-  { label: '白桦', value: '白桦' },
-  { label: 'Mia', value: 'Mia' },
-  { label: 'Chloe', value: 'Chloe' },
-  { label: 'Milo', value: 'Milo' },
-  { label: 'Dean', value: 'Dean' },
-]
+const voiceOptions = computed(() => {
+  const provider = settingStore.ttsProviders[settingStore.settings.tts_provider]
+  if (provider?.voices?.length) {
+    return provider.voices.map((v) => ({ label: v.name, value: v.id }))
+  }
+  return [{ label: '默认', value: 'mimo_default' }]
+})
+
+const selectedVoice = ref('')
+
+function syncVoiceFromStore() {
+  const saved = settingStore.settings.tts_voice
+  const validIds = new Set(voiceOptions.value.map((o) => o.value))
+  if (saved && validIds.has(saved)) {
+    selectedVoice.value = saved
+  } else {
+    const provider = settingStore.ttsProviders[settingStore.settings.tts_provider]
+    selectedVoice.value = provider?.voices?.length ? provider.voices[0].id : 'mimo_default'
+  }
+}
+
+syncVoiceFromStore()
+
+// 设置页改了音色 → 同步到微课页面
+watch(() => settingStore.settings.tts_voice, () => syncVoiceFromStore())
+// TTS provider 变了 → 音色列表变了 → 重新选择有效音色
+watch(voiceOptions, () => syncVoiceFromStore())
+
+function onVoiceChange(v: string) {
+  selectedVoice.value = v
+  settingStore.updateSettings({ tts_voice: v })
+}
 
 onMounted(() => {
   refreshList()

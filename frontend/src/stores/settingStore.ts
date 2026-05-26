@@ -15,7 +15,7 @@ const DEFAULTS: ContentSettings = {
   content_provider: 'deepseek',
   ppt_model: 'deepseek-v4-flash',
   ppt_provider: 'deepseek',
-  tts_provider: 'minimax-tts',
+  tts_provider: 'mimo-tts',
   tts_model: 'mimo-v2.5-tts',
   tts_voice: 'mimo_default',
   ppt_default_style: 'education',
@@ -77,6 +77,10 @@ export const useSettingStore = defineStore('setting', () => {
     try {
       const data = await settingsApi.getSettings()
       settings.value = { ...DEFAULTS, ...data.settings }
+      // 兼容旧版本：minimax-tts → mimo-tts
+      if ((settings.value as Record<string, unknown>).tts_provider === 'minimax-tts') {
+        ;(settings.value as Record<string, unknown>).tts_provider = 'mimo-tts'
+      }
       options.value = data.options as Record<string, SettingsOption[]>
     } finally {
       loading.value = false

@@ -540,16 +540,24 @@ PROVIDERS = {
 # ==================== TTS Provider 注册表 ====================
 
 TTS_PROVIDERS = {
-    'minimax-tts': {
-        'id': 'minimax-tts',
+    'mimo-tts': {
+        'id': 'mimo-tts',
         'name': 'MiniMax TTS (MiMo)',
-        'type': 'minimax-tts',
+        'type': 'mimo-tts',
         'defaultBaseUrl': 'https://api.xiaomimimo.com/v1',
         'models': [
             {'id': 'mimo-v2.5-tts', 'name': 'MiMo V2.5 TTS'},
         ],
         'voices': [
-            {'id': 'mimo_default', 'name': '默认音色'},
+            {'id': 'mimo_default', 'name': '默认'},
+            {'id': '冰糖', 'name': '冰糖'},
+            {'id': '茉莉', 'name': '茉莉'},
+            {'id': '苏打', 'name': '苏打'},
+            {'id': '白桦', 'name': '白桦'},
+            {'id': 'Mia', 'name': 'Mia'},
+            {'id': 'Chloe', 'name': 'Chloe'},
+            {'id': 'Milo', 'name': 'Milo'},
+            {'id': 'Dean', 'name': 'Dean'},
         ],
         'requiresApiKey': True,
     },
@@ -605,7 +613,9 @@ if os.environ.get('MINIMAX_API_KEY'):
 if os.environ.get('DEEPSEEK_API_KEY'):
     SERVER_API_KEYS['deepseek'] = os.environ['DEEPSEEK_API_KEY']
 if os.environ.get('MIMO_API_KEY'):
-    SERVER_API_KEYS['minimax-tts'] = os.environ['MIMO_API_KEY']
+    SERVER_API_KEYS['mimo-tts'] = os.environ['MIMO_API_KEY']
+if os.environ.get('ZHIPU_API_KEY'):
+    SERVER_API_KEYS['glm-tts'] = os.environ['ZHIPU_API_KEY']
 
 
 def _get_provider_for_model(model_id: str):
@@ -708,14 +718,14 @@ def tts_test():
             if resp.status_code == 200:
                 import base64 as b64
                 audio_b64 = b64.b64encode(resp.content).decode('utf-8')
-                return jsonify({'success': True, 'audio': audio_b64, 'format': 'mp3'})
+                return jsonify({'success': True, 'audio': audio_b64, 'format': 'wav'})
             error_data = _safe_json(resp)
             msg = error_data.get('error', {}).get('message', '') or resp.text[:500]
             return jsonify({'success': False, 'message': msg})
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)})
 
-    if provider_id == 'minimax-tts':
+    if provider_id == 'mimo-tts':
         try:
             from openai import OpenAI as OpenAIClient
             client = OpenAIClient(api_key=api_key, base_url=base_url)
@@ -766,7 +776,7 @@ def verify_model():
     try:
         if provider_type == 'minimax':
             return _verify_minimax(api_key, base_url, model_id)
-        elif provider_type == 'minimax-tts':
+        elif provider_type == 'mimo-tts':
             return _verify_minimax_tts(api_key, base_url, model_id)
         elif provider_type == 'openai-tts':
             return _verify_openai_tts(api_key, base_url, model_id, provider_id)
@@ -977,7 +987,7 @@ DEFAULT_SETTINGS = {
     'content_provider': 'deepseek',
     'ppt_model': 'deepseek-v4-flash',
     'ppt_provider': 'deepseek',
-    'tts_provider': 'minimax-tts',
+    'tts_provider': 'mimo-tts',
     'tts_model': 'mimo-v2.5-tts',
     'tts_voice': 'mimo_default',
 }
@@ -1975,7 +1985,7 @@ def ppt_video_generate():
     tts_provider = data.get('tts_provider', '')
     voice = data.get('voice', '')
     # 根据 provider 强制使用正确音色
-    default_voices = {'minimax-tts': 'mimo_default', 'openai-tts': 'alloy', 'glm-tts': 'tongtong'}
+    default_voices = {'mimo-tts': 'mimo_default', 'openai-tts': 'alloy', 'glm-tts': 'tongtong'}
     valid_voices = {v['id'] for v in TTS_PROVIDERS.get(tts_provider, {}).get('voices', [])}
     if not voice or voice not in valid_voices:
         voice = default_voices.get(tts_provider, 'mimo_default')
@@ -2018,11 +2028,16 @@ def ppt_video_generate():
             memory = get_memory_manager()
             config = memory.get_config()
             saved_settings = config.get('content_settings', {})
+            # 兼容旧版本：minimax-tts → mimo-tts
+            saved_tts_provider = saved_settings.get('tts_provider', '')
+            if saved_tts_provider == 'minimax-tts':
+                saved_tts_provider = 'mimo-tts'
+
             tts_config = {
-                'provider': tts_provider or saved_settings.get('tts_provider') or 'minimax-tts',
-                'api_key': tts_api_key or os.environ.get('MIMO_API_KEY', ''),
-                'base_url': tts_base_url or saved_settings.get('tts_base_url') or '',
-                'model': tts_model or saved_settings.get('tts_model') or 'mimo-v2.5-tts',
+                'provider': tts_provider or saved_tts_provider or 'mimo-tts',
+                'api_key': tts_api_key,
+                'base_url': tts_base_url or saved_settings.get('tts_base_url') or TTS_PROVIDERS.get(tts_provider, {}).get('defaultBaseUrl', ''),
+                'model': tts_model or saved_settings.get('tts_model') or (TTS_PROVIDERS.get(tts_provider, {}).get('models', [{}])[0].get('id', '')),
                 'voice': voice,
             }
             video_workspace = _user_output_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
