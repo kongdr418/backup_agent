@@ -667,6 +667,73 @@ def get_tts_providers():
     return jsonify({'providers': result})
 
 
+@app.route('/api/tts-test', methods=['POST'])
+def tts_test():
+    """实际 TTS 测试：合成语音并返回 base64 音频"""
+    data = request.json
+    if not data:
+        return jsonify({'success': False, 'message': '请求数据为空'}), 400
+    provider_id = data.get('providerId', '')
+    api_key = data.get('apiKey', '')
+    base_url = data.get('baseUrl', '')
+    model = data.get('model', '')
+    voice = data.get('voice', '')
+    text = data.get('text', '')
+    if not text.strip():
+        return jsonify({'success': False, 'message': '请输入测试文本'}), 400
+    provider = TTS_PROVIDERS.get(provider_id)
+    if not base_url and provider:
+        base_url = provider.get('defaultBaseUrl', '')
+    if not base_url:
+        return jsonify({'success': False, 'message': '无法确定 API 地址'}), 400
+    if not api_key:
+        return jsonify({'success': False, 'message': '请填写 API Key'}), 400
+
+    if provider_id in ('openai-tts', 'glm-tts'):
+        try:
+            url = f"{base_url.rstrip('/')}/audio/speech"
+            headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+            payload = {
+                'model': model or 'tts-1',
+                'input': text,
+                'voice': voice or 'alloy',
+                'response_format': 'mp3',
+            }
+            if provider_id == 'glm-tts':
+                payload['voice'] = voice or 'tongtong'
+                payload['speed'] = 1.0
+                payload['volume'] = 1.0
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                import base64 as b64
+                audio_b64 = b64.b64encode(resp.content).decode('utf-8')
+                return jsonify({'success': True, 'audio': audio_b64, 'format': 'mp3'})
+            error_data = _safe_json(resp)
+            msg = error_data.get('error', {}).get('message', '') or resp.text[:500]
+            return jsonify({'success': False, 'message': msg})
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
+    if provider_id == 'minimax-tts':
+        try:
+            from openai import OpenAI as OpenAIClient
+            client = OpenAIClient(api_key=api_key, base_url=base_url)
+            response = client.chat.completions.create(
+                model=model or 'mimo-v2.5-tts',
+                messages=[
+                    {'role': 'user', 'content': '请朗读以下内容'},
+                    {'role': 'assistant', 'content': text},
+                ],
+                audio={'format': 'mp3', 'voice': voice or 'mimo_default'},
+            )
+            audio_data = response.choices[0].message.audio.data
+            return jsonify({'success': True, 'audio': audio_data, 'format': 'mp3'})
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
+    return jsonify({'success': False, 'message': f'不支持的 TTS 类型: {provider_id}'})
+
+
 @app.route('/api/verify-model', methods=['POST'])
 def verify_model():
     """验证模型连接 - 发送测试消息确认 API Key 可用"""
@@ -701,7 +768,7 @@ def verify_model():
         elif provider_type == 'minimax-tts':
             return _verify_minimax_tts(api_key, base_url, model_id)
         elif provider_type == 'openai-tts':
-            return _verify_openai_tts(api_key, base_url, model_id)
+            return _verify_openai_tts(api_key, base_url, model_id, provider_id)
         elif provider_type == 'anthropic':
             return _verify_anthropic(api_key, base_url, model_id)
         else:
@@ -833,16 +900,21 @@ def _safe_json(resp):
         return {}
 
 
-def _verify_openai_tts(api_key: str, base_url: str, model_id: str):
+def _verify_openai_tts(api_key: str, base_url: str, model_id: str, provider_id: str = ''):
     """验证 OpenAI TTS / GLM TTS — /audio/speech 端点"""
     url = f"{base_url.rstrip('/')}/audio/speech"
     headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    voice = 'alloy'
     payload = {
         'model': model_id,
         'input': 'OK',
-        'voice': 'alloy',
+        'voice': voice,
         'response_format': 'mp3',
     }
+    if provider_id == 'glm-tts':
+        payload['voice'] = 'tongtong'
+        payload['speed'] = 1.0
+        payload['volume'] = 1.0
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=15)
         if resp.status_code == 200:
