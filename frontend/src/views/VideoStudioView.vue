@@ -281,7 +281,7 @@ const emptyDesc = computed(() =>
 const uploadFile = ref<File | null>(null)
 const isDragover = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const selectedVoice = ref(videoStore.voice || 'mimo_default')
+const selectedVoice = ref(videoStore.voice || settingStore.settings.tts_voice || 'mimo_default')
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 const dialog = useDialog()
 const message = useMessage()

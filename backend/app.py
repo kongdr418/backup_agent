@@ -703,6 +703,7 @@ def tts_test():
                 payload['voice'] = voice or 'tongtong'
                 payload['speed'] = 1.0
                 payload['volume'] = 1.0
+                payload['response_format'] = 'wav'
             resp = requests.post(url, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 import base64 as b64
@@ -915,8 +916,9 @@ def _verify_openai_tts(api_key: str, base_url: str, model_id: str, provider_id: 
         payload['voice'] = 'tongtong'
         payload['speed'] = 1.0
         payload['volume'] = 1.0
+        payload['response_format'] = 'wav'
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        resp = requests.post(url, json=payload, headers=headers, timeout=30)
         if resp.status_code == 200:
             return jsonify({'success': True, 'message': '连接成功'})
         elif resp.status_code == 401 or resp.status_code == 403:
@@ -1970,8 +1972,13 @@ def ppt_video_generate():
     # 获取 PPTX 路径
     pptx_path = data.get('pptx_path')
     topic = data.get('topic')
-    voice = data.get('voice', 'mimo_default')
     tts_provider = data.get('tts_provider', '')
+    voice = data.get('voice', '')
+    # 根据 provider 强制使用正确音色
+    default_voices = {'minimax-tts': 'mimo_default', 'openai-tts': 'alloy', 'glm-tts': 'tongtong'}
+    valid_voices = {v['id'] for v in TTS_PROVIDERS.get(tts_provider, {}).get('voices', [])}
+    if not voice or voice not in valid_voices:
+        voice = default_voices.get(tts_provider, 'mimo_default')
     tts_api_key = data.get('tts_api_key', '')
     tts_base_url = data.get('tts_base_url', '')
     tts_model = data.get('tts_model', '')
