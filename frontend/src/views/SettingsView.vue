@@ -140,6 +140,20 @@
               <label class="text-sm font-medium text-ink-2">音色</label>
               <n-select v-model:value="settings.tts_voice" :options="ttsVoiceOptions" size="small" class="max-w-md" @update:value="onUpdate('tts_voice', $event)" />
             </div>
+            <!-- TTS 测试 -->
+            <div class="space-y-2 pt-3 border-t border-line/30 px-5 pb-5">
+              <label class="text-sm font-medium text-ink-2">TTS 测试</label>
+              <div class="flex items-start gap-2">
+                <n-input v-model:value="ttsTestText" placeholder="输入要合成的文本..." size="small" class="flex-1 max-w-sm" @keyup.enter="onTestTtsPlay" />
+                <button class="btn-outline" :disabled="ttsTesting || !ttsTestText.trim() || (!ttsConfigValue.apiKey && !ttsProvider?.isServerConfigured)" @click="onTestTtsPlay">
+                  <Loader2 v-if="ttsTesting" class="w-3.5 h-3.5 animate-spin" /><Volume2 v-else class="w-3.5 h-3.5" />{{ ttsTesting ? '合成中...' : '播放' }}
+                </button>
+              </div>
+              <audio ref="ttsAudioRef" :src="ttsAudioUrl" style="display:none" @ended="ttsAudioUrl = null" />
+              <div v-if="ttsTestResult" class="result-card" :class="ttsTestResult.success ? 'result-success' : 'result-error'">
+                <CheckCircle2 v-if="ttsTestResult.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ ttsTestResult.message }}</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -171,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref } from 'vue'
+import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { NSelect, NRadioGroup, NRadioButton, NInput, useMessage } from 'naive-ui'
 import { MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -296,6 +310,46 @@ async function onTestModuleConnection(m: ModuleKey) {
   } catch (e) { verifyResults[m] = { success: false, message: e instanceof Error ? e.message : '验证失败' } }
   finally { verifying[m] = false }
 }
+// ─── TTS 测试 ───
+const ttsTestText = ref('你好，这是一段测试语音')
+const ttsTesting = ref(false)
+const ttsTestResult = ref<{ success: boolean; message: string } | null>(null)
+const ttsAudioUrl = ref<string | null>(null)
+const ttsAudioRef = ref<HTMLAudioElement | null>(null)
+
+async function onTestTtsPlay() {
+  if (!ttsTestText.value.trim()) return
+  ttsTesting.value = true; ttsTestResult.value = null; ttsAudioUrl.value = null
+  try {
+    const resp = await fetch('/api/tts-test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: settings.value.tts_provider,
+        apiKey: ttsConfigValue.value.apiKey,
+        baseUrl: ttsConfigValue.value.baseUrl || ttsProvider.value?.defaultBaseUrl,
+        model: settings.value.tts_model,
+        voice: settings.value.tts_voice,
+        text: ttsTestText.value,
+      }),
+    })
+    const data = await resp.json()
+    if (data.success && data.audio) {
+      const byteChars = atob(data.audio); const bytes = new Uint8Array(byteChars.length)
+      for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i)
+      const url = URL.createObjectURL(new Blob([bytes], { type: `audio/${data.format || 'mp3'}` }))
+      const audio = new Audio(url); audio.play().catch(() => {})
+      ttsAudioUrl.value = url
+      ttsTestResult.value = { success: true, message: '合成成功' }
+    } else {
+      ttsTestResult.value = { success: false, message: data.message || '合成失败' }
+    }
+  } catch (e) {
+    ttsTestResult.value = { success: false, message: e instanceof Error ? e.message : '请求失败' }
+  } finally { ttsTesting.value = false }
+}
+
+watch(ttsAudioUrl, async (url) => { if (url) { await nextTick(); if (ttsAudioRef.value) { ttsAudioRef.value.play().catch(() => {}) } } })
+
 onMounted(() => { store.fetchSettings().catch(() => {}); store.fetchProviders().catch(() => {}); store.fetchTTSProviders().catch(() => {}) })
 </script>
 
