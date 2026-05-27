@@ -23,7 +23,7 @@
             @click="triggerUpload"
           >
             <input
-              ref="fileInputRef"
+              ref="mobileFileInputRef"
               type="file"
               accept=".pptx"
               class="hidden"
@@ -98,7 +98,7 @@
             @click="triggerUpload"
           >
             <input
-              ref="fileInputRef"
+              ref="desktopFileInputRef"
               type="file"
               accept=".pptx"
               class="hidden"
@@ -282,7 +282,8 @@ const emptyDesc = computed(() =>
 )
 const uploadFile = ref<File | null>(null)
 const isDragover = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
+const mobileFileInputRef = ref<HTMLInputElement | null>(null)
+const desktopFileInputRef = ref<HTMLInputElement | null>(null)
 const videos = ref<{ id: string; name: string; path: string; size: number; created: string }[]>([])
 const dialog = useDialog()
 const message = useMessage()
@@ -348,7 +349,9 @@ function onResize() {
 }
 
 function triggerUpload() {
-  fileInputRef.value?.click()
+  // 使用当前可见区域的 file input
+  const ref = isMobile.value ? mobileFileInputRef : desktopFileInputRef
+  ref.value?.click()
 }
 
 function onFileSelect(e: Event) {
@@ -368,9 +371,8 @@ function onDrop(e: DragEvent) {
 
 function clearFile() {
   uploadFile.value = null
-  if (fileInputRef.value) {
-    fileInputRef.value.value = ''
-  }
+  if (mobileFileInputRef.value) mobileFileInputRef.value.value = ''
+  if (desktopFileInputRef.value) desktopFileInputRef.value.value = ''
 }
 
 function hoverVideo(e: Event) {
@@ -417,6 +419,7 @@ async function onGenerate() {
     await doGenerate(data.path)
   } catch (e) {
     videoStore.clearActiveJob()
+    message.error(e instanceof Error ? e.message : '文件上传失败')
   }
 }
 
@@ -436,6 +439,10 @@ async function doGenerate(pptxPath: string) {
         tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
         tts_model: settingStore.settings.tts_model,
         tts_provider: settingStore.settings.tts_provider,
+        content_model: settingStore.settings.content_model,
+        content_api_key: settingStore.getEffectiveContentApiKey(),
+        content_base_url: settingStore.getEffectiveContentBaseUrl(),
+        content_provider_type: settingStore.getContentProviderType(),
         user_id: getUserId(),
       }),
     })
@@ -453,14 +460,15 @@ async function doGenerate(pptxPath: string) {
       () => {
         message.success('视频生成完成')
         refreshList()
-        uploadFile.value = null
+        clearFile()
       },
       (errMsg) => {
         message.error('生成失败: ' + errMsg)
       },
     )
-  } catch {
+  } catch (e) {
     videoStore.clearActiveJob()
+    message.error(e instanceof Error ? e.message : '启动生成失败')
   }
 }
 

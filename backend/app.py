@@ -1979,6 +1979,9 @@ def ppt_video_generate():
     data = request.json or {}
     user_id = get_request_user_id()
 
+    # 同步内容生成模型配置到 shared_config（LLM 讲稿生成需要）
+    _apply_content_llm_config(data)
+
     # 获取 PPTX 路径
     pptx_path = data.get('pptx_path')
     topic = data.get('topic')
