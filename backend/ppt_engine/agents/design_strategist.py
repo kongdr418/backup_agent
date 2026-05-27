@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ppt_engine.config import CANVAS_FORMATS, DESIGN_STYLES
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
+from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_strategy_guidance
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "design_strategist.md"
 DESIGN_SPEC_MAX_TOKENS = 24576
@@ -17,23 +18,6 @@ _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
 
 def _count_manuscript_pages(manuscript: str) -> int:
     return len([p.strip() for p in _SLIDE_DELIMITER_RE.split(manuscript) if p.strip()])
-
-
-def _is_deepseek(llm: LLMProvider, model: str) -> bool:
-    model_id = (model or "").lower()
-    if model_id.startswith("deepseek"):
-        return True
-    provider_name = str(getattr(llm, "_provider_name", "") or "").lower()
-    if provider_name == "deepseek":
-        return True
-    base_url = str(getattr(llm, "_base_url", "") or "").lower()
-    if "api.deepseek.com" in base_url:
-        return True
-    try:
-        info = llm.get_provider_info()
-        return getattr(info, "name", "").lower() == "deepseek"
-    except Exception:
-        return False
 
 
 def _design_spec_validation_error(content: str) -> str | None:
@@ -63,22 +47,6 @@ def _language_constraint(language: str) -> str:
     if normalized == "bilingual":
         return "Page titles and core bullets may include both Chinese and English."
     return f"All visible slide text must be in {language}."
-
-
-def _deepseek_strategy_guidance(detail_level: str) -> str:
-    if detail_level != "very_high":
-        return (
-            "## DeepSeek Calibration\n\n"
-            "将手稿内容转化为具体的布局计划。不要将丰富的幻灯片简化为装饰性标签。"
-        )
-    return (
-        "## DeepSeek Calibration\n\n"
-        "对于 `very_high` 详细程度，设计规范必须保留手稿的分析深度：\n"
-        "- 在第九节中，每个非封面页必须列出要渲染的具体内容块。\n"
-        "- 保留手稿中的原理、证据/数据和结论。\n"
-        "- 避免纯标签式幻灯片，使用标签仅作为有意义的分类。\n"
-        "- 优先使用 3-5 个可读的内容块，而不是许多小碎片。"
-    )
 
 
 async def create_design_spec(
@@ -124,8 +92,8 @@ async def create_design_spec(
         f"- {_language_constraint(language)}",
     ]
 
-    if _is_deepseek(llm, model):
-        user_parts.append("\n" + _deepseek_strategy_guidance(detail_level))
+    if is_deepseek_provider(llm, model):
+        user_parts.append("\n" + deepseek_strategy_guidance(detail_level))
 
     if style_overrides:
         override_lines = ["\n## Style Overrides (must override defaults)"]

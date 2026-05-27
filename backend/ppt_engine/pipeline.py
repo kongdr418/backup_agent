@@ -20,7 +20,7 @@ from pathlib import Path
 from ppt_engine.agents.content_planner import plan_content
 from ppt_engine.agents.design_strategist import create_design_spec
 from ppt_engine.agents.svg_executor import generate_svg_pages
-from ppt_engine.config import DESIGN_STYLES, WORKSPACES_DIR, get_deepseek_api_key
+from ppt_engine.config import DESIGN_STYLES, WORKSPACES_DIR, get_deepseek_api_key, VISUAL_CRITIC_ENABLED, VISUAL_CRITIC_MODEL, DEEP_RESEARCH_ENABLED, DEEP_RESEARCH_QUALITY_THRESHOLD, DEEP_RESEARCH_MAX_ATTEMPTS
 from ppt_engine.llm.deepseek_provider import DeepSeekProvider
 from ppt_engine.llm.anthropic_provider import AnthropicProvider
 from ppt_engine.llm.base import LLMProvider
@@ -76,6 +76,9 @@ class PPTPipeline:
         style: str = "education",
         canvas_format: str = "ppt169",
         style_overrides: dict | None = None,
+        deep_research: bool = False,
+        visual_critic: bool = False,
+        template_id: str | None = None,
     ) -> AsyncIterator[PipelineEvent]:
         """Generate a PPT from a course topic.
 
@@ -103,6 +106,15 @@ class PPTPipeline:
 
         style_info = DESIGN_STYLES.get(style, DESIGN_STYLES["education"])
 
+        # Load template layout pack if specified
+        layout_pack = None
+        if template_id:
+            from ppt_engine.template_import.persistence import load_template_pack
+            layout_pack = load_template_pack(template_id)
+            if layout_pack is None:
+                yield PipelineEvent("init", "error", f"模板 '{template_id}' 不存在", 0.0)
+                return
+
         yield PipelineEvent(
             "init", "started",
             f"开始生成: {topic}",
@@ -127,12 +139,32 @@ class PPTPipeline:
             # ── Stage 1: Content Planning (0% → 15%) ──
             yield PipelineEvent("content_planning", "started", "正在规划课程内容...", 0.05)
 
-            manuscript = await plan_content(
-                topic, llm, model,
-                language=language,
-                num_slides=num_slides,
-                detail_level=detail_level,
-            )
+            if deep_research:
+                from ppt_engine.agents.research_agent import run_deep_research
+                manuscript = None
+                async for event in run_deep_research(
+                    topic, llm, model,
+                    language=language,
+                    num_slides=num_slides,
+                    detail_level=detail_level,
+                    debug_dir=project_dir / "debug",
+                ):
+                    if event.stage == "research_complete" and event.data:
+                        manuscript = event.data.get("manuscript")
+                    else:
+                        yield PipelineEvent(
+                            event.stage, event.status, event.message, event.progress, event.data
+                        )
+                if manuscript is None:
+                    yield PipelineEvent("error", "error", "深度研究未生成手稿", 0.0)
+                    return
+            else:
+                manuscript = await plan_content(
+                    topic, llm, model,
+                    language=language,
+                    num_slides=num_slides,
+                    detail_level=detail_level,
+                )
             (project_dir / "manuscript.md").write_text(manuscript, encoding="utf-8")
 
             slide_count = len([p for p in manuscript.split("---") if p.strip()])
@@ -146,17 +178,20 @@ class PPTPipeline:
             # ── Stage 2: Design Strategy (15% → 30%) ──
             yield PipelineEvent("design", "started", "正在生成设计规范...", 0.15)
 
-            design_spec = await create_design_spec(
-                manuscript, llm, model,
-                canvas_format=canvas_format,
-                style=style,
-                language=language,
-                detail_level=detail_level,
-                style_overrides=style_overrides,
-            )
+            if layout_pack and layout_pack.design_spec and len(layout_pack.design_spec) >= 500:
+                design_spec = layout_pack.design_spec
+                yield PipelineEvent("design", "complete", "使用模板设计规范", 0.25)
+            else:
+                design_spec = await create_design_spec(
+                    manuscript, llm, model,
+                    canvas_format=canvas_format,
+                    style=style,
+                    language=language,
+                    detail_level=detail_level,
+                    style_overrides=style_overrides,
+                )
+                yield PipelineEvent("design", "complete", "设计规范生成完成", 0.30)
             (project_dir / "design_spec.md").write_text(design_spec, encoding="utf-8")
-
-            yield PipelineEvent("design", "complete", "设计规范生成完成", 0.30)
 
             # ── Stage 3: SVG Generation (30% → 75%) ──
             yield PipelineEvent("svg_generation", "started", "正在逐页生成 SVG...", 0.30)
@@ -171,6 +206,7 @@ class PPTPipeline:
                 style=style,
                 language=language,
                 detail_level=detail_level,
+                template_svgs=layout_pack.svgs if layout_pack else None,
             ):
                 svg_pages.append((page_num, svg_content))
                 completed_pages += 1

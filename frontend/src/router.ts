@@ -47,6 +47,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('./views/MemoryView.vue'),
         meta: { title: '记忆' },
       },
+      {
+        path: 'templates',
+        name: 'templates',
+        component: () => import('./views/TemplatesView.vue'),
+        meta: { title: '模板管理' },
+      },
     ],
   },
 ]

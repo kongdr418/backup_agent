@@ -99,3 +99,12 @@ def get_deepseek_api_key() -> str | None:
 
 # SVG generation concurrency
 SVG_MAX_CONCURRENCY = 4
+
+# Visual Critic settings
+VISUAL_CRITIC_ENABLED = False
+VISUAL_CRITIC_MODEL = "deepseek-v4-pro"
+
+# Deep Research settings
+DEEP_RESEARCH_ENABLED = False
+DEEP_RESEARCH_QUALITY_THRESHOLD = 28  # 7x5=35 满分
+DEEP_RESEARCH_MAX_ATTEMPTS = 3

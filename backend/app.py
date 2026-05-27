@@ -125,6 +125,11 @@ def _apply_content_llm_config(data: dict):
     content_api_key = data.get('content_api_key', '')
     content_base_url = data.get('content_base_url', '')
     content_provider_type = data.get('content_provider_type', '')
+    # 服务端 API Key 回退
+    if not content_api_key and content_model:
+        pid, _, _ = _get_provider_for_model(content_model)
+        if pid and pid in SERVER_API_KEYS:
+            content_api_key = SERVER_API_KEYS[pid]
     if content_model or content_api_key or content_base_url or content_provider_type:
         try:
             from generators.shared_config import set_content_llm_config
@@ -194,6 +199,12 @@ def chat():
     base_url = data.get('base_url', '')
     provider_type = data.get('provider_type', '')
 
+    # 服务端 API Key 回退
+    if not api_key:
+        pid, _, _ = _get_provider_for_model(model)
+        if pid and pid in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[pid]
+
     # 内容生成模型配置（用于讲稿、大纲、习题等生成器）
     _apply_content_llm_config(data)
 
@@ -238,6 +249,12 @@ def chat_stream():
     api_key = data.get('api_key', '')
     base_url = data.get('base_url', '')
     provider_type = data.get('provider_type', '')
+
+    # 服务端 API Key 回退
+    if not api_key:
+        pid, _, _ = _get_provider_for_model(model)
+        if pid and pid in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[pid]
 
     # 内容生成模型配置（用于讲稿、大纲、习题等生成器）
     _apply_content_llm_config(data)
@@ -535,6 +552,17 @@ PROVIDERS = {
         ],
         'requiresApiKey': True,
     },
+    'mimo': {
+        'id': 'mimo',
+        'name': '小米 MiMo',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://api.xiaomimimo.com/v1',
+        'models': [
+            {'id': 'mimo-v2.5-pro', 'name': 'MiMo V2.5 Pro', 'contextWindow': 1048576, 'maxOutput': 131072},
+            {'id': 'mimo-v2.5', 'name': 'MiMo V2.5 Omni', 'contextWindow': 1048576, 'maxOutput': 131072},
+        ],
+        'requiresApiKey': True,
+    },
 }
 
 # ==================== TTS Provider 注册表 ====================
@@ -542,7 +570,7 @@ PROVIDERS = {
 TTS_PROVIDERS = {
     'mimo-tts': {
         'id': 'mimo-tts',
-        'name': 'MiniMax TTS (MiMo)',
+        'name': '小米 MiMo TTS',
         'type': 'mimo-tts',
         'defaultBaseUrl': 'https://api.xiaomimimo.com/v1',
         'models': [
@@ -613,6 +641,7 @@ if os.environ.get('MINIMAX_API_KEY'):
 if os.environ.get('DEEPSEEK_API_KEY'):
     SERVER_API_KEYS['deepseek'] = os.environ['DEEPSEEK_API_KEY']
 if os.environ.get('MIMO_API_KEY'):
+    SERVER_API_KEYS['mimo'] = os.environ['MIMO_API_KEY']
     SERVER_API_KEYS['mimo-tts'] = os.environ['MIMO_API_KEY']
 if os.environ.get('ZHIPU_API_KEY'):
     SERVER_API_KEYS['glm-tts'] = os.environ['ZHIPU_API_KEY']
@@ -696,6 +725,8 @@ def tts_test():
         base_url = provider.get('defaultBaseUrl', '')
     if not base_url:
         return jsonify({'success': False, 'message': '无法确定 API 地址'}), 400
+    if not api_key and provider_id in SERVER_API_KEYS:
+        api_key = SERVER_API_KEYS[provider_id]
     if not api_key:
         return jsonify({'success': False, 'message': '请填写 API Key'}), 400
 
@@ -1732,6 +1763,16 @@ def ppt_svg_generate():
     model = data.get('model', 'deepseek-v4-flash')
     api_key = data.get('api_key')
     base_url = data.get('base_url')
+
+    # 服务端 API Key 回退
+    if not api_key:
+        pid, _, _ = _get_provider_for_model(model)
+        if pid and pid in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[pid]
+
+    deep_research = data.get('deep_research', False)
+    visual_critic = data.get('visual_critic', False)
+    template_id = data.get('template_id')
     user_id = get_request_user_id()
 
     if not topic:
@@ -1753,6 +1794,9 @@ def ppt_svg_generate():
             num_slides=num_slides,
             style=style,
             detail_level=detail_level,
+            deep_research=deep_research,
+            visual_critic=visual_critic,
+            template_id=template_id,
         ))
 
         try:
@@ -2186,6 +2230,228 @@ def ppt_video_clear():
 
     request_logger.info(f'[PPT-VIDEO] 已清空 {deleted} 个视频目录')
     return jsonify({'success': True, 'deleted_count': deleted, 'errors': errors})
+
+
+# ==================== Template Import API ====================
+
+import asyncio
+import uuid as _uuid
+
+def _run_async(coro):
+    """Run an async coroutine from sync Flask context."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+@app.route('/api/templates/upload', methods=['POST'])
+def template_upload():
+    """Upload a PPTX file and start template import."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+    file = request.files['file']
+    if not file.filename or not file.filename.lower().endswith('.pptx'):
+        return jsonify({'success': False, 'error': 'Only .pptx files are supported'}), 400
+
+    import_id = _uuid.uuid4().hex[:12]
+    upload_dir = os.path.join(BACKEND_DIR, 'generated_svg_ppt', 'template_imports', import_id)
+    os.makedirs(upload_dir, exist_ok=True)
+    pptx_path = os.path.join(upload_dir, file.filename)
+    file.save(pptx_path)
+
+    label = request.form.get('label') or request.args.get('label')
+    model_config = None
+
+    try:
+        from ppt_engine.template_import import initialize_import, run_import
+        from pathlib import Path as _Path
+
+        template_id = initialize_import(import_id, _Path(pptx_path), label=label)
+        result = _run_async(run_import(import_id, _Path(pptx_path), label=label, model_config=model_config))
+        return jsonify({
+            'success': True,
+            'import_id': import_id,
+            'template_id': template_id,
+            'status': result.status,
+            'stage': result.stage,
+            'progress': result.progress,
+            'message': result.message,
+            'slide_count': result.slide_count,
+            'export_mode': result.export_mode,
+            'review_required': result.review_required,
+            'steps': result.steps,
+        })
+    except Exception as e:
+        request_logger.error(f'[TEMPLATE-UPLOAD] Error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/import/<import_id>', methods=['GET'])
+def template_import_status(import_id):
+    """Get import task status."""
+    try:
+        from ppt_engine.template_import import get_status
+        state = get_status(import_id)
+        if state is None:
+            return jsonify({'success': False, 'error': 'Import not found'}), 404
+        return jsonify({'success': True, **state})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/import/<import_id>/review', methods=['GET', 'PUT'])
+def template_import_review(import_id):
+    """Get or update the review draft."""
+    try:
+        from ppt_engine.template_import import get_review, update_review
+        if request.method == 'GET':
+            review = get_review(import_id)
+            if review is None:
+                return jsonify({'success': False, 'error': 'Import not found'}), 404
+            return jsonify({'success': True, **dict(review)})
+        else:
+            data = request.json or {}
+            review = update_review(import_id, data)
+            return jsonify({'success': True, **dict(review)})
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': 'Import not found'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/import/<import_id>/assist', methods=['POST'])
+def template_import_assist(import_id):
+    """Request LLM assistance for the import."""
+    try:
+        from ppt_engine.template_import import get_status, persistence as _pers
+        from ppt_engine.template_import.llm_client import LLMClient, merge_llm_plan
+        from ppt_engine.template_import.types import PipelineContext
+        from pathlib import Path as _Path
+
+        state = get_status(import_id)
+        if state is None:
+            return jsonify({'success': False, 'error': 'Import not found'}), 404
+
+        data = request.json or {}
+        feedback = data.get('feedback')
+
+        review = _pers.read_review(import_id)
+        if review is None:
+            return jsonify({'success': False, 'error': 'Review not found'}), 404
+
+        pptx_path = _Path(state.get('source_file', ''))
+        work_dir = _Path(os.path.join(BACKEND_DIR, 'generated_svg_ppt', 'template_imports', import_id))
+        ctx = PipelineContext(
+            import_id=import_id, work_dir=work_dir,
+            pptx_path=pptx_path, label=state.get('label', ''),
+            model_config={},
+        )
+
+        client = LLMClient(ctx)
+        plan, entry = _run_async(client.assist(ctx, review, {}, feedback))
+        merge_llm_plan(review, plan)
+        _pers.write_review(import_id, review)
+
+        return jsonify({
+            'success': True,
+            'action_plan': plan.model_dump(),
+            'changed': entry.get('changed', False),
+        })
+    except Exception as e:
+        request_logger.error(f'[TEMPLATE-ASSIST] Error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/import/<import_id>/feedback', methods=['POST'])
+def template_import_feedback(import_id):
+    """Submit user feedback for LLM-assisted import."""
+    try:
+        from ppt_engine.template_import import get_status, persistence as _pers
+        from ppt_engine.template_import.llm_client import LLMClient, merge_llm_plan
+        from ppt_engine.template_import.types import PipelineContext
+        from pathlib import Path as _Path
+
+        state = get_status(import_id)
+        if state is None:
+            return jsonify({'success': False, 'error': 'Import not found'}), 404
+
+        data = request.json or {}
+        feedback = data.get('feedback', '')
+
+        review = _pers.read_review(import_id)
+        if review is None:
+            return jsonify({'success': False, 'error': 'Review not found'}), 404
+
+        pptx_path = _Path(state.get('source_file', ''))
+        work_dir = _Path(os.path.join(BACKEND_DIR, 'generated_svg_ppt', 'template_imports', import_id))
+        ctx = PipelineContext(
+            import_id=import_id, work_dir=work_dir,
+            pptx_path=pptx_path, label=state.get('label', ''),
+            model_config={},
+        )
+
+        client = LLMClient(ctx)
+        plan, entry = _run_async(client.assist(ctx, review, {}, feedback))
+        merge_llm_plan(review, plan)
+        _pers.write_review(import_id, review)
+
+        return jsonify({
+            'success': True,
+            'action_plan': plan.model_dump(),
+            'changed': entry.get('changed', False),
+        })
+    except Exception as e:
+        request_logger.error(f'[TEMPLATE-FEEDBACK] Error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/import/<import_id>/confirm', methods=['POST'])
+def template_import_confirm(import_id):
+    """Confirm and install the template."""
+    try:
+        from ppt_engine.template_import import confirm_import
+        result = _run_async(confirm_import(import_id))
+        return jsonify({
+            'success': True,
+            'template_id': result.template_id,
+            'label': result.label,
+            'status': result.status,
+            'message': result.message,
+            'slide_count': result.slide_count,
+        })
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': 'Import not found'}), 404
+    except Exception as e:
+        request_logger.error(f'[TEMPLATE-CONFIRM] Error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/list', methods=['GET'])
+def template_list():
+    """List all user templates."""
+    try:
+        from ppt_engine.template_import import list_user_templates
+        templates = list_user_templates()
+        return jsonify({'success': True, 'templates': templates})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/<template_id>', methods=['DELETE'])
+def template_delete(template_id):
+    """Delete a user template."""
+    try:
+        from ppt_engine.template_import import remove_user_template
+        found = remove_user_template(template_id)
+        if not found:
+            return jsonify({'success': False, 'error': 'Template not found'}), 404
+        return jsonify({'success': True, 'message': 'Template deleted'})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':

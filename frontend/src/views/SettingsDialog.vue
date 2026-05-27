@@ -237,7 +237,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   minimax: '/logos/minimax.svg', deepseek: '/logos/deepseek.svg', openai: '/logos/openai.svg',
   moonshot: '/logos/kimi.png', zhipu: '/logos/glm.svg', glm: '/logos/glm.svg',
   qwen: '/logos/qwen.svg', siliconflow: '/logos/siliconflow.svg',
-  'mimo-tts': '/logos/xiaomi.svg',
+  mimo: '/logos/xiaomi.svg', 'mimo-tts': '/logos/xiaomi.svg',
 }
 const MONO_LOGOS = new Set(['openai', 'deepseek', 'siliconflow'])
 function renderProviderLabel(option: { label: string; value: string }) {

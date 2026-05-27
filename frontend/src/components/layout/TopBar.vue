@@ -60,6 +60,7 @@ import {
   Presentation,
   Video,
   FolderOpen,
+  LayoutTemplate,
   Brain,
   Settings,
   Sun,
@@ -75,7 +76,7 @@ type NavItem = {
   path: string
   label: string
   icon: unknown
-  hue: 'dashboard' | 'chat' | 'ppt' | 'library' | 'memory' | 'settings'
+  hue: 'dashboard' | 'chat' | 'ppt' | 'library' | 'templates' | 'memory' | 'settings'
 }
 
 const nav: NavItem[] = [
@@ -84,6 +85,7 @@ const nav: NavItem[] = [
   { path: '/ppt-studio', label: 'PPT 工作台', icon: Presentation, hue: 'ppt' },
   { path: '/video-studio', label: '微课', icon: Video, hue: 'ppt' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
+  { path: '/templates', label: '模板', icon: LayoutTemplate, hue: 'templates' },
   // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
 ]
 
@@ -103,6 +105,7 @@ const INDICATOR_COLORS: Record<string, string> = {
   '/ppt-studio': 'var(--nav-ppt)',
   '/video-studio': 'var(--nav-ppt)',
   '/library': 'var(--nav-library)',
+  '/templates': 'var(--nav-library)',
   '/memory': 'var(--nav-memory)',
 }
 
@@ -272,6 +275,7 @@ defineExpose({ mode, effective })
 .hue-chat { --hue-active: var(--nav-chat); }
 .hue-ppt { --hue-active: var(--nav-ppt); }
 .hue-library { --hue-active: var(--nav-library); }
+.hue-templates { --hue-active: var(--nav-library); }
 .hue-memory { --hue-active: var(--nav-memory); }
 .hue-settings { --hue-active: var(--nav-settings); }
 

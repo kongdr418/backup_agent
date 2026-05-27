@@ -1,12 +1,16 @@
 """Unified SVG post-processing pipeline.
 
-Orchestrates all 6 finalization steps in sequence:
-1. Embed icons
-2. Crop images (preserveAspectRatio="slice")
-3. Fix image aspect ratios
-4. Embed external images as Base64
-5. Flatten tspan text elements
-6. Convert rounded rects to paths
+Orchestrates all finalization steps in sequence:
+1. Repair malformed SVG
+2. Embed icons
+3. Crop images (preserveAspectRatio="slice")
+4. Fix image aspect ratios
+5. Embed external images as Base64
+6. Flatten tspan text elements
+7. Merge adjacent text elements
+8. Reflow text (icon-text alignment)
+9. Normalize fonts
+10. Convert rounded rects to paths
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from .fix_image_aspect import fix_image_aspect_in_svg
 from .flatten_tspan import flatten_text_in_svg
 from .merge_adjacent_text import merge_adjacent_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
+from .svg_text_reflow import reflow_text_in_svg
 from .repair_svg import repair_svg_file
 from .svg_rect_to_path import convert_rounded_rects_in_svg
 # TODO: project_manager removed - caller passes paths directly
@@ -78,6 +83,7 @@ def finalize_svg_dir(
         "images_embedded": 0,
         "texts_flattened": 0,
         "texts_merged": 0,
+        "texts_reflowed": 0,
         "fonts_normalized": 0,
         "rects_converted": 0,
     }
@@ -92,6 +98,7 @@ def finalize_svg_dir(
         )
         stats["texts_flattened"] += flatten_text_in_svg(svg_path)
         stats["texts_merged"] += merge_adjacent_text_in_svg(svg_path)
+        stats["texts_reflowed"] += reflow_text_in_svg(svg_path)
         stats["fonts_normalized"] += normalize_text_fonts_in_svg(svg_path)
         stats["rects_converted"] += convert_rounded_rects_in_svg(svg_path)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
+from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_research_guidance
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "content_planner.md"
 MAX_TOKENS = 24576
@@ -90,6 +91,9 @@ async def plan_content(
         f"\n## 详细程度\n\n{detail_level}\n\n"
         f"{detail_guidance.get(detail_level, detail_guidance['normal'])}"
     )
+
+    if is_deepseek_provider(llm, model):
+        user_parts.append("\n" + deepseek_research_guidance(detail_level))
 
     user_parts.append(
         "\n\n请根据以上主题生成幻灯片手稿。"

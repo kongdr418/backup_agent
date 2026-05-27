@@ -15,7 +15,17 @@ _content_provider_type: str = 'openai'
 
 def get_content_llm_config():
     """获取内容生成 LLM 配置，优先使用设置的值，否则回退到环境变量"""
-    api_key = _content_api_key or os.environ.get('DEEPSEEK_API_KEY', '')
+    api_key = _content_api_key
+    if not api_key:
+        try:
+            from app import SERVER_API_KEYS, _get_provider_for_model
+            pid, _, _ = _get_provider_for_model(_content_model)
+            if pid and pid in SERVER_API_KEYS:
+                api_key = SERVER_API_KEYS[pid]
+        except ImportError:
+            pass
+    if not api_key:
+        api_key = os.environ.get('DEEPSEEK_API_KEY', '')
     base_url = _content_base_url or 'https://api.deepseek.com'
     return _content_model, api_key, base_url
 

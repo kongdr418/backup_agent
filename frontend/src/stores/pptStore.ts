@@ -33,6 +33,7 @@ const DEFAULT_PARAMS: PptGenerateParams = {
   detail_level: 'normal',
   model: 'deepseek-v4-flash',
   canvas_format: 'ppt169',
+  template_id: undefined,
 }
 
 export const usePptStore = defineStore(

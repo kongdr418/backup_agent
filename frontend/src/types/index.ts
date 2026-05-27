@@ -155,7 +155,7 @@ export interface ModelInfo {
 export interface ProviderInfo {
   id: string
   name: string
-  type: 'minimax' | 'openai'
+  type: 'minimax' | 'openai' | 'anthropic'
   defaultBaseUrl: string
   models: ModelInfo[]
   requiresApiKey: boolean
@@ -222,6 +222,9 @@ export interface PptGenerateParams {
   api_key?: string
   base_url?: string
   canvas_format?: PptCanvas
+  deep_research?: boolean
+  visual_critic?: boolean
+  template_id?: string
 }
 
 export type PptStage =

@@ -14,6 +14,7 @@ from pathlib import Path
 from ppt_engine.config import REFERENCES_DIR, SVG_MAX_CONCURRENCY
 from ppt_engine.critic import CriticConfig, CriticReport, check_svg
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
+from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_executor_guidance
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "svg_executor.md"
 
@@ -25,21 +26,6 @@ _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
 CriticCallback = Callable[[int, int, CriticReport], Awaitable[None]]
 
 
-def _is_deepseek(llm: LLMProvider, model: str) -> bool:
-    model_id = (model or "").lower()
-    if model_id.startswith("deepseek"):
-        return True
-    provider_name = str(getattr(llm, "_provider_name", "") or "").lower()
-    if provider_name == "deepseek":
-        return True
-    base_url = str(getattr(llm, "_base_url", "") or "").lower()
-    if "api.deepseek.com" in base_url:
-        return True
-    try:
-        info = llm.get_provider_info()
-        return getattr(info, "name", "").lower() == "deepseek"
-    except Exception:
-        return False
 
 
 def _split_manuscript_pages(manuscript: str) -> list[str]:
@@ -91,20 +77,6 @@ def _build_extraction_retry_prompt(
     )
 
 
-def _deepseek_executor_guidance(detail_level: str) -> str:
-    if detail_level != "very_high":
-        return (
-            "## DeepSeek Execution Calibration\n\n"
-            "忠实渲染手稿内容。不要将内容折叠为几个通用标签。"
-        )
-    return (
-        "## DeepSeek Execution Calibration\n\n"
-        "对于 `very_high`，保留深度而不拥挤：\n"
-        "- 每个实质性幻灯片应渲染手稿的核心机制、证据/数据和结论。\n"
-        "- 避免纯标签式幻灯片和过多的胶囊标签。\n"
-        "- 优先使用 3-5 个可读的内容块。\n"
-        "- 保持所有文本在安全边距内，留有充足的内边距。"
-    )
 
 
 async def _generate_single_page(
@@ -122,10 +94,28 @@ async def _generate_single_page(
     svg_output_dir: Path,
     critic_config: CriticConfig | None,
     on_critic: CriticCallback | None,
+    template_svgs: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     """Generate one SVG page independently (no cross-page context)."""
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
     page_name = _make_page_name(page_num, page_content)
+
+    # Build template reference block if template SVGs are available
+    template_ref_block = ""
+    if template_svgs:
+        ref_parts = ["\n\n## Reference Layout Templates\n\n"]
+        ref_parts.append(
+            "The following SVG templates define the visual language you MUST follow. "
+            "Match their color palette, typography style, spacing patterns, "
+            "decorative elements, and overall aesthetic. Adapt the content to the "
+            "page you are generating while preserving the design DNA.\n\n"
+        )
+        for page_type, svg_text in template_svgs.items():
+            truncated = svg_text[:4000]
+            if len(svg_text) > 4000:
+                truncated += "\n<!-- ... truncated for brevity ... -->"
+            ref_parts.append(f"### Template: {page_type}\n```svg\n{truncated}\n```\n\n")
+        template_ref_block = "".join(ref_parts)
 
     conversation: list[LLMMessage] = [
         LLMMessage.system(system_prompt),
@@ -143,6 +133,7 @@ async def _generate_single_page(
             f"{page_content}\n\n"
             f"Generate the complete SVG code for this page only. "
             f"Output ONLY the SVG code, wrapped in a ```svg code block."
+            f"{template_ref_block}"
             f"{extra_block}"
         ),
     ]
@@ -234,6 +225,7 @@ async def generate_svg_pages(
     target_pages: set[int] | None = None,
     critic_config: CriticConfig | None = None,
     on_critic: CriticCallback | None = None,
+    template_svgs: dict[str, str] | None = None,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG code for each slide page concurrently.
 
@@ -251,8 +243,8 @@ async def generate_svg_pages(
     extra_sections = []
     if extra_instruction:
         extra_sections.append(extra_instruction)
-    if _is_deepseek(llm, model):
-        extra_sections.append(_deepseek_executor_guidance(detail_level))
+    if is_deepseek_provider(llm, model):
+        extra_sections.append(deepseek_executor_guidance(detail_level))
     extra_block = "\n\n" + "\n\n".join(extra_sections) if extra_sections else ""
 
     # Build coroutine list
@@ -277,6 +269,7 @@ async def generate_svg_pages(
                 svg_output_dir=svg_output_dir,
                 critic_config=critic_config,
                 on_critic=on_critic,
+                template_svgs=template_svgs,
             )
         )
 

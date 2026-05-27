@@ -1443,6 +1443,11 @@ class MiniMaxAgent:
         import requests as req
 
         if not api_key:
+            from app import SERVER_API_KEYS, _get_provider_for_model
+            pid, _, _ = _get_provider_for_model(model)
+            if pid and pid in SERVER_API_KEYS:
+                api_key = SERVER_API_KEYS[pid]
+        if not api_key:
             return "错误: 未配置 API Key，请在设置中填写"
 
         if not base_url:
@@ -1540,7 +1545,12 @@ class MiniMaxAgent:
         """调用 OpenAI 兼容 API（DeepSeek / OpenAI / Moonshot / Zhipu / Qwen / SiliconFlow 等）"""
         # 优先使用客户端提供的 API Key，否则回退到服务端
         if not api_key:
-            api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+            from app import SERVER_API_KEYS, _get_provider_for_model
+            pid, _, _ = _get_provider_for_model(model)
+            if pid and pid in SERVER_API_KEYS:
+                api_key = SERVER_API_KEYS[pid]
+            else:
+                api_key = os.environ.get('DEEPSEEK_API_KEY', '')
 
         if not api_key:
             return "错误: 未配置 API Key，请在设置中填写或配置服务端环境变量"
