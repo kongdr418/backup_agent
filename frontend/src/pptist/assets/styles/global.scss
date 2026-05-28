@@ -1,0 +1,216 @@
+.paper-pptist-app,
+.paper-pptist-app div,
+.paper-pptist-app span,
+.paper-pptist-app applet,
+.paper-pptist-app object,
+.paper-pptist-app iframe,
+.paper-pptist-app h1,
+.paper-pptist-app h2,
+.paper-pptist-app h3,
+.paper-pptist-app h4,
+.paper-pptist-app h5,
+.paper-pptist-app h6,
+.paper-pptist-app p,
+.paper-pptist-app blockquote,
+.paper-pptist-app pre,
+.paper-pptist-app a,
+.paper-pptist-app abbr,
+.paper-pptist-app acronym,
+.paper-pptist-app address,
+.paper-pptist-app big,
+.paper-pptist-app cite,
+.paper-pptist-app code,
+.paper-pptist-app del,
+.paper-pptist-app dfn,
+.paper-pptist-app em,
+.paper-pptist-app img,
+.paper-pptist-app ins,
+.paper-pptist-app kbd,
+.paper-pptist-app q,
+.paper-pptist-app s,
+.paper-pptist-app samp,
+.paper-pptist-app small,
+.paper-pptist-app strike,
+.paper-pptist-app strong,
+.paper-pptist-app sub,
+.paper-pptist-app sup,
+.paper-pptist-app tt,
+.paper-pptist-app var,
+.paper-pptist-app b,
+.paper-pptist-app u,
+.paper-pptist-app i,
+.paper-pptist-app center,
+.paper-pptist-app dl,
+.paper-pptist-app dt,
+.paper-pptist-app dd,
+.paper-pptist-app ol,
+.paper-pptist-app ul,
+.paper-pptist-app li,
+.paper-pptist-app fieldset,
+.paper-pptist-app form,
+.paper-pptist-app label,
+.paper-pptist-app legend,
+.paper-pptist-app table,
+.paper-pptist-app caption,
+.paper-pptist-app tbody,
+.paper-pptist-app tfoot,
+.paper-pptist-app thead,
+.paper-pptist-app tr,
+.paper-pptist-app th,
+.paper-pptist-app td,
+.paper-pptist-app article,
+.paper-pptist-app aside,
+.paper-pptist-app canvas,
+.paper-pptist-app details,
+.paper-pptist-app embed,
+.paper-pptist-app figure,
+.paper-pptist-app figcaption,
+.paper-pptist-app footer,
+.paper-pptist-app header,
+.paper-pptist-app hgroup,
+.paper-pptist-app menu,
+.paper-pptist-app nav,
+.paper-pptist-app output,
+.paper-pptist-app ruby,
+.paper-pptist-app section,
+.paper-pptist-app summary,
+.paper-pptist-app time,
+.paper-pptist-app mark,
+.paper-pptist-app audio,
+.paper-pptist-app video {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  vertical-align: baseline;
+  box-sizing: border-box;
+}
+
+.paper-pptist-app *::before,
+.paper-pptist-app *::after {
+  box-sizing: border-box;
+}
+
+.paper-pptist-app article,
+.paper-pptist-app aside,
+.paper-pptist-app details,
+.paper-pptist-app figcaption,
+.paper-pptist-app figure,
+.paper-pptist-app footer,
+.paper-pptist-app header,
+.paper-pptist-app hgroup,
+.paper-pptist-app menu,
+.paper-pptist-app nav,
+.paper-pptist-app section {
+  display: block;
+}
+
+.paper-pptist-app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #fff;
+  color: $textColor;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+}
+
+.paper-pptist-app ol,
+.paper-pptist-app ul {
+  list-style: none;
+}
+
+.paper-pptist-app blockquote,
+.paper-pptist-app q {
+  quotes: none;
+}
+
+.paper-pptist-app blockquote::before,
+.paper-pptist-app blockquote::after,
+.paper-pptist-app q::before,
+.paper-pptist-app q::after {
+  content: '';
+}
+
+.paper-pptist-app table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.paper-pptist-app a {
+  text-decoration: none;
+  color: $themeColor;
+}
+
+.paper-pptist-app img {
+  vertical-align: middle;
+  border-style: none;
+}
+
+.paper-pptist-app hr {
+  box-sizing: content-box;
+  height: 0;
+  overflow: visible;
+}
+
+.paper-pptist-app mark.active {
+  background-color: #ff9632;
+}
+
+.paper-pptist-app input,
+.paper-pptist-app button,
+.paper-pptist-app select,
+.paper-pptist-app optgroup,
+.paper-pptist-app textarea {
+  color: inherit;
+}
+
+.paper-pptist-app button,
+.paper-pptist-app input {
+  overflow: visible;
+}
+
+.paper-pptist-app button,
+.paper-pptist-app select {
+  text-transform: none;
+}
+
+.paper-pptist-app textarea {
+  overflow: auto;
+  resize: vertical;
+}
+
+.paper-pptist-app a,
+.paper-pptist-app area,
+.paper-pptist-app button,
+.paper-pptist-app [role='button'],
+.paper-pptist-app input:not([type='range']),
+.paper-pptist-app label,
+.paper-pptist-app select,
+.paper-pptist-app summary,
+.paper-pptist-app textarea {
+  touch-action: manipulation;
+}
+
+.paper-pptist-app ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+  background-color: transparent;
+}
+.paper-pptist-app ::-webkit-scrollbar-thumb {
+  background-color: #e1e1e1;
+  border-radius: 3px;
+}
+
+.i-icon {
+  display: inline-block;
+  color: inherit;
+  font-style: normal;
+  line-height: 0;
+  outline: 0;
+  text-align: center;
+  text-transform: none;
+  vertical-align: -.125em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

@@ -1909,22 +1909,39 @@ def ppt_svg_download(job_id):
     user_id = get_request_user_id()
     svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
     base_dir = os.path.join(svg_base, job_id)
+
+    # 优先使用 PPTist 编辑后的版本
+    pptist_pptx = os.path.join(base_dir, 'pptist', 'current.pptx')
+    if os.path.isfile(pptist_pptx):
+        from flask import send_file
+        resp = send_file(
+            pptist_pptx,
+            as_attachment=True,
+            download_name=os.path.basename(pptist_pptx),
+            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        )
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        return resp
+
     exports_dir = os.path.join(base_dir, 'exports')
     if not os.path.exists(exports_dir):
         return jsonify({'error': '未找到导出文件'}), 404
 
-    pptx_files = glob.glob(os.path.join(exports_dir, '*.pptx'))
+    pptx_files = sorted(glob.glob(os.path.join(exports_dir, '*.pptx')), key=os.path.getmtime, reverse=True)
     if not pptx_files:
         return jsonify({'error': 'PPTX 文件不存在'}), 404
 
-    pptx_path = pptx_files[0]
+    # 优先返回 PPTist 导出的版本
+    pptx_path = next((f for f in pptx_files if 'pptist' in os.path.basename(f).lower()), pptx_files[0])
     from flask import send_file
-    return send_file(
+    resp = send_file(
         pptx_path,
         as_attachment=True,
         download_name=os.path.basename(pptx_path),
         mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
     )
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
 
 
 @app.route('/api/ppt-svg/list', methods=['GET'])
@@ -1949,6 +1966,146 @@ def ppt_svg_list():
             jobs.append(meta)
 
     return jsonify({'jobs': jobs})
+
+
+@app.route('/api/pptist/preview/<job_id>/deck', methods=['GET'])
+def pptist_preview_deck(job_id):
+    """PPTist 编辑器加载 deck 数据"""
+    import glob
+    user_id = get_request_user_id()
+    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
+
+    if '..' in job_id or '/' in job_id or '\\' in job_id:
+        return jsonify({'error': '非法 job_id'}), 400
+
+    job_dir = os.path.join(base_dir, job_id)
+    if not os.path.exists(job_dir):
+        return jsonify({'error': '任务不存在'}), 404
+
+    # 检查是否已有保存的 deck
+    deck_path = os.path.join(job_dir, 'pptist', 'deck.json')
+    if os.path.exists(deck_path):
+        try:
+            with open(deck_path, 'r', encoding='utf-8') as f:
+                deck = json.load(f)
+            deck.setdefault('source', {})
+            deck['source']['kind'] = 'preview'
+            deck['source']['id'] = job_id
+            deck['source']['saved_deck'] = True
+            uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+            deck['source']['source_pptx_url'] = f'/api/ppt-svg/download/{job_id}{uid_qs}'
+            return jsonify(deck)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 返回 blank deck，让 PPTist 通过 source_pptx_url 导入 PPTX
+    uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+    return jsonify({
+        'title': os.path.basename(job_dir),
+        'width': 1280,
+        'height': 720,
+        'theme': None,
+        'slides': [],
+        'source': {
+            'kind': 'preview',
+            'id': job_id,
+            'saved_deck': False,
+            'source_pptx_url': f'/api/ppt-svg/download/{job_id}{uid_qs}',
+            'fallback_slides': [],
+        },
+    })
+
+
+@app.route('/api/pptist/preview/<job_id>/deck', methods=['PUT'])
+def pptist_save_deck(job_id):
+    """保存 PPTist deck JSON"""
+    user_id = get_request_user_id()
+    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
+
+    if '..' in job_id or '/' in job_id or '\\' in job_id:
+        return jsonify({'error': '非法 job_id'}), 400
+
+    job_dir = os.path.join(base_dir, job_id)
+    if not os.path.exists(job_dir):
+        return jsonify({'error': '任务不存在'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    deck = {
+        'title': payload.get('title', ''),
+        'width': payload.get('width', 1280),
+        'height': payload.get('height', 720),
+        'theme': payload.get('theme'),
+        'slides': payload.get('slides', []),
+        'updated_at': datetime.now().isoformat(),
+    }
+
+    pptist_dir = os.path.join(job_dir, 'pptist')
+    os.makedirs(pptist_dir, exist_ok=True)
+    deck_path = os.path.join(pptist_dir, 'deck.json')
+
+    try:
+        with open(deck_path, 'w', encoding='utf-8') as f:
+            json.dump(deck, f, ensure_ascii=False, indent=2)
+        return jsonify({
+            'status': 'saved',
+            'slide_count': len(deck.get('slides', [])),
+            'updated_at': deck['updated_at'],
+        })
+    except Exception as e:
+        return jsonify({'error': f'保存失败: {e}'}), 500
+
+
+@app.route('/api/pptist/preview/<job_id>/export', methods=['POST'])
+def pptist_export_deck(job_id):
+    """接收 PPTist 导出的 PPTX 文件"""
+    import glob
+    user_id = get_request_user_id()
+    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
+
+    if '..' in job_id or '/' in job_id or '\\' in job_id:
+        return jsonify({'error': '非法 job_id'}), 400
+
+    job_dir = os.path.join(base_dir, job_id)
+    if not os.path.exists(job_dir):
+        return jsonify({'error': '任务不存在'}), 404
+
+    if 'file' not in request.files:
+        return jsonify({'error': '没有上传文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '' or not file.filename.endswith('.pptx'):
+        return jsonify({'error': '需要 PPTX 文件'}), 400
+
+    pptist_dir = os.path.join(job_dir, 'pptist')
+    os.makedirs(pptist_dir, exist_ok=True)
+    current_path = os.path.join(pptist_dir, 'current.pptx')
+    file.save(current_path)
+
+    # 同时保存到 exports 目录
+    exports_dir = os.path.join(job_dir, 'exports')
+    os.makedirs(exports_dir, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    export_path = os.path.join(exports_dir, f'presentation_pptist_{timestamp}.pptx')
+    shutil.copy2(current_path, export_path)
+
+    # 更新 metadata.json 的输出路径
+    meta_path = os.path.join(job_dir, 'metadata.json')
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            meta['output_path'] = export_path
+            meta['pptx_filename'] = os.path.basename(export_path)
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    return jsonify({
+        'status': 'complete',
+        'output_path': export_path,
+        'slide_count': 0,
+    })
 
 
 @app.route('/api/ppt-svg/<job_id>', methods=['DELETE'])

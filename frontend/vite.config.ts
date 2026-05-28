@@ -1,12 +1,33 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import Icons from 'unplugin-icons/vite'
+import { FileSystemIconLoader } from 'unplugin-icons/loaders'
 import { resolve } from 'node:path'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    Icons({
+      compiler: 'vue3',
+      customCollections: {
+        custom: FileSystemIconLoader('./src/pptist/assets/icons'),
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      '@pptist': resolve(__dirname, 'src/pptist'),
+    },
+  },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        additionalData: `
+          @import "@pptist/assets/styles/variable.scss";
+          @import "@pptist/assets/styles/mixin.scss";
+        `,
+      },
     },
   },
   server: {

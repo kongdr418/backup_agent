@@ -49,6 +49,12 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    path: '/pptist-preview/:jobId',
+    name: 'pptist-preview',
+    component: () => import('./views/PptistPreviewView.vue'),
+    meta: { title: 'PPT 场景编辑' },
+  },
 ]
 
 const router = createRouter({

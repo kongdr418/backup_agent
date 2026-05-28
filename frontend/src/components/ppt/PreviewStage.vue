@@ -48,6 +48,14 @@
         <span v-else class="meta-text">已取消</span>
       </div>
       <div class="action-btns">
+        <router-link
+          v-if="jobId && canDownload"
+          :to="`/pptist-preview/${jobId}`"
+          class="edit-btn"
+        >
+          <Edit3 class="w-3.5 h-3.5" />
+          场景编辑
+        </router-link>
         <button
           v-if="canDownload"
           class="download-btn"
@@ -70,7 +78,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Presentation, Download, RotateCcw } from 'lucide-vue-next'
+import { Presentation, Download, RotateCcw, Edit3 } from 'lucide-vue-next'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ProgressBar from './ProgressBar.vue'
 import SvgCarousel from './SvgCarousel.vue'
@@ -88,6 +96,7 @@ const props = defineProps<{
   canDownload: boolean
   startedAt?: number
   finishedAt?: number
+  jobId?: string
 }>()
 
 defineEmits<{
@@ -164,6 +173,29 @@ const duration = computed(() => {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.edit-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  border-color: rgb(var(--line-strong-rgb));
+  color: rgb(var(--ink-1-rgb));
 }
 
 .download-btn {

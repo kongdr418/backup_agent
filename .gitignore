@@ -59,6 +59,12 @@ memory/
 # Generated SVG PPT (local output)
 backend/generated_svg_ppt/
 
+# Generated classrooms (local output)
+backend/generated_classrooms/
+
+# Reference project (not part of this repo)
+OpenMAIC/
+
 
 # Generated videos (local output)
 backend/generated_videos/

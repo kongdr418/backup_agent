@@ -43,6 +43,15 @@
               <div class="mt-1.5 text-[10.5px] text-ink-4 font-mono truncate">{{ job.job_id }}</div>
             </div>
             <div class="shrink-0 flex items-center gap-1">
+              <router-link
+                v-if="job.has_pptx"
+                :to="`/pptist-preview/${job.job_id}`"
+                class="px-2 h-7 rounded-md text-[11px] border border-line text-ink-2 hover:bg-bg-base inline-flex items-center gap-1 transition-colors"
+                @click.stop
+              >
+                <Edit3 class="w-3 h-3" />
+                编辑
+              </router-link>
               <a
                 v-if="job.has_pptx"
                 :href="downloadUrl(job.job_id)"
@@ -73,7 +82,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
-import { FolderOpen, Download, Trash2 } from 'lucide-vue-next'
+import { FolderOpen, Download, Trash2, Edit3 } from 'lucide-vue-next'
 import type { PptJob } from '@/types'
 import { pptDownloadUrl } from '@/api/pptSvg'
 import { getUserId } from '@/composables/useUserId'

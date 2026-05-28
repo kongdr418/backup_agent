@@ -92,6 +92,7 @@
           :can-download="store.canDownload"
           :started-at="store.gen.startedAt"
           :finished-at="store.gen.finishedAt"
+          :job-id="store.gen.jobId"
           @select-slide="(i) => (activeIdx = i)"
           @download="onDownload"
           @reset="onReset"
@@ -266,6 +267,9 @@ async function onOpenJob(jobId: string) {
     store.gen.message = '历史回看'
     store.gen.progress = 100
     store.gen.totalSlides = data.total_pages
+    // 从 jobs 列表中获取 pptxFilename，使编辑按钮可用
+    const job = store.jobs.find(j => j.job_id === jobId)
+    store.gen.pptxFilename = job?.pptx_filename
     activeIdx.value = 0
     historyOpen.value = false
     message.success(`已加载 ${data.total_pages} 页`)
