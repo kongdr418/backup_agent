@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import re
 from .utils import parse_svg_ratio
 
 
@@ -107,8 +108,16 @@ class ConvertContext:
         return val * self.scale_y
 
     def get_attr(self, elem: Any, attr: str, default: str = "") -> str:
-        """Get attribute from element, falling back to inherited styles."""
+        """Get attribute from element, falling back to inherited styles.
+        
+        Also parses CSS ``style`` attribute as a fallback.
+        """
         val = elem.get(attr)
         if val is not None:
             return val
+        style = elem.get("style", "")
+        if style:
+            m = re.search(attr + r'\s*:\s*([^;]+)', style)
+            if m:
+                return m.group(1).strip()
         return self.inherited_styles.get(attr, default)
