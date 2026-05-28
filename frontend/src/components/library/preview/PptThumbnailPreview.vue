@@ -50,6 +50,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { Download } from 'lucide-vue-next'
 import type { PptSlide } from '@/types'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
+import { getUserId } from '@/composables/useUserId'
 
 const props = defineProps<{
   jobId: string
@@ -61,7 +62,7 @@ const loading = ref(false)
 const error = ref('')
 const activeSlide = ref(1)
 
-const downloadUrl = computed(() => props.jobId ? pptDownloadUrl(props.jobId) : '#')
+const downloadUrl = computed(() => props.jobId ? `${pptDownloadUrl(props.jobId)}?user_id=${encodeURIComponent(getUserId())}` : '#')
 
 const activeSlideData = computed(() =>
   slides.value.find(s => s.page === activeSlide.value)
