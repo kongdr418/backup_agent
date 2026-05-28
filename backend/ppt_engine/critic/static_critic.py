@@ -1199,6 +1199,12 @@ def _check_line_space_waste(
             if y_gap < line_height * 0.5 or y_gap > line_height * 2.0:
                 continue
 
+            # 跳过标题-正文配对：字号差异大时说明是标题与正文，
+            # 不应该合并。
+            font_b = _font_size_of(el_b, 16.0)
+            if abs(font_a - font_b) > 2.0:
+                continue
+
             container_w = 0.0
             parent = _parent_of(el_a, root)
             if parent is not None:

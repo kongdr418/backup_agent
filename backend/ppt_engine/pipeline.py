@@ -109,8 +109,11 @@ class PPTPipeline:
         # Load template layout pack if specified
         layout_pack = None
         if template_id:
-            from ppt_engine.template_import.persistence import load_template_pack
-            layout_pack = load_template_pack(template_id)
+            try:
+                from ppt_engine.template_import.persistence import load_template_pack
+                layout_pack = load_template_pack(template_id)
+            except ImportError:
+                pass
             if layout_pack is None:
                 yield PipelineEvent("init", "error", f"模板 '{template_id}' 不存在", 0.0)
                 return

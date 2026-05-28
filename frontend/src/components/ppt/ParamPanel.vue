@@ -31,22 +31,6 @@
         </div>
       </section>
 
-      <!-- Imported Templates -->
-      <section v-if="userTemplates.length > 0" class="param-section">
-        <label class="param-label">导入模板</label>
-        <div class="style-list">
-          <StyleCard
-            v-for="tmpl in userTemplates"
-            :key="tmpl.template_id"
-            :label="tmpl.label"
-            :description="`${tmpl.slide_count} 页模板`"
-            :icon="Palette"
-            :selected="local.template_id === tmpl.template_id"
-            @select="selectTemplate(tmpl.template_id)"
-          />
-        </div>
-      </section>
-
       <!-- Pages -->
       <section class="param-section">
         <div class="param-row">
@@ -63,7 +47,7 @@
           </button>
           <n-slider
             v-model:value="sliderValue"
-            :min="3"
+            :min="local.deep_research ? 5 : 3"
             :max="20"
             :step="1"
             class="flex-1"
@@ -113,7 +97,12 @@
               <span class="toggle-label">深度研究</span>
               <span class="toggle-desc">4-Pass 深度分析，内容更丰富但耗时更长</span>
             </div>
-            <n-switch v-model:value="local.deep_research" :disabled="disabled" size="small" />
+            <n-switch
+              :value="local.deep_research"
+              :disabled="disabled"
+              size="small"
+              @update:value="onDeepResearchChange"
+            />
           </div>
           <div class="toggle-row">
             <div class="toggle-info">
@@ -155,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { NInput, NSlider, NRadioGroup, NRadioButton, NSwitch } from 'naive-ui'
 import {
   GraduationCap,
@@ -166,11 +155,9 @@ import {
   ChevronRight,
   Wand2,
   Square,
-  Palette,
 } from 'lucide-vue-next'
 import StyleCard from './StyleCard.vue'
 import type { PptGenerateParams } from '@/types'
-import { listTemplates, type TemplateItem } from '@/api/templates'
 
 const props = defineProps<{
   modelValue: PptGenerateParams
@@ -195,6 +182,13 @@ watch(
 
 watch(local, (v) => emit('update:modelValue', { ...v }), { deep: true })
 
+function onDeepResearchChange(val: boolean) {
+  local.deep_research = val
+  if (val && local.num_slides != null && local.num_slides < 5) {
+    local.num_slides = 5
+  }
+}
+
 const styleOptions: Array<{
   value: 'education' | 'academic' | 'consulting' | 'tech' | 'general'
   label: string
@@ -207,26 +201,6 @@ const styleOptions: Array<{
   { value: 'tech', label: '科技', desc: '现代极简，产品介绍风', icon: Cpu },
   { value: 'general', label: '通用', desc: '中性百搭，适配各类话题', icon: LayoutGrid },
 ]
-
-const userTemplates = ref<TemplateItem[]>([])
-
-onMounted(async () => {
-  try {
-    userTemplates.value = await listTemplates()
-  } catch {
-    userTemplates.value = []
-  }
-})
-
-function selectTemplate(tid: string) {
-  if (local.template_id === tid) {
-    local.template_id = undefined
-    if (!local.style) local.style = 'education'
-  } else {
-    local.template_id = tid
-    local.style = undefined
-  }
-}
 
 const sliderValue = computed({
   get: () => local.num_slides ?? 8,
