@@ -93,8 +93,10 @@ DETAIL_GUIDANCE = {
 def _target_slides_guidance(num_slides: int | None, detail_level: str) -> str:
     if num_slides:
         return (
-            f"Target exactly {num_slides} slides. Use {num_slides - 1} standalone `---` delimiters.\n"
-            f"Structure: cover (1) + content chapters ({num_slides - 2}) + ending (1)."
+            f"STRICT REQUIREMENT: You MUST produce exactly {num_slides} slides — no more, no fewer.\n"
+            f"Use {num_slides - 1} standalone `---` delimiters.\n"
+            f"Structure: cover (1) + content chapters ({num_slides - 2}) + ending (1).\n"
+            f"This is a hard constraint. Output that is not exactly {num_slides} slides will be rejected."
         )
     return (
         "Determine slide count automatically based on topic complexity (typically 10-12).\n"

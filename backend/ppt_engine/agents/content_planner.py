@@ -77,8 +77,10 @@ async def plan_content(
 
     if num_slides:
         user_parts.append(
-            f"\n## 目标页数\n\n"
-            f"生成恰好 {num_slides} 页幻灯片。使用 {num_slides - 1} 个 `---` 分隔符。"
+            f"\n## 严格页数要求（必须遵守）\n\n"
+            f"你必须生成恰好 {num_slides} 页幻灯片，不能多也不能少。"
+            f"使用 {num_slides - 1} 个 `---` 分隔符将每页分开。"
+            f"\n\n这是硬性要求。如果生成的页数不是 {num_slides} 页，整个输出将被视为无效。"
         )
     else:
         user_parts.append(
