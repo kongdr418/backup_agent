@@ -106,15 +106,12 @@ class PPTPipeline:
 
         style_info = DESIGN_STYLES.get(style, DESIGN_STYLES["education"])
 
-        # Load template layout pack if specified
-        layout_pack = None
+        # Load template if specified
+        tmpl = None
         if template_id:
-            try:
-                from ppt_engine.template_import.persistence import load_template_pack
-                layout_pack = load_template_pack(template_id)
-            except ImportError:
-                pass
-            if layout_pack is None:
+            from ppt_engine.template_manager import load_template
+            tmpl = load_template(template_id)
+            if tmpl is None:
                 yield PipelineEvent("init", "error", f"模板 '{template_id}' 不存在", 0.0)
                 return
 
@@ -181,8 +178,8 @@ class PPTPipeline:
             # ── Stage 2: Design Strategy (15% → 30%) ──
             yield PipelineEvent("design", "started", "正在生成设计规范...", 0.15)
 
-            if layout_pack and layout_pack.design_spec and len(layout_pack.design_spec) >= 500:
-                design_spec = layout_pack.design_spec
+            if tmpl and len(tmpl.design_spec) >= 500:
+                design_spec = tmpl.design_spec
                 yield PipelineEvent("design", "complete", "使用模板设计规范", 0.25)
             else:
                 design_spec = await create_design_spec(
@@ -199,6 +196,14 @@ class PPTPipeline:
             # ── Stage 3: SVG Generation (30% → 75%) ──
             yield PipelineEvent("svg_generation", "started", "正在逐页生成 SVG...", 0.30)
 
+            # Load template context for SVG generation
+            template_context = None
+            template_skeletons = None
+            if tmpl:
+                from ppt_engine.template_manager import build_template_context, build_template_skeletons
+                template_context = build_template_context(tmpl)
+                template_skeletons = build_template_skeletons(tmpl)
+
             svg_pages: list[tuple[int, str]] = []
             page_progress_base = 0.30
             page_progress_range = 0.45
@@ -209,7 +214,8 @@ class PPTPipeline:
                 style=style,
                 language=language,
                 detail_level=detail_level,
-                template_svgs=layout_pack.svgs if layout_pack else None,
+                template_context=template_context,
+                template_svgs=template_skeletons,
             ):
                 svg_pages.append((page_num, svg_content))
                 completed_pages += 1

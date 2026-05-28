@@ -2232,6 +2232,34 @@ def ppt_video_clear():
     return jsonify({'success': True, 'deleted_count': deleted, 'errors': errors})
 
 
+# ==================== Templates API ====================
+
+@app.route('/api/templates/list', methods=['GET'])
+def templates_list():
+    """List all installed built-in templates."""
+    try:
+        from ppt_engine.template_manager import list_templates
+        templates = list_templates()
+        return jsonify({
+            'templates': [
+                {
+                    'template_id': t.template_id,
+                    'label': t.label,
+                    'summary': t.summary,
+                    'tone': t.tone,
+                    'theme_mode': t.theme_mode,
+                    'category': t.category,
+                    'keywords': t.keywords,
+                    'slide_count': t.slide_count,
+                }
+                for t in templates
+            ]
+        })
+    except Exception as e:
+        app_logger.error(f'[TEMPLATES] 列表加载失败: {e}')
+        return jsonify({'templates': []})
+
+
 if __name__ == '__main__':
     app_logger.info('=' * 60)
     app_logger.info('🤖 MiniMax Agent API 服务启动中...')

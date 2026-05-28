@@ -95,6 +95,7 @@ async def _generate_single_page(
     critic_config: CriticConfig | None,
     on_critic: CriticCallback | None,
     template_svgs: dict[str, str] | None = None,
+    template_context: str | None = None,
 ) -> tuple[int, str]:
     """Generate one SVG page independently (no cross-page context)."""
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
@@ -117,6 +118,10 @@ async def _generate_single_page(
             ref_parts.append(f"### Template: {page_type}\n```svg\n{truncated}\n```\n\n")
         template_ref_block = "".join(ref_parts)
 
+    template_ctx_block = ""
+    if template_context:
+        template_ctx_block = f"\n\n## Template Design Context\n\n{template_context}\n"
+
     conversation: list[LLMMessage] = [
         LLMMessage.system(system_prompt),
         LLMMessage.user(
@@ -133,6 +138,7 @@ async def _generate_single_page(
             f"{page_content}\n\n"
             f"Generate the complete SVG code for this page only. "
             f"Output ONLY the SVG code, wrapped in a ```svg code block."
+            f"{template_ctx_block}"
             f"{template_ref_block}"
             f"{extra_block}"
         ),
@@ -226,6 +232,7 @@ async def generate_svg_pages(
     critic_config: CriticConfig | None = None,
     on_critic: CriticCallback | None = None,
     template_svgs: dict[str, str] | None = None,
+    template_context: str | None = None,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG code for each slide page concurrently.
 
@@ -270,6 +277,7 @@ async def generate_svg_pages(
                 critic_config=critic_config,
                 on_critic=on_critic,
                 template_svgs=template_svgs,
+                template_context=template_context,
             )
         )
 

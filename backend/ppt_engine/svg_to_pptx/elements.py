@@ -486,7 +486,7 @@ def _build_text_shape(x: float, y: float, runs: list[dict], ctx: ConvertContext,
         f'<a:noFill/>'
         f'</p:spPr>'
         f'<p:txBody>'
-        f'<a:bodyPr wrap="none" anchor="t" lIns="0" tIns="0" rIns="0" bIns="0"><a:noAutofit/></a:bodyPr>'
+        f'<a:bodyPr wrap="square" anchor="t" lIns="0" tIns="0" rIns="0" bIns="0"><a:noAutofit/></a:bodyPr>'
         f'<a:lstStyle/>'
         f'<a:p><a:pPr algn="{algn}"/>{runs_xml}</a:p>'
         f'</p:txBody>'

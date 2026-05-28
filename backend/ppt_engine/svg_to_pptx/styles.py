@@ -64,8 +64,23 @@ def build_gradient_fill(grad_elem: Any, opacity: float = 1.0) -> str:
         else:
             pos = int(parse_svg_ratio(offset, 0) * 100000)
 
-        color = child.get("stop-color", "#000000")
+        color = child.get("stop-color", "")
+        if not color:
+            # Try CSS style attribute: style="stop-color:#xxx;stop-opacity:y"
+            style = child.get("style", "")
+            m = re.search(r'stop-color\s*:\s*([^;]+)', style)
+            if m:
+                color = m.group(1).strip()
+        if not color:
+            color = "#000000"
+
         stop_opacity = _parse_opacity(child.get("stop-opacity", "1")) * opacity
+        if not stop_opacity and stop_opacity != 0:
+            # Try CSS style attribute
+            style = child.get("style", "")
+            m = re.search(r'stop-opacity\s*:\s*([^;]+)', style)
+            if m:
+                stop_opacity = _parse_opacity(m.group(1).strip()) * opacity
         hex_color = parse_hex_color(color) or "000000"
 
         alpha = ""

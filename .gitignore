@@ -59,8 +59,6 @@ memory/
 # Generated SVG PPT (local output)
 backend/generated_svg_ppt/
 
-# PPT engine: imported user template layouts (generated)
-backend/ppt_engine/assets/templates/layouts/
 
 # Generated videos (local output)
 backend/generated_videos/

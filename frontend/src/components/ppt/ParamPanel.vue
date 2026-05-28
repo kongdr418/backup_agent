@@ -31,6 +31,27 @@
         </div>
       </section>
 
+      <!-- Templates -->
+      <section v-if="templateList.length > 0" class="param-section">
+        <label class="param-label">布局模板 <span class="text-gray-400 text-xs font-normal">（可选）</span></label>
+        <select
+          class="template-select"
+          :value="local.template_id"
+          @change="onTemplateChange"
+        >
+          <option :value="undefined">不使用模板（AI 自由设计）</option>
+          <optgroup v-for="(group, cat) in templateGroups" :key="cat" :label="group.label">
+            <option
+              v-for="tmpl in group.templates"
+              :key="tmpl.template_id"
+              :value="tmpl.template_id"
+            >
+              {{ tmpl.label }}
+            </option>
+          </optgroup>
+        </select>
+      </section>
+
       <!-- Pages -->
       <section class="param-section">
         <div class="param-row">
@@ -144,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, onMounted, watch } from 'vue'
 import { NInput, NSlider, NRadioGroup, NRadioButton, NSwitch } from 'naive-ui'
 import {
   GraduationCap,
@@ -158,6 +179,7 @@ import {
 } from 'lucide-vue-next'
 import StyleCard from './StyleCard.vue'
 import type { PptGenerateParams } from '@/types'
+import { listTemplates, type TemplateItem } from '@/api/templates'
 
 const props = defineProps<{
   modelValue: PptGenerateParams
@@ -187,6 +209,32 @@ function onDeepResearchChange(val: boolean) {
   if (val && local.num_slides != null && local.num_slides < 5) {
     local.num_slides = 5
   }
+}
+
+const templateList = ref<TemplateItem[]>([])
+const templateGroups = computed(() => {
+  const groups: Record<string, { label: string; templates: TemplateItem[] }> = {}
+  for (const t of templateList.value) {
+    const cat = t.category || 'other'
+    if (!groups[cat]) {
+      groups[cat] = { label: cat, templates: [] }
+    }
+    groups[cat].templates.push(t)
+  }
+  return groups
+})
+
+onMounted(async () => {
+  try {
+    templateList.value = await listTemplates()
+  } catch {
+    // silently fail
+  }
+})
+
+function onTemplateChange(e: Event) {
+  const val = (e.target as HTMLSelectElement).value
+  local.template_id = val || undefined
 }
 
 const styleOptions: Array<{
@@ -264,6 +312,22 @@ const canSubmit = computed(
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.template-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d4d4d4;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #111;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 200ms ease;
+}
+.template-select:focus {
+  border-color: #111;
 }
 
 .page-control {
