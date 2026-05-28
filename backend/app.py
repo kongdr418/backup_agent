@@ -2260,6 +2260,31 @@ def templates_list():
         return jsonify({'templates': []})
 
 
+@app.route('/api/templates/preview/<template_id>', methods=['GET'])
+def template_preview(template_id):
+    """Return all page SVGs of a built-in template."""
+    try:
+        from ppt_engine.template_manager import load_template
+        tmpl = load_template(template_id)
+        if tmpl is None:
+            return jsonify({'pages': {}, 'label': ''})
+        pages = {}
+        if tmpl.cover_svg:
+            pages['cover'] = tmpl.cover_svg
+        if tmpl.chapter_svg:
+            pages['chapter'] = tmpl.chapter_svg
+        if tmpl.content_svg:
+            pages['content'] = tmpl.content_svg
+        if tmpl.ending_svg:
+            pages['ending'] = tmpl.ending_svg
+        if tmpl.toc_svg:
+            pages['toc'] = tmpl.toc_svg
+        return jsonify({'pages': pages, 'label': tmpl.info.label})
+    except Exception as e:
+        app_logger.error(f'[TEMPLATES] 预览加载失败: {e}')
+        return jsonify({'pages': {}, 'label': ''})
+
+
 if __name__ == '__main__':
     app_logger.info('=' * 60)
     app_logger.info('🤖 MiniMax Agent API 服务启动中...')
@@ -2283,5 +2308,3 @@ if __name__ == '__main__':
     # use_reloader=False: 禁用 watchdog 自动重载;长时 SSE 流期间
     # Python stdlib 文件 mtime 抖动会触发重启,导致连接被强制中断
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
-
-

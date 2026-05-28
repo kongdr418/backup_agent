@@ -67,7 +67,20 @@
 
       <!-- Content Body -->
       <div class="content-body">
+        <div v-if="store.gen.status === 'idle' && templatePreview.pages && Object.keys(templatePreview.pages).length && !store.gen.slides.length" class="template-preview-wrap">
+          <div class="template-preview-header">
+            <span class="template-preview-label">模板预览：{{ templatePreview.label }}</span>
+            <span class="template-preview-counter">{{ templatePreview.pageOrder[previewPageIdx + 1] ? (previewPageIdx + 1) + '/' + templatePreview.pageOrder.length : '' }}</span>
+          </div>
+          <div class="template-preview-svg" v-html="templatePreview.pages[templatePreview.pageOrder[previewPageIdx]]"></div>
+          <div v-if="templatePreview.pageOrder.length > 1" class="template-preview-nav">
+            <button class="preview-nav-btn" :disabled="previewPageIdx === 0" @click="previewPageIdx--">‹</button>
+            <span class="preview-nav-label">{{ templatePreview.getLabel ? templatePreview.getLabel(templatePreview.pageOrder[previewPageIdx]) : templatePreview.pageOrder[previewPageIdx] }}</span>
+            <button class="preview-nav-btn" :disabled="previewPageIdx >= templatePreview.pageOrder.length - 1" @click="previewPageIdx++">›</button>
+          </div>
+        </div>
         <PreviewStage
+          v-else
           :status="store.gen.status"
           :stage="store.gen.stage"
           :message="store.gen.message"
@@ -112,6 +125,7 @@ import { usePptStream } from '@/composables/usePptStream'
 import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
+import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
 import { useSettingStore } from '@/stores/settingStore'
 
 const store = usePptStore()
@@ -127,6 +141,22 @@ const pptModelLabel = computed(() => {
   return modelId || '默认模型'
 })
 const { generate } = usePptStream()
+
+const templatePreview = ref<TemplatePreview>({ pages: {}, label: "", pageOrder: [] })
+const previewPageIdx = ref(0)
+
+watch(() => store.params.template_id, async (tid) => {
+  previewPageIdx.value = 0
+  if (tid) {
+    try {
+      templatePreview.value = await fetchTemplatePreview(tid)
+    } catch {
+      templatePreview.value = { pages: {}, label: "", pageOrder: [] }
+    }
+  } else {
+    templatePreview.value = { pages: {}, label: "", pageOrder: [] }
+  }
+}, { immediate: true })
 const message = useMessage()
 const dialog = useDialog()
 
@@ -525,4 +555,81 @@ function onClearAllJobs() {
     min-height: 0;
   }
 }
+
+.template-preview-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 40px;
+}
+.template-preview-header {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.template-preview-label {
+  font-size: 13px;
+  color: #999;
+}
+.template-preview-counter {
+  font-size: 12px;
+  color: #bbb;
+  margin-left: auto;
+}
+.template-preview-svg {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+.template-preview-svg :deep(svg) {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+.template-preview-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+.preview-nav-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+  transition: all 150ms ease;
+}
+.preview-nav-btn:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #ccc;
+}
+.preview-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.preview-nav-label {
+  font-size: 13px;
+  color: #666;
+  min-width: 40px;
+  text-align: center;
+}
+
 </style>
