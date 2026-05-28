@@ -74,13 +74,14 @@ def build_gradient_fill(grad_elem: Any, opacity: float = 1.0) -> str:
         if not color:
             color = "#000000"
 
-        stop_opacity = _parse_opacity(child.get("stop-opacity", "1")) * opacity
-        if not stop_opacity and stop_opacity != 0:
-            # Try CSS style attribute
+        # stop-opacity: try XML attr first, then CSS style attr
+        so_str = child.get("stop-opacity")
+        if so_str is None:
             style = child.get("style", "")
             m = re.search(r'stop-opacity\s*:\s*([^;]+)', style)
             if m:
-                stop_opacity = _parse_opacity(m.group(1).strip()) * opacity
+                so_str = m.group(1).strip()
+        stop_opacity = (_parse_opacity(so_str) if so_str is not None else 1.0) * opacity
         hex_color = parse_hex_color(color) or "000000"
 
         alpha = ""
