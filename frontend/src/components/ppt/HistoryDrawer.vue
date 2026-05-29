@@ -44,7 +44,7 @@
             </div>
             <div class="shrink-0 flex items-center gap-1">
               <router-link
-                v-if="job.has_pptx"
+                v-if="job.has_pptx && !isMobile"
                 :to="`/pptist-preview/${job.job_id}`"
                 class="px-2 h-7 rounded-md text-[11px] border border-line text-ink-2 hover:bg-bg-base inline-flex items-center gap-1 transition-colors"
                 @click.stop
@@ -86,6 +86,7 @@ import { FolderOpen, Download, Trash2, Edit3 } from 'lucide-vue-next'
 import type { PptJob } from '@/types'
 import { pptDownloadUrl } from '@/api/pptSvg'
 import { getUserId } from '@/composables/useUserId'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 
 const props = defineProps<{
   show: boolean
@@ -106,6 +107,7 @@ const visible = computed({
 })
 
 const drawerWidth = ref(420)
+const { isMobile } = useBreakpoint()
 
 function updateWidth() {
   drawerWidth.value = window.innerWidth <= 767 ? window.innerWidth : 420

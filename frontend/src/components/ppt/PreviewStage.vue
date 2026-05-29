@@ -49,7 +49,7 @@
       </div>
       <div class="action-btns">
         <router-link
-          v-if="jobId && canDownload"
+          v-if="jobId && canDownload && !isMobile"
           :to="`/pptist-preview/${jobId}`"
           class="edit-btn"
         >
@@ -83,6 +83,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import ProgressBar from './ProgressBar.vue'
 import SvgCarousel from './SvgCarousel.vue'
 import type { PptSlide } from '@/types'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 
 const props = defineProps<{
   status: 'idle' | 'streaming' | 'done' | 'error' | 'cancelled'
@@ -106,6 +107,8 @@ defineEmits<{
 }>()
 
 const doneSlides = computed(() => props.slides.length)
+
+const { isMobile } = useBreakpoint()
 
 const duration = computed(() => {
   if (!props.startedAt || !props.finishedAt) return ''
