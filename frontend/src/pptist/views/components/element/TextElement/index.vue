@@ -33,6 +33,7 @@
         v-contextmenu="contextmenus"
         @mousedown="$event => handleSelectElement($event)"
         @touchstart="$event => handleSelectElement($event)"
+        @dblclick.stop="focusEditor"
       >
         <ElementOutline
           :width="elementInfo.width"
@@ -40,6 +41,7 @@
           :outline="elementInfo.outline"
         />
         <ProsemirrorEditor
+          ref="prosemirrorEditorRef"
           class="text"
           :elementId="elementInfo.id"
           :defaultColor="elementInfo.defaultColor"
@@ -47,12 +49,9 @@
           :editable="!elementInfo.lock"
           :value="elementInfo.content"
           @update="({ value, ignore }) => updateContent(value, ignore)"
-          @mousedown="$event => handleSelectElement($event, false)"
+          @mousedown="$event => handleSelectElement($event)"
+          @dblclick.stop="focusEditor"
         />
-
-        <!-- 当字号过大且行高较小时，会出现文字高度溢出的情况，导致拖拽区域无法被选中，因此添加了以下节点避免该情况 -->
-        <div class="drag-handler top"></div>
-        <div class="drag-handler bottom"></div>
       </div>
     </div>
   </div>
@@ -84,6 +83,7 @@ const { handleElementId, isScaling } = storeToRefs(mainStore)
 const { addHistorySnapshot } = useHistorySnapshot()
 
 const elementRef = useTemplateRef<HTMLElement>('elementRef')
+const prosemirrorEditorRef = useTemplateRef<InstanceType<typeof ProsemirrorEditor>>('prosemirrorEditorRef')
 
 const shadow = computed(() => props.elementInfo.shadow)
 const { shadowStyle } = useElementShadow(shadow)
@@ -94,6 +94,11 @@ const handleSelectElement = (e: MouseEvent | TouchEvent, canMove = true) => {
   e.stopPropagation()
 
   props.selectElement(e, props.elementInfo, canMove)
+}
+
+const focusEditor = () => {
+  if (props.elementInfo.lock) return
+  prosemirrorEditorRef.value?.focus()
 }
 
 // 监听文本元素的尺寸变化，当高度变化时，更新高度到vuex
@@ -221,19 +226,6 @@ watch(isHandleElement, () => {
 
   ::v-deep(a) {
     cursor: text;
-  }
-}
-.drag-handler {
-  height: 10px;
-  position: absolute;
-  left: 0;
-  right: 0;
-
-  &.top {
-    top: 0;
-  }
-  &.bottom {
-    bottom: 0;
   }
 }
 </style>
