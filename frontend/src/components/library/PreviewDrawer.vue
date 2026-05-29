@@ -17,6 +17,14 @@
             <span class="meta-value">{{ file.created }}</span>
           </div>
           <div class="meta-actions">
+            <router-link
+              v-if="svgJobId"
+              :to="`/pptist-preview/${svgJobId}`"
+              class="meta-edit-btn"
+            >
+              <Edit3 class="w-3.5 h-3.5" />
+              编辑
+            </router-link>
             <a :href="downloadHref" target="_blank" rel="noopener" class="meta-download-btn">
               <Download class="w-3.5 h-3.5" />
               下载
@@ -106,7 +114,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
-import { Download } from 'lucide-vue-next'
+import { Download, Edit3 } from 'lucide-vue-next'
 import type { GeneratedFile } from '@/types'
 import { graphicImageUrl, videoAudioUrl } from '@/api/preview'
 import { pptDownloadUrl as pptSvgDownloadUrl } from '@/api/pptSvg'
@@ -219,20 +227,29 @@ function audioUrl(name: string) {
   margin-left: auto;
 }
 
+.meta-edit-btn,
 .meta-download-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: rgb(var(--accent-rgb));
-  color: white;
   font-size: 12px;
   font-weight: 500;
   text-decoration: none;
   transition: opacity 200ms;
 }
+.meta-edit-btn:hover,
 .meta-download-btn:hover {
   opacity: 0.85;
+}
+.meta-edit-btn {
+  background: rgb(var(--ink-1-rgb));
+  color: white;
+  margin-right: 6px;
+}
+.meta-download-btn {
+  background: rgb(var(--accent-rgb));
+  color: white;
 }
 </style>
