@@ -76,15 +76,23 @@ class QuizGenerator:
                 'message': '✨ 正在构思测验结构...'
             }
 
-            result_container: list = [None]
+            result_container: list = [None]   # JSON string (always)
+            md_container: list = [None]       # Markdown string (md flow only)
             error_container: list = [None]
 
             def llm_task():
                 try:
-                    if output_format == "docx":
-                        result_container[0] = self._generate_quiz_json(topic)
-                    else:
-                        result_container[0] = self._generate_quiz_markdown(topic)
+                    json_str = self._generate_quiz_json(topic)
+                    # LLM 可能用 markdown 代码块包裹 JSON，需要清理
+                    cleaned = json_str.strip()
+                    if cleaned.startswith('```'):
+                        # 去掉 ```json 和 ``` 包裹
+                        cleaned = re.sub(r'^```(?:json)?\s*\n?', '', cleaned)
+                        cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+                    result_container[0] = cleaned
+                    if output_format != "docx":
+                        quiz_dict = json.loads(cleaned)
+                        md_container[0] = self._json_to_markdown(quiz_dict)
                 except Exception as e:
                     error_container[0] = e
 
@@ -109,8 +117,8 @@ class QuizGenerator:
             if error_container[0]:
                 raise error_container[0]
 
-            content = result_container[0]
-            if content is None:
+            json_str = result_container[0]
+            if json_str is None:
                 raise RuntimeError("生成内容为空")
 
             yield {
@@ -124,7 +132,7 @@ class QuizGenerator:
             if output_format == "docx":
                 filename = f"课堂测验_{safe_topic}_{timestamp}.docx"
                 filepath = os.path.join(self.output_dir, filename)
-                self._save_as_docx(content, filepath)
+                self._save_as_docx(json_str, filepath)
             else:
                 filename = f"课堂测验_{safe_topic}_{timestamp}.md"
                 filepath = os.path.join(self.output_dir, filename)
@@ -135,10 +143,16 @@ type: quiz
 ---
 
 """
+                md_content = md_container[0] or ''
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(header + content)
+                    f.write(header + md_content)
 
-            result_data = {'topic': topic, 'filepath': filepath, 'format': output_format}
+            result_data = {
+                'topic': topic,
+                'filepath': filepath,
+                'format': output_format,
+                'quiz_data': json_str,
+            }
 
             yield {
                 'step': 'complete',
@@ -363,6 +377,26 @@ type: quiz
     def _generate_json_content(self, topic: str) -> str:
         """调用 AI 生成测验内容（JSON格式）（兼容接口）"""
         return self._generate_quiz_json(topic)
+
+    def _json_to_markdown(self, quiz_data: dict) -> str:
+        """从结构化 JSON 派生 Markdown（无 LLM 调用）"""
+        title = quiz_data.get('title', '')
+        lines = [f'# {title} 随堂练习参考答案\n']
+        for i, module in enumerate(quiz_data.get('modules', [])):
+            if i > 0:
+                lines.append('\n---\n')
+            lines.append(f'## {module.get("title", f"模块{i+1}")}\n')
+            for q in module.get('questions', []):
+                num = q.get('num', '')
+                qtype = q.get('type', '单选题')
+                text = q.get('text', '')
+                options = q.get('options', [])
+                answer = q.get('answer', '')
+                lines.append(f'> **{num}.** ({qtype}) {text}\n>')
+                for opt in options:
+                    lines.append(f'>\n> {opt}')
+                lines.append(f'>\n> 答案：{answer}\n')
+        return '\n'.join(lines)
 
     def _save_as_docx(self, json_str: str, filepath: str):
         """使用 Node.js 直接构建 docx"""

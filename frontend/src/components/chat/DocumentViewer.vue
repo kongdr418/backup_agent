@@ -15,6 +15,16 @@
         </div>
       </div>
       <div class="dv-actions">
+        <button
+          v-if="showQuizToggle"
+          class="dv-action-btn"
+          :class="{ primary: viewMode === 'quiz' }"
+          :title="viewMode === 'quiz' ? '切换到文档视图' : '切换到互动答题'"
+          @click="viewMode = viewMode === 'quiz' ? 'doc' : 'quiz'"
+        >
+          <component :is="viewMode === 'quiz' ? DocIcon : ListChecks" class="w-4 h-4" />
+          <span class="dv-action-label">{{ viewMode === 'quiz' ? '文档' : '答题' }}</span>
+        </button>
         <a
           v-if="downloadHref"
           :href="downloadHref"
@@ -44,9 +54,15 @@
 
     <!-- Body — 根据 kind 渲染 -->
     <div class="dv-body">
+      <!-- 互动答题 (quiz_data 可用 + 答题模式，优先于文档预览) -->
+      <QuizPlayer
+        v-if="showQuizToggle && viewMode === 'quiz'"
+        :quiz-data="quizData"
+      />
+
       <!-- DOCX 预览 -->
       <DocxPreview
-        v-if="docxFilepath"
+        v-else-if="docxFilepath"
         :path="docxFilepath"
         :name="topic || title"
       />
@@ -100,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, toRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, toRef } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
@@ -118,9 +134,12 @@ import {
   ClipboardList,
   Megaphone,
   ScrollText,
+  ListChecks,
+  FileText as DocIcon,
 } from 'lucide-vue-next'
 import { useMediaRestore } from '@/composables/useMediaRestore'
 import DocxPreview from '@/components/library/preview/DocxPreview.vue'
+import QuizPlayer from './QuizPlayer.vue'
 
 marked.setOptions({ gfm: true, breaks: true })
 
@@ -250,6 +269,16 @@ const docxHref = computed(() =>
 
 // kind for compute
 const kind = computed(() => props.kind || '')
+
+// Quiz interactive mode
+const quizData = computed(() => {
+  const raw = data.value.quiz_data
+  if (!raw) return null
+  if (typeof raw === 'string') { try { return JSON.parse(raw) } catch { return null } }
+  return raw as object
+})
+const showQuizToggle = computed(() => completeType.value === 'quiz_complete' && quizData.value)
+const viewMode = ref<'quiz' | 'doc'>('quiz')
 </script>
 
 <style scoped>
