@@ -31,33 +31,23 @@
       <div class="slide-full" v-html="activeSlideData.svg" />
     </div>
 
-    <!-- Action bar -->
-    <div v-if="!loading && !error" class="action-bar">
-      <router-link
-        v-if="jobId"
-        :to="`/pptist-preview/${jobId}`"
-        class="action-btn edit-btn"
-      >
-        <Edit3 class="w-4 h-4" />
-        场景编辑
-      </router-link>
-      <a
-        v-if="downloadUrl !== '#'"
-        :href="downloadUrl"
-        target="_blank"
-        rel="noopener"
-        class="action-btn download-btn"
-      >
-        <Download class="w-4 h-4" />
-        下载 PPTX
-      </a>
-    </div>
+    <!-- Download link -->
+    <a
+      v-if="!loading && !error && downloadUrl !== '#'"
+      :href="downloadUrl"
+      target="_blank"
+      rel="noopener"
+      class="download-bar"
+    >
+      <Download class="w-4 h-4" />
+      下载 PPTX
+    </a>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { Download, Edit3 } from 'lucide-vue-next'
+import { Download } from 'lucide-vue-next'
 import type { PptSlide } from '@/types'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { getUserId } from '@/composables/useUserId'
@@ -230,36 +220,22 @@ watch(() => props.jobId, load)
   height: auto;
 }
 
-.action-bar {
-  display: flex;
-  gap: 8px;
-}
-
-.action-btn {
-  flex: 1;
+.download-bar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 10px 0;
   border-radius: 10px;
+  background: rgb(var(--accent-rgb));
+  color: white;
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
   transition: opacity 200ms;
 }
 
-.action-btn:hover {
+.download-bar:hover {
   opacity: 0.88;
-}
-
-.edit-btn {
-  background: rgb(var(--ink-1-rgb));
-  color: white;
-}
-
-.download-btn {
-  background: rgb(var(--accent-rgb));
-  color: white;
 }
 </style>
