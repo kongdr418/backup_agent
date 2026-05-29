@@ -54,6 +54,7 @@
   --sage-rgb: 107 124 94;              /* #6b7c5e */
 
   /* ============ Module Colors ============ */
+  --nav-dashboard-rgb: 26 77 107;
   --nav-chat-rgb: 45 80 22;
   --nav-ppt-rgb: 124 74 140;
   --nav-video-rgb: 45 107 124;
@@ -153,6 +154,7 @@
   --sage-rgb: 158 170 142;
 
   /* Module dark */
+  --nav-dashboard-rgb: 36 107 137;
   --nav-chat-rgb: 124 191 94;
   --nav-ppt-rgb: 170 120 200;
   --nav-video-rgb: 100 175 200;
