@@ -98,7 +98,7 @@ def get_deepseek_api_key() -> str | None:
 
 
 # SVG generation concurrency
-SVG_MAX_CONCURRENCY = 4
+SVG_MAX_CONCURRENCY = 10
 
 # Visual Critic settings
 VISUAL_CRITIC_ENABLED = False
