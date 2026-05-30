@@ -376,6 +376,10 @@ export interface PPTShapeElement extends PPTBaseElement {
   fixedRatio: boolean
   fill: string
   gradient?: Gradient
+  /** Raw <a:gradFill> XML extracted from the original PPTX during import.
+   *  pptxtojson drops <a:alpha> from gradient stops, so we preserve the
+   *  original XML to restore exact transparency on re-export. */
+  originalGradientXml?: string
   pattern?: string
   outline?: PPTElementOutline
   opacity?: number

@@ -12,6 +12,8 @@ import { type SvgPoints, toPoints } from '@pptist/utils/svgPathParser'
 import { encrypt } from '@pptist/utils/crypto'
 import { svg2Base64 } from '@pptist/utils/svg2Base64'
 import message from '@pptist/utils/message'
+import JSZip from 'jszip'
+import type { Gradient } from '@pptist/types/slides'
 
 import BaseLatexElement from '@pptist/views/components/element/LatexElement/BaseLatexElement.vue'
 import BaseShapeElement from '@pptist/views/components/element/ShapeElement/BaseShapeElement.vue'
@@ -23,6 +25,147 @@ interface ExportImageConfig {
 }
 
 type PptxBlobWriter = (blob: Blob) => void | Promise<void>
+
+// ── DrawingML gradient fill helpers ──────────────────────────────────
+// pptxgenjs cannot emit radial/linear gradient fills — it mixes them
+// into a solid color.  To preserve the original gradient we post-process
+// the PPTX zip after pptxgenjs writes it, replacing the solid fill with
+// the correct <a:gradFill> DrawingML.
+
+/** Convert a Gradient object into DrawingML <a:gradFill> XML string. */
+const buildGradientFillXml = (gradient: Gradient): string => {
+  const stops = gradient.colors.map(c => {
+    const color = tinycolor(c.color)
+    const hex = color.setAlpha(1).toHexString().replace('#', '')
+    const alpha = Math.round(color.getAlpha() * 100000)
+    const alphaXml = alpha < 99999 ? `<a:alpha val="${alpha}"/>` : ''
+    // pos from pptxtojson is 0-100 (percentage), DrawingML expects 0-100000.
+    const emuPos = Math.min(100000, Math.max(0, Math.round(c.pos * 1000)))
+    return `<a:gs pos="${emuPos}"><a:srgbClr val="${hex}">${alphaXml}</a:srgbClr></a:gs>`
+  }).join('')
+
+  const gsLst = `<a:gsLst>${stops}</a:gsLst>`
+
+  if (gradient.type === 'radial') {
+    return `<a:gradFill rotWithShape="1">${gsLst}<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill>`
+  }
+  // linear
+  const angle = Math.round((gradient.rotate || 0) * 60000) % 21600000
+  return `<a:gradFill rotWithShape="1">${gsLst}<a:lin ang="${angle}" scaled="1"/></a:gradFill>`
+}
+
+/**
+ * Post-process a pptxgenjs-generated PPTX blob: unzip, replace solid fills
+ * on shapes whose position+size match a gradient element, then re-zip.
+ *
+ * Matching strategy: find shape entries in the PPTX XML that:
+ * 1. Have <a:custGeom> (pptxgenjs shape, not text)
+ * 2. Do NOT have <p:txBody> (not a text element)
+ * 3. Have a <a:solidFill> whose color matches the gradient's first color
+ * 4. Are not already matched (one-to-one matching)
+ */
+const postProcessPptxGradients = async (
+  pptxBlob: Blob,
+  slidesData: Slide[],
+  viewportSizePx: number,
+): Promise<Blob> => {
+  const zip = await JSZip.loadAsync(pptxBlob)
+
+  // Must match the same ratio used in the export function.
+  const ratioPx2Inch = 96 * (viewportSizePx / 960)
+
+  // Build a lookup of gradient shapes per slide.
+  const gradientMap = new Map<number, Array<{
+    gradient: Gradient; originalGradientXml?: string
+  }>>()
+
+  for (let si = 0; si < slidesData.length; si++) {
+    const slide = slidesData[si]
+    if (!slide.elements) continue
+    const entries: Array<{ gradient: Gradient; originalGradientXml?: string }> = []
+    for (const el of slide.elements) {
+      if (el.type === 'shape' && !el.special && el.gradient) {
+        entries.push({
+          gradient: el.gradient,
+          originalGradientXml: el.originalGradientXml,
+        })
+      }
+    }
+    if (entries.length) gradientMap.set(si, entries)
+  }
+
+  if (gradientMap.size === 0) return pptxBlob
+
+  console.log(`[GradientPostProcess] gradientMap:`,
+    Array.from(gradientMap.entries()).map(([si, entries]) => ({
+      slide: si + 1,
+      count: entries.length,
+      colors: entries.map(e => {
+        const firstColor = e.gradient.colors[0]?.color || ''
+        return tinycolor(firstColor).toHexString().replace('#', '').toUpperCase()
+      }),
+    })),
+  )
+
+  for (const [si, entries] of gradientMap) {
+    const path = `ppt/slides/slide${si + 1}.xml`
+    const file = zip.file(path)
+    if (!file) continue
+
+    let xml = await file.async('text')
+    let matchedCount = 0
+    const usedIndices = new Set<number>()
+
+    for (const entry of entries) {
+      const usingOriginal = !!entry.originalGradientXml
+      const gradXml = entry.originalGradientXml || buildGradientFillXml(entry.gradient)
+      // Get the first gradient color in uppercase hex (no #) for matching.
+      const firstColor = tinycolor(entry.gradient.colors[0]?.color || '')
+        .toHexString().replace('#', '').toUpperCase()
+
+      // Find a shape entry in the PPTX that:
+      // - Has custGeom (is a shape, not text)
+      // - Has no txBody (is not a text element)
+      // - Has a solidFill with matching color
+      // - Has not been matched yet
+      const spRegex = /<p:sp>([\s\S]*?)<\/p:sp>/g
+      xml = xml.replace(spRegex, (spMatch, inner: string, offset: number) => {
+        if (usedIndices.has(offset)) return spMatch
+
+        // Must be a custGeom shape (not text).
+        if (!inner.includes('custGeom')) return spMatch
+        // Must not have txBody (text elements also appear as <p:sp>).
+        if (inner.includes('txBody')) return spMatch
+        // Must have a solidFill.
+        if (!inner.includes('solidFill')) return spMatch
+
+        // Check if fill color matches.
+        const fillMatch = inner.match(/<a:solidFill><a:srgbClr val="([^"]+)"/)
+        if (!fillMatch) return spMatch
+        const fillColor = fillMatch[1].toUpperCase()
+        if (fillColor !== firstColor) return spMatch
+
+        // Match found — replace the solid fill with the gradient fill.
+        usedIndices.add(offset)
+        matchedCount++
+        const replaced = inner.replace(
+          /<a:solidFill>[\s\S]*?<\/a:solidFill>/,
+          gradXml,
+        )
+        return `<p:sp>${replaced}</p:sp>`
+      })
+    }
+
+    console.log(`[GradientPostProcess] slide ${si + 1}: ${matchedCount}/${entries.length} matched`,
+      entries.map((e, i) => ({ idx: i, src: e.originalGradientXml ? 'originalXml' : 'reconstructed' })))
+    zip.file(path, xml)
+  }
+
+  return zip.generateAsync({ type: 'blob' })
+}
+
+const EMU_PER_INCH = 914400
+// ── end gradient helpers ─────────────────────────────────────────────
 
 export default () => {
   const slidesStore = useSlidesStore()
@@ -243,7 +386,7 @@ export default () => {
           slices.push({ text: '', options: { breakLine: true } })
         }
         else if ('content' in item) {
-          const text = item.content.replace(/&nbsp;/g, ' ').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/\n/g, '')
+          const text = item.content.replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/\n/g, '')
           const options: pptxgen.TextPropsOptions = {}
 
           if (styleObj['font-size']) {
@@ -990,11 +1133,17 @@ export default () => {
 
     return new Promise((resolve, reject) => {
       setTimeout(() => {
-        const writeTask = writeBlob
-          ? pptx.write({ outputType: 'blob' }).then(blob => writeBlob(blob as Blob))
-          : pptx.writeFile({ fileName: `${title.value}.pptx` })
-
-        writeTask.then(() => {
+        // Always get the blob so we can post-process gradient fills.
+        pptx.write({ outputType: 'blob' }).then(async (rawBlob) => {
+          const blob = await postProcessPptxGradients(
+            rawBlob as Blob, _slides, viewportSize.value,
+          )
+          if (writeBlob) {
+            await writeBlob(blob)
+          }
+          else {
+            saveAs(blob, `${title.value}.pptx`)
+          }
           exporting.value = false
           resolve()
         }).catch(err => {

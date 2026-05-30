@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import { parse, type Shape, type Element, type ChartItem, type BaseElement } from 'pptxtojson'
 import { nanoid } from 'nanoid'
 import tinycolor from 'tinycolor2'
+import JSZip from 'jszip'
 import { useSlidesStore } from '@pptist/store'
 import { decrypt } from '@pptist/utils/crypto'
 import { isFloatEqual } from '@pptist/utils/common'
@@ -26,6 +27,34 @@ import type {
   ChartOptions,
   Gradient,
 } from '@pptist/types/slides'
+
+/**
+ * Extract raw <a:gradFill> XML from each slide in the original PPTX.
+ * pptxtojson drops <a:alpha> from gradient stops, so we preserve the
+ * original DrawingML to restore exact transparency on re-export.
+ *
+ * Returns an array (one per slide) of gradient fill XML strings.
+ */
+async function extractOriginalGradientFills(pptxBuffer: ArrayBuffer): Promise<string[][]> {
+  const zip = await JSZip.loadAsync(pptxBuffer)
+  const result: string[][] = []
+
+  const slides = Object.keys(zip.files)
+    .filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml'))
+    .sort()
+
+  for (const slidePath of slides) {
+    const xml = await zip.file(slidePath)!.async('text')
+    const fills: string[] = []
+    const gradRegex = /<a:gradFill[\s\S]*?<\/a:gradFill>/g
+    let m: RegExpExecArray | null
+    while ((m = gradRegex.exec(xml)) !== null) {
+      fills.push(m[0])
+    }
+    result.push(fills)
+  }
+  return result
+}
 
 const vAlignMap: Record<string, TextAlignVertical> = {
   'mid': 'middle',
@@ -135,7 +164,13 @@ const promoteListTextStyle = (html: string) => {
 
 const convertTextContent = (html: string, ratio: number) => {
   if (!html) return ''
-  const processedHtml = html.replace(/font-size:\s*([\d.]+)pt/g, (match, p1) => {
+  // Decode XML entities left undecoded by txml (e.g. &quot; → ")
+  // Order matters: &amp; last to avoid double-decoding.
+  const decodedHtml = html
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+  const processedHtml = decodedHtml.replace(/font-size:\s*([\d.]+)pt/g, (match, p1) => {
     return `font-size: ${Math.floor(parseFloat(p1) * ratio)}px`
   }).replace(/&nbsp;/g, ' ').replace(/style="([^"]*)"/g, (match, styleStr: string) => {
     const gradientMatch = styleStr.match(/background:\s*(linear-gradient\([^)]+\))/)
@@ -545,12 +580,16 @@ export default () => {
     const reader = new FileReader()
     reader.onload = async e => {
       let json = null
+      let originalGradientFills: string[][] = []
       try {
-        json = await parse(e.target!.result as ArrayBuffer, {
+        const pptxBuffer = e.target!.result as ArrayBuffer
+        json = await parse(pptxBuffer, {
           imageMode: 'base64',
           videoMode: 'blob',
           audioMode: 'blob',
         })
+        // Extract raw gradient XML before pptxtojson drops alpha values.
+        originalGradientFills = await extractOriginalGradientFills(pptxBuffer)
       }
       catch {
         exporting.value = false
@@ -570,7 +609,9 @@ export default () => {
       slidesStore.setTheme({ themeColors: json.themeColors })
 
       const slides: Slide[] = []
-      for (const item of json.slides) {
+      let slideGradientIdx = 0
+      for (const [slideIdx, item] of json.slides.entries()) {
+        slideGradientIdx = 0
         const { type, value } = item.fill
         let background: SlideBackground
         if (type === 'image') {
@@ -631,38 +672,42 @@ export default () => {
   
             if (el.type === 'text') {
               if (el.autoFit && el.autoFit.type === 'text') {
+                // autoFit text boxes should be PPTTextElement (single-click editable)
+                // not PPTShapeElement (requires double-click to edit)
                 const fontScale = ratio * (el.autoFit.fontScale || 100) / 100
                 const metrics = getParagraphMetrics(el.content, fontScale)
-                const shapeEl: PPTShapeElement = {
-                  type: 'shape',
+                const textEl: PPTTextElement = {
+                  type: 'text',
                   id: nanoid(10),
                   width: el.width,
                   height: el.height,
                   left: el.left,
                   top: el.top,
                   rotate: el.rotate,
-                  viewBox: [200, 200],
-                  path: 'M 0 0 L 200 0 L 200 200 L 0 200 Z',
-                  fill: el.fill?.type === 'color' ? el.fill.value : '',
-                  fixedRatio: false,
+                  defaultFontName: theme.value.fontName,
+                  defaultColor: theme.value.fontColor,
+                  content: convertTextContent(el.content, fontScale),
+                  lineHeight: 1,
                   outline: {
                     color: el.borderColor,
                     width: +(el.borderWidth * ratio).toFixed(2),
                     style: el.borderType,
                   },
-                  text: {
-                    content: convertTextContent(el.content, fontScale),
-                    defaultFontName: theme.value.fontName,
-                    defaultColor: theme.value.fontColor,
-                    align: vAlignMap[el.vAlign] || 'middle',
-                    lineHeight: 1,
-                  },
+                  fill: el.fill?.type === 'color' ? el.fill.value : '',
                 }
-                if (el.link) shapeEl.link = { type: 'web', target: el.link }
-                if (el.textInset) shapeEl.text!.inset = [el.textInset.t, el.textInset.r, el.textInset.b, el.textInset.l]
-                if (metrics.lineHeight) shapeEl.text!.lineHeight = metrics.lineHeight
-                if (metrics.margin) shapeEl.text!.paragraphSpace = metrics.margin
-                slide.elements.push(shapeEl)
+                if (el.shadow) {
+                  textEl.shadow = {
+                    h: el.shadow.h * ratio,
+                    v: el.shadow.v * ratio,
+                    blur: el.shadow.blur * ratio,
+                    color: el.shadow.color,
+                  }
+                }
+                if (el.link) textEl.link = { type: 'web', target: el.link }
+                if (el.textInset) textEl.inset = [el.textInset.t, el.textInset.r, el.textInset.b, el.textInset.l]
+                if (metrics.lineHeight) textEl.lineHeight = metrics.lineHeight
+                if (metrics.margin) textEl.paragraphSpace = metrics.margin
+                slide.elements.push(textEl)
               }
               else {
                 const metrics = getParagraphMetrics(el.content, ratio)
@@ -829,12 +874,19 @@ export default () => {
                   rotate: el.fill.value.rot,
                 } : undefined
 
+                // Grab the raw <a:gradFill> XML from the original PPTX to preserve alpha.
+                let originalGradientXml: string | undefined
+                if (gradient && originalGradientFills[slideIdx]) {
+                  originalGradientXml = originalGradientFills[slideIdx][slideGradientIdx]
+                  slideGradientIdx++
+                }
+
                 const pattern: string | undefined = el.fill?.type === 'image' ? el.fill.value.base64 : undefined
 
                 const fill = el.fill?.type === 'color' ? el.fill.value : ''
 
                 const metrics = getParagraphMetrics(el.content, ratio)
-                
+
                 const element: PPTShapeElement = {
                   type: 'shape',
                   id: nanoid(10),
@@ -846,6 +898,7 @@ export default () => {
                   path: 'M 0 0 L 200 0 L 200 200 L 0 200 Z',
                   fill,
                   gradient,
+                  originalGradientXml,
                   pattern,
                   fixedRatio: false,
                   rotate: el.rotate,
