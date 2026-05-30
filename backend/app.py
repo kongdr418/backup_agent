@@ -18,6 +18,7 @@ import shutil
 import logging
 import re
 import sys
+from deep_translator import GoogleTranslator
 import threading
 from datetime import datetime
 
@@ -632,6 +633,35 @@ TTS_PROVIDERS = {
         ],
         'requiresApiKey': True,
     },
+    'edge-tts': {
+        'id': 'edge-tts',
+        'name': '微软 Edge TTS',
+        'type': 'edge-tts',
+        'defaultBaseUrl': '',
+        'models': [
+            {'id': '', 'name': 'Edge TTS'},
+        ],
+        'voices': [
+            {'id': 'zh-CN-XiaoxiaoNeural', 'name': '晓晓 (女声)', 'lang': 'zh-CN'},
+            {'id': 'zh-CN-XiaoyiNeural', 'name': '小艺 (女声)', 'lang': 'zh-CN'},
+            {'id': 'zh-CN-YunxiNeural', 'name': '云希 (男声)', 'lang': 'zh-CN'},
+            {'id': 'zh-CN-YunyangNeural', 'name': '云扬 (男声)', 'lang': 'zh-CN'},
+            {'id': 'zh-CN-liaoning-XiaobeiNeural', 'name': '辽宁小贝', 'lang': 'zh-CN'},
+            {'id': 'zh-CN-shaanxi-XiaoniNeural', 'name': '陕西小妮', 'lang': 'zh-CN'},
+            {'id': 'zh-HK-HiuMaanNeural', 'name': '香港小文', 'lang': 'zh-HK'},
+            {'id': 'zh-TW-HsiaoChenNeural', 'name': '台湾小珍', 'lang': 'zh-TW'},
+            {'id': 'zh-TW-YunJheNeural', 'name': '台湾云哲', 'lang': 'zh-TW'},
+            {'id': 'en-US-AriaNeural', 'name': 'Aria (美音)', 'lang': 'en'},
+            {'id': 'en-US-GuyNeural', 'name': 'Guy (美音)', 'lang': 'en'},
+            {'id': 'en-US-JennyNeural', 'name': 'Jenny (美音)', 'lang': 'en'},
+            {'id': 'en-GB-SoniaNeural', 'name': 'Sonia (英音)', 'lang': 'en'},
+            {'id': 'en-GB-RyanNeural', 'name': 'Ryan (英音)', 'lang': 'en'},
+            {'id': 'en-AU-NatashaNeural', 'name': 'Natasha (澳音)', 'lang': 'en'},
+            {'id': 'ja-JP-NanamiNeural', 'name': '七海 (日语)', 'lang': 'ja'},
+            {'id': 'ko-KR-SunHiNeural', 'name': 'SunHi (韩语)', 'lang': 'ko'},
+        ],
+        'requiresApiKey': False,
+    },
 }
 
 # 服务端已配置的 API Keys（来自环境变量）
@@ -723,11 +753,11 @@ def tts_test():
     provider = TTS_PROVIDERS.get(provider_id)
     if not base_url and provider:
         base_url = provider.get('defaultBaseUrl', '')
-    if not base_url:
+    if not base_url and provider_id != 'edge-tts':
         return jsonify({'success': False, 'message': '无法确定 API 地址'}), 400
     if not api_key and provider_id in SERVER_API_KEYS:
         api_key = SERVER_API_KEYS[provider_id]
-    if not api_key:
+    if not api_key and provider_id not in ('edge-tts',):
         return jsonify({'success': False, 'message': '请填写 API Key'}), 400
 
     if provider_id in ('openai-tts', 'glm-tts'):
@@ -770,6 +800,41 @@ def tts_test():
             )
             audio_data = response.choices[0].message.audio.data
             return jsonify({'success': True, 'audio': audio_data, 'format': 'mp3'})
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
+    if provider_id == 'edge-tts':
+        try:
+            import asyncio
+            import edge_tts
+
+            # 根据音色语言自动翻译
+            voice_info = None
+            if provider and voice:
+                for v in provider.get('voices', []):
+                    if v['id'] == voice:
+                        voice_info = v
+                        break
+
+            target_lang = voice_info.get('lang', 'zh-CN') if voice_info else 'zh-CN'
+            text_to_speak = text
+            if target_lang != 'zh-CN':
+                try:
+                    text_to_speak = GoogleTranslator(source='zh-CN', target=target_lang).translate(text)
+                except Exception:
+                    pass  # 翻译失败则用原文
+
+            async def _generate():
+                communicate = edge_tts.Communicate(text_to_speak, voice or 'zh-CN-XiaoxiaoNeural')
+                audio_buffer = b""
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio_buffer += chunk["data"]
+                return audio_buffer
+            audio_data = asyncio.run(_generate())
+            import base64 as b64
+            audio_b64 = b64.b64encode(audio_data).decode('utf-8')
+            return jsonify({'success': True, 'audio': audio_b64, 'format': 'mp3'})
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)})
 

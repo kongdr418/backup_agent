@@ -116,26 +116,28 @@
               <label class="text-sm font-medium text-ink-2">服务商</label>
               <n-select v-model:value="settings.tts_provider" :options="ttsProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onTTSProviderChange(v)" />
             </div>
-            <div class="space-y-1.5">
-              <label class="text-sm font-medium text-ink-2">API Key<span v-if="ttsProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
-              <div class="flex items-start gap-2">
-                <div class="flex gap-2 flex-1 max-w-sm">
-                  <n-input :value="ttsConfigValue.apiKey" :type="showKey.tts ? 'text' : 'password'" :placeholder="ttsProvider?.isServerConfigured ? '可选覆盖服务端 Key' : '请输入 API Key'" size="small" class="flex-1" autocomplete="new-password" @update:value="(v: string) => onTTSConfigChange('apiKey', v)" />
-                  <button class="btn-eye" @click="showKey.tts = !showKey.tts"><Eye v-if="!showKey.tts" class="w-3.5 h-3.5" /><EyeOff v-else class="w-3.5 h-3.5" /></button>
+            <template v-if="ttsProvider?.requiresApiKey">
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-ink-2">API Key<span v-if="ttsProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
+                <div class="flex items-start gap-2">
+                  <div class="flex gap-2 flex-1 max-w-sm">
+                    <n-input :value="ttsConfigValue.apiKey" :type="showKey.tts ? 'text' : 'password'" :placeholder="ttsProvider?.isServerConfigured ? '可选覆盖服务端 Key' : '请输入 API Key'" size="small" class="flex-1" autocomplete="new-password" @update:value="(v: string) => onTTSConfigChange('apiKey', v)" />
+                    <button class="btn-eye" @click="showKey.tts = !showKey.tts"><Eye v-if="!showKey.tts" class="w-3.5 h-3.5" /><EyeOff v-else class="w-3.5 h-3.5" /></button>
+                  </div>
+                  <button class="btn-outline" :disabled="verifying.tts || (!ttsConfigValue.apiKey && !ttsProvider?.isServerConfigured)" @click="onTestTTSConnection()"><Loader2 v-if="verifying.tts" class="w-3.5 h-3.5 animate-spin" /><Zap v-else class="w-3.5 h-3.5" />{{ verifying.tts ? '测试中...' : '测试连接' }}</button>
                 </div>
-                <button class="btn-outline" :disabled="verifying.tts || (!ttsConfigValue.apiKey && !ttsProvider?.isServerConfigured)" @click="onTestTTSConnection()"><Loader2 v-if="verifying.tts" class="w-3.5 h-3.5 animate-spin" /><Zap v-else class="w-3.5 h-3.5" />{{ verifying.tts ? '测试中...' : '测试连接' }}</button>
+                <div v-if="verifyResults.tts" class="result-card" :class="verifyResults.tts!.success ? 'result-success' : 'result-error'"><CheckCircle2 v-if="verifyResults.tts!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.tts!.message }}</span></div>
               </div>
-              <div v-if="verifyResults.tts" class="result-card" :class="verifyResults.tts!.success ? 'result-success' : 'result-error'"><CheckCircle2 v-if="verifyResults.tts!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.tts!.message }}</span></div>
-            </div>
-            <div class="space-y-1.5">
-              <label class="text-sm font-medium text-ink-2">Base URL</label>
-              <n-input v-model:value="ttsConfigValue.baseUrl" :placeholder="ttsProvider?.defaultBaseUrl || ''" size="small" class="max-w-md" @update:value="(v: string) => onTTSConfigChange('baseUrl', v)" />
-              <p v-if="ttsProvider" class="text-xs text-ink-4">默认：{{ ttsProvider.defaultBaseUrl }}</p>
-            </div>
-            <div class="space-y-1.5">
-              <label class="text-sm font-medium text-ink-2">模型</label>
-              <n-select v-model:value="settings.tts_model" :options="ttsModelOptions" size="small" class="max-w-md" @update:value="onUpdate('tts_model', $event)" />
-            </div>
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-ink-2">Base URL</label>
+                <n-input v-model:value="ttsConfigValue.baseUrl" :placeholder="ttsProvider?.defaultBaseUrl || ''" size="small" class="max-w-md" @update:value="(v: string) => onTTSConfigChange('baseUrl', v)" />
+                <p v-if="ttsProvider" class="text-xs text-ink-4">默认：{{ ttsProvider.defaultBaseUrl }}</p>
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-sm font-medium text-ink-2">模型</label>
+                <n-select v-model:value="settings.tts_model" :options="ttsModelOptions" size="small" class="max-w-md" @update:value="onUpdate('tts_model', $event)" />
+              </div>
+            </template>
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-ink-2">音色</label>
               <n-select v-model:value="settings.tts_voice" :options="ttsVoiceOptions" size="small" class="max-w-md" @update:value="onUpdate('tts_voice', $event)" />
@@ -145,7 +147,7 @@
               <label class="text-sm font-medium text-ink-2">TTS 测试</label>
               <div class="flex items-start gap-2">
                 <n-input v-model:value="ttsTestText" placeholder="输入要合成的文本..." size="small" class="flex-1 max-w-sm" @keyup.enter="onTestTtsPlay" />
-                <button class="btn-outline" :disabled="ttsTesting || !ttsTestText.trim() || (!ttsConfigValue.apiKey && !ttsProvider?.isServerConfigured)" @click="onTestTtsPlay">
+                <button class="btn-outline" :disabled="ttsTesting || !ttsTestText.trim()" @click="onTestTtsPlay">
                   <Loader2 v-if="ttsTesting" class="w-3.5 h-3.5 animate-spin" /><Volume2 v-else class="w-3.5 h-3.5" />{{ ttsTesting ? '合成中...' : '播放' }}
                 </button>
               </div>
@@ -199,6 +201,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   moonshot: '/logos/kimi.png', zhipu: '/logos/glm.svg', glm: '/logos/glm.svg',
   qwen: '/logos/qwen.svg', siliconflow: '/logos/siliconflow.svg',
   mimo: '/logos/xiaomi.svg', 'mimo-tts': '/logos/xiaomi.svg',
+  'edge-tts': '/logos/edge.svg',
 }
 const MONO_LOGOS = new Set(['openai', 'deepseek', 'siliconflow'])
 function renderProviderLabel(option: { label: string; value: string }) {

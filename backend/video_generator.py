@@ -32,6 +32,11 @@ TTS_PROVIDER_DEFAULTS = {
         'model': 'glm-tts',
         'voice': 'tongtong',
     },
+    'edge-tts': {
+        'base_url': '',
+        'model': '',
+        'voice': 'zh-CN-XiaoxiaoNeural',
+    },
 }
 
 
@@ -395,6 +400,8 @@ class VideoGenerator:
             return self._generate_glm_tts(voiceover_text, voice)
         elif self.tts_provider == 'openai-tts':
             return self._generate_openai_tts(voiceover_text, voice)
+        elif self.tts_provider == 'edge-tts':
+            return self._generate_edge_tts(voiceover_text, voice)
         else:
             return self._generate_mimo_tts(voiceover_text, voice)
 
@@ -468,6 +475,44 @@ class VideoGenerator:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+    def _generate_edge_tts(self, voiceover_text: str, voice: str = "") -> bytes:
+        """Edge TTS: 使用 edge-tts Python 库，无需 API"""
+        import asyncio
+        from deep_translator import GoogleTranslator
+
+        # 根据音色语言自动翻译
+        voice_lang_map = {
+            'zh-CN': 'zh-CN', 'zh-HK': 'zh-TW', 'zh-TW': 'zh-TW',
+            'en-US': 'en', 'en-GB': 'en', 'en-AU': 'en',
+            'ja-JP': 'ja', 'ko-KR': 'ko',
+        }
+        target_lang = 'zh-CN'
+        voice_prefix = voice.split('-')[0] + '-' + voice.split('-')[1] if voice else ''
+        for prefix, lang in voice_lang_map.items():
+            if voice.startswith(prefix):
+                target_lang = lang
+                break
+
+        text_to_speak = voiceover_text
+        if target_lang != 'zh-CN':
+            try:
+                text_to_speak = GoogleTranslator(source='zh-CN', target=target_lang).translate(voiceover_text)
+            except Exception:
+                pass  # 翻译失败则用原文
+
+        async def _generate():
+            import edge_tts
+
+            communicate = edge_tts.Communicate(text_to_speak, voice or self.tts_voice)
+            audio_buffer = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_buffer += chunk["data"]
+
+            return audio_buffer
+
+        return asyncio.run(_generate())
 
     def _generate_audio(
         self,
