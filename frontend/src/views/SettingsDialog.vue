@@ -248,9 +248,10 @@ function renderProviderLabel(option: { label: string; value: string }) {
   const icon = PROVIDER_LOGOS[rawId]
   if (icon) {
     const isMono = MONO_LOGOS.has(rawId)
+    const note = rawId === 'edge-tts' ? ' (免API密钥)' : ''
     return h('div', { class: 'flex items-center gap-2' }, [
       h('img', { src: icon, alt: '', class: `w-4 h-4 rounded ${isMono ? 'dark:invert' : ''}`, style: 'display:block' }),
-      h('span', null, option.label),
+      h('span', null, option.label + note),
     ])
   }
   const fallbackId = rawId.replace(/-tts$/, '').replace(/-asr$/, '')
