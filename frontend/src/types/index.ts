@@ -100,6 +100,7 @@ export interface GeneratedFile {
   size_formatted: string
   created: string
   icon?: string
+  slide_count?: number
 }
 
 // ---------- Settings ----------

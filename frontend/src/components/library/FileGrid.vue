@@ -17,7 +17,9 @@
           <div class="card-name" :title="f.name">{{ f.name }}</div>
           <div class="card-meta">
             <span class="type-badge" :class="badgeClass(f.type)">{{ f.type_label }}</span>
-            <span class="meta-sep">·</span>
+            <span v-if="f.slide_count" class="meta-sep">·</span>
+            <span v-if="f.slide_count">{{ f.slide_count }} 页</span>
+            <span v-if="f.slide_count" class="meta-sep">·</span>
             <span>{{ f.size_formatted }}</span>
           </div>
           <div class="card-date">{{ f.created }}</div>

@@ -85,6 +85,8 @@
 
               <div class="card-footer">
                 <span class="card-type">{{ f.type_label }}</span>
+                <span v-if="f.slide_count" class="card-dot">·</span>
+                <span v-if="f.slide_count">{{ f.slide_count }} 页</span>
                 <span class="card-dot">·</span>
                 <span class="card-size">{{ f.size_formatted }}</span>
                 <span class="card-dot">·</span>

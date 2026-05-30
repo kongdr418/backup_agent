@@ -1122,7 +1122,8 @@ def get_files():
                     'size': stat.st_size,
                     'size_formatted': f"{stat.st_size / 1024:.1f} KB",
                     'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '📊'
+                    'icon': '📊',
+                    'slide_count': None,
                 })
 
     # 扫描 SVG PPT 导出的 PPTX 文件
@@ -1154,6 +1155,14 @@ def get_files():
                 except Exception:
                     pass
             display_name = f"{topic}.pptx" if topic else f
+            # 读取 slide_count
+            slide_count = None
+            svg_final_dir = os.path.join(job_path, 'svg_final')
+            if os.path.exists(svg_final_dir):
+                slide_count = len([x for x in os.listdir(svg_final_dir) if x.endswith('.svg')])
+            elif os.path.exists(exports_dir):
+                import glob
+                slide_count = len(glob.glob(os.path.join(exports_dir, '*.pptx'))) or None
             files.append({
                 'id': f'svg_ppt_{job_dir}',
                 'name': display_name,
@@ -1163,7 +1172,8 @@ def get_files():
                 'size': stat.st_size,
                 'size_formatted': f"{stat.st_size / 1024:.1f} KB",
                 'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                'icon': '📊'
+                'icon': '📊',
+                'slide_count': slide_count,
             })
 
     # 扫描讲义文件
