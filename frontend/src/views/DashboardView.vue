@@ -225,7 +225,7 @@ function iconFor(type: string) {
   }
 }
 
-const totalFiles = computed(() => fileStore.files.length + svgPptCount.value)
+const totalFiles = computed(() => fileStore.files.length)
 const sessionCount = computed(() => sessionStore.sessions.length)
 
 const healthTone = computed<'success' | 'danger' | 'neutral'>(() => {
