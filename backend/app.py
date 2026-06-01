@@ -464,11 +464,15 @@ PROVIDERS = {
         'id': 'minimax',
         'name': 'MiniMax',
         'type': 'minimax',
-        'defaultBaseUrl': 'https://api.minimax.chat/v1/text/chatcompletion_v2',
+        'defaultBaseUrl': 'https://api.minimaxi.com/v1',
         'models': [
+            {'id': 'MiniMax-M3', 'name': 'MiniMax M3 (多模态)', 'contextWindow': 262144, 'maxOutput': 16384},
+            {'id': 'MiniMax-M2.7', 'name': 'MiniMax M2.7', 'contextWindow': 131072, 'maxOutput': 8192},
+            {'id': 'MiniMax-M2.5', 'name': 'MiniMax M2.5', 'contextWindow': 131072, 'maxOutput': 8192},
             {'id': 'MiniMax-M2.5-highspeed', 'name': 'MiniMax M2.5 高速', 'contextWindow': 16384, 'maxOutput': 4096},
         ],
         'requiresApiKey': True,
+        'supportsReasoning': True,
     },
     'deepseek': {
         'id': 'deepseek',
@@ -1040,34 +1044,39 @@ def _verify_openai_tts(api_key: str, base_url: str, model_id: str, provider_id: 
 
 
 def _verify_minimax(api_key: str, base_url: str, model_id: str):
-    """验证 MiniMax API"""
-    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
-    payload = {
-        'model': model_id,
-        'messages': [{'role': 'user', 'content': 'Say "OK" if you can hear me.'}],
-        'max_tokens': 64,
-    }
+    """验证 MiniMax API (新平台 api.minimaxi.com，OpenAI 兼容)"""
+    from openai import OpenAI
+    # base_url 由前端传入，可能已是完整端点 /chat/completions；保证只保留 base
+    if base_url.rstrip('/').endswith('/chat/completions'):
+        base = base_url.rsplit('/chat/completions', 1)[0]
+    else:
+        base = base_url
+    client = OpenAI(api_key=api_key, base_url=base, timeout=15)
     try:
-        resp = requests.post(base_url, headers=headers, json=payload, timeout=15)
-        data = _safe_json(resp)
-        if resp.status_code == 200:
-            # MiniMax 对无效 Key 也返回 200，但 body 里有 base_resp.status_code
-            base_resp = data.get('base_resp', {})
-            if base_resp.get('status_code', 0) != 0:
-                msg = base_resp.get('status_msg', '') or f'status_code: {base_resp.get("status_code")}'
-                return jsonify({'success': False, 'message': msg})
-            if data.get('error'):
-                return jsonify({'success': False, 'message': str(data['error'])})
-            text = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-            if not text.strip():
-                return jsonify({'success': False, 'message': '返回内容为空，请检查 API Key'})
-            return jsonify({'success': True, 'message': '连接成功', 'response': text.strip()})
-        elif resp.status_code == 401:
-            return jsonify({'success': False, 'message': 'API Key 无效或已过期'})
-        else:
-            return jsonify({'success': False, 'message': f'HTTP {resp.status_code}: {resp.text[:200]}'})
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[{'role': 'user', 'content': 'Say "OK" if you can hear me.'}],
+            max_tokens=64,
+        )
+        text = response.choices[0].message.content or ''
+        if not text.strip():
+            return jsonify({'success': False, 'message': '返回内容为空，请检查 API Key 或模型 ID'})
+        return jsonify({'success': True, 'message': '连接成功', 'response': text.strip()})
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        error_str = str(e)
+        if '401' in error_str or 'Unauthorized' in error_str or 'Incorrect API key' in error_str:
+            msg = 'API Key 无效或已过期'
+        elif '404' in error_str or 'not found' in error_str.lower():
+            msg = '模型未找到，请检查模型 ID 或 Base URL'
+        elif '429' in error_str:
+            msg = 'API 请求频率超限，请稍后再试'
+        elif 'timeout' in error_str.lower() or 'timed out' in error_str.lower():
+            msg = '连接超时，请检查网络或 Base URL'
+        elif 'Connection' in error_str or 'ENOTFOUND' in error_str or 'ECONNREFUSED' in error_str:
+            msg = '无法连接到 API 服务器，请检查 Base URL'
+        else:
+            msg = error_str
+        return jsonify({'success': False, 'message': msg})
 
 
 # ==================== 设置 API ====================

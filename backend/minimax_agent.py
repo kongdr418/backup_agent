@@ -29,7 +29,7 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 class MiniMaxAgent:
     """MiniMax 大模型 Agent"""
     
-    BASE_URL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
+    BASE_URL = "https://api.minimaxi.com/v1/chat/completions"
     
     def __init__(self, api_key: str, session_id: str = None, model: str = None, user_id: str = 'anonymous'):
         self.api_key = api_key
@@ -1363,27 +1363,48 @@ class MiniMaxAgent:
             })
     
     def _handle_stream_with_memory(self, response, original_message: str) -> Generator[str, None, None]:
-        """处理流式响应并记录到记忆系统"""
+        """处理流式响应并记录到记忆系统。
+        同时支持 OpenAI SDK 的 ChatCompletionChunk 迭代器和 requests 的原始 SSE 流。
+        """
         full_content = ""
-        
-        for line in response.iter_lines():
-            if line:
-                line_text = line.decode('utf-8')
-                if line_text.startswith('data: '):
-                    data = line_text[6:]
-                    if data == '[DONE]':
-                        break
+
+        # OpenAI SDK 路径：传入的是已解析的 chunk 对象
+        if hasattr(response, '__iter__') and not hasattr(response, 'iter_lines'):
+            try:
+                for chunk in response:
                     try:
-                        chunk = json.loads(data)
-                        if 'choices' in chunk and len(chunk['choices']) > 0:
-                            delta = chunk['choices'][0].get('delta', {})
-                            content = delta.get('content', '')
-                            if content:
-                                full_content += content
-                                yield content
-                    except json.JSONDecodeError:
+                        choices = chunk.choices
+                    except Exception:
                         continue
-        
+                    if not choices:
+                        continue
+                    delta = choices[0].delta
+                    content = getattr(delta, 'content', None) if delta else None
+                    if content:
+                        full_content += content
+                        yield content
+            except (TypeError, AttributeError):
+                pass
+        else:
+            # requests 原始 SSE 流
+            for line in response.iter_lines():
+                if line:
+                    line_text = line.decode('utf-8') if isinstance(line, bytes) else line
+                    if line_text.startswith('data: '):
+                        data = line_text[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            if 'choices' in chunk and len(chunk['choices']) > 0:
+                                delta = chunk['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    full_content += content
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+
         # 将完整回复添加到历史记录
         if full_content:
             self.conversation_history.append({
@@ -1394,48 +1415,74 @@ class MiniMaxAgent:
             self.memory.log_interaction(original_message, full_content)
 
     def _call_minimax(self, model: str, messages: list, message: str, stream: bool, api_key: str = ''):
-        """调用 MiniMax API"""
-        # 优先使用客户端提供的 API Key，否则回退到初始化时的 key
+        """调用 MiniMax API (新平台 api.minimaxi.com，OpenAI 兼容)"""
         effective_api_key = api_key or self.api_key
-        headers = {
-            "Authorization": f"Bearer {effective_api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
+        if not effective_api_key:
+            return "错误: 未配置 API Key，请在设置中填写"
 
+        # BASE_URL 是完整端点，OpenAI SDK 需要 base（不含 /chat/completions）
+        base_url = self.BASE_URL
+        if base_url.rstrip('/').endswith('/chat/completions'):
+            base_url = base_url.rsplit('/chat/completions', 1)[0]
+
+        # 优先使用 OpenAI SDK
         try:
-            response = requests.post(
-                self.BASE_URL,
-                headers=headers,
-                json=payload,
-                stream=stream,
-                timeout=60
-            )
-            response.raise_for_status()
-
+            from openai import OpenAI
+            client = OpenAI(api_key=effective_api_key, base_url=base_url, timeout=60)
             if stream:
-                return self._handle_stream_with_memory(response, message)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+                return self._handle_stream_with_memory(resp, message)
             else:
-                result = response.json()
-                assistant_message = result["choices"][0]["message"]["content"]
-
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": assistant_message
-                })
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=False,
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+                assistant_message = resp.choices[0].message.content or ""
+                self.conversation_history.append({"role": "assistant", "content": assistant_message})
                 self.memory.log_interaction(message, assistant_message)
                 return assistant_message
-
-        except requests.exceptions.RequestException as e:
-            return f"请求失败: {str(e)}"
-        except (KeyError, json.JSONDecodeError) as e:
-            return f"解析响应失败: {str(e)}"
+        except Exception:
+            # 回退到 requests（流式仍可用）
+            headers = {
+                "Authorization": f"Bearer {effective_api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": stream,
+                "temperature": 0.7,
+                "max_tokens": 2000,
+            }
+            try:
+                response = requests.post(
+                    self.BASE_URL,
+                    headers=headers,
+                    json=payload,
+                    stream=stream,
+                    timeout=60,
+                )
+                response.raise_for_status()
+                if stream:
+                    return self._handle_stream_with_memory(response, message)
+                result = response.json()
+                assistant_message = result["choices"][0]["message"]["content"]
+                self.conversation_history.append({"role": "assistant", "content": assistant_message})
+                self.memory.log_interaction(message, assistant_message)
+                return assistant_message
+            except requests.exceptions.RequestException as e:
+                return f"请求失败: {str(e)}"
+            except (KeyError, json.JSONDecodeError) as e:
+                return f"解析响应失败: {str(e)}"
 
     def _call_anthropic_compatible(self, model: str, messages: list, message: str, stream: bool,
                                     api_key: str = '', base_url: str = ''):
