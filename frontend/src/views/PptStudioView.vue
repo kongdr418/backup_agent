@@ -47,6 +47,14 @@
         </div>
         <div class="header-actions">
           <button
+            class="action-btn"
+            :disabled="creatingClassroom"
+            title="生成交互式课堂"
+            @click="onCreateClassroom"
+          >
+            <span class="btn-label">{{ creatingClassroom ? '生成中' : '转课堂' }}</span>
+          </button>
+          <button
             class="video-mobile-create-btn md:hidden action-btn"
             title="参数"
             @click="drawerOpen = true"
@@ -113,6 +121,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { History, SlidersHorizontal, X } from 'lucide-vue-next'
 import { useMessage, useDialog } from 'naive-ui'
 
@@ -127,10 +136,12 @@ import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
+import { generateInteractiveClassroom } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
 
 const store = usePptStore()
 const settingStore = useSettingStore()
+const router = useRouter()
 useRefreshGuard()
 
 const pptModelLabel = computed(() => {
@@ -164,6 +175,7 @@ const dialog = useDialog()
 const activeIdx = ref(0)
 const historyOpen = ref(false)
 const drawerOpen = ref(false)
+const creatingClassroom = ref(false)
 
 // keep active idx valid when slides arrive
 watch(
@@ -244,6 +256,32 @@ function onDownload() {
   if (!store.gen.jobId) return
   const url = `${pptDownloadUrl(store.gen.jobId)}?user_id=${encodeURIComponent(getUserId())}`
   window.open(url, '_blank', 'noopener')
+}
+
+async function onCreateClassroom() {
+  if (!store.params.topic?.trim()) {
+    message.warning('请先填写课程主题')
+    return
+  }
+  creatingClassroom.value = true
+  try {
+    const res = await generateInteractiveClassroom({
+      topic: store.params.topic,
+      course: 'Python 程序设计',
+      ppt_job_id: store.gen.jobId || undefined,
+      tts_provider: settingStore.settings.tts_provider,
+      tts_model: settingStore.settings.tts_model,
+      tts_voice: settingStore.settings.tts_voice,
+      tts_api_key: settingStore.getEffectiveTTSApiKey(),
+      tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+    })
+    message.success('交互式课堂已生成')
+    router.push(`/interactive-classroom/${res.classroom_id}`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : '课堂生成失败')
+  } finally {
+    creatingClassroom.value = false
+  }
 }
 
 function onReset() {
