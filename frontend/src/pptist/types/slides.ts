@@ -429,6 +429,8 @@ export interface PPTLineElement extends Omit<PPTBaseElement, 'height' | 'rotate'
   end: [number, number]
   style: LineStyleType
   color: string
+  /** Line opacity (0-1). 1 = fully opaque. pptxtojson drops <a:alpha> from border, so we extract it separately. */
+  opacity?: number
   points: [LinePoint, LinePoint]
   shadow?: PPTElementShadow
   broken?: [number, number]

@@ -56,6 +56,59 @@ async function extractOriginalGradientFills(pptxBuffer: ArrayBuffer): Promise<st
   return result
 }
 
+/**
+ * Extract line alpha values from each slide in the original PPTX.
+ * pptxtojson's border.js only extracts borderColor but drops <a:alpha>,
+ * so we extract the alpha values separately to preserve line transparency.
+ *
+ * Returns an array (one per slide) of alpha values (0-1, where 1 = fully opaque).
+ */
+async function extractOriginalLineAlphas(pptxBuffer: ArrayBuffer): Promise<number[][]> {
+  const zip = await JSZip.loadAsync(pptxBuffer)
+  const result: number[][] = []
+
+  const slides = Object.keys(zip.files)
+    .filter(n => n.startsWith('ppt/slides/slide') && n.endsWith('.xml'))
+    .sort()
+
+  for (const slidePath of slides) {
+    const xml = await zip.file(slidePath)!.async('text')
+    const alphas: number[] = []
+
+    // Match all <p:sp> elements that contain <a:ln> (line elements)
+    const spRegex = /<p:sp>[\s\S]*?<\/p:sp>/g
+    let spMatch: RegExpExecArray | null
+    while ((spMatch = spRegex.exec(xml)) !== null) {
+      const sp = spMatch[0]
+
+      // Only process line elements (prst="line" or connector types)
+      const isLine = /prst="line"/.test(sp) || /straightConnector|bentConnector|curvedConnector/.test(sp)
+      if (!isLine) continue
+
+      // Extract alpha from <a:ln w="..."><a:solidFill><a:srgbClr><a:alpha val="X"/></a:srgbClr></a:solidFill></a:ln>
+      const lnMatch = sp.match(/<a:ln[^>]*>([\s\S]*?)<\/a:ln>/)
+      if (lnMatch) {
+        const lnContent = lnMatch[1]
+        const alphaMatch = lnContent.match(/<a:solidFill>[\s\S]*?<a:alpha\s+val="(\d+)"[\s\S]*?<\/a:solidFill>/)
+        if (alphaMatch) {
+          // val is in 1/100000 units (e.g., 3000 = 3% = 0.03 opacity)
+          alphas.push(parseInt(alphaMatch[1]) / 100000)
+        }
+        else {
+          // No alpha specified = fully opaque
+          alphas.push(1)
+        }
+      }
+      else {
+        // No line element = fully opaque
+        alphas.push(1)
+      }
+    }
+    result.push(alphas)
+  }
+  return result
+}
+
 const vAlignMap: Record<string, TextAlignVertical> = {
   'mid': 'middle',
   'down': 'bottom',
@@ -434,7 +487,7 @@ export default () => {
     }
   }
 
-  const parseLineElement = (el: Shape, ratio: number) => {
+  const parseLineElement = (el: Shape, ratio: number, opacity?: number) => {
     let start: [number, number] = [0, 0]
     let end: [number, number] = [0, 0]
 
@@ -465,6 +518,7 @@ export default () => {
       end,
       style: el.borderType,
       color: el.borderColor,
+      opacity,
       points: ['', /straightConnector/.test(el.shapType) ? 'arrow' : '']
     }
     if (el.rotate) {
@@ -581,6 +635,7 @@ export default () => {
     reader.onload = async e => {
       let json = null
       let originalGradientFills: string[][] = []
+      let originalLineAlphas: number[][] = []
       try {
         const pptxBuffer = e.target!.result as ArrayBuffer
         json = await parse(pptxBuffer, {
@@ -590,6 +645,8 @@ export default () => {
         })
         // Extract raw gradient XML before pptxtojson drops alpha values.
         originalGradientFills = await extractOriginalGradientFills(pptxBuffer)
+        // Extract line alpha values (pptxtojson drops <a:alpha> from borders).
+        originalLineAlphas = await extractOriginalLineAlphas(pptxBuffer)
       }
       catch {
         exporting.value = false
@@ -655,6 +712,9 @@ export default () => {
           background,
           remark: item.note || '',
         }
+
+        // Track line alpha index for this slide (lines are processed in order).
+        let slideLineAlphaIdx = 0
 
         const parseElements = (elements: Element[]) => {
           const sortedElements = elements.sort((a, b) => a.order - b.order)
@@ -859,7 +919,10 @@ export default () => {
             }
             else if (el.type === 'shape') {
               if (el.shapType === 'line' || /straightConnector/.test(el.shapType) || /bentConnector/.test(el.shapType) || /curvedConnector/.test(el.shapType)) {
-                const lineElement = parseLineElement(el, ratio)
+                // Get line alpha from extracted values (pptxtojson drops <a:alpha> from borders).
+                const lineAlpha = originalLineAlphas[slideIdx]?.[slideLineAlphaIdx]
+                slideLineAlphaIdx++
+                const lineElement = parseLineElement(el, ratio, lineAlpha)
                 slide.elements.push(lineElement)
               }
               else {

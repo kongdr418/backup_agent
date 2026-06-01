@@ -880,15 +880,19 @@ export default () => {
           const { minX, maxX, minY, maxY } = getElementRange(el)
           const c = formatColor(el.color)
 
+          // Use el.opacity if available (extracted from original PPTX <a:alpha>),
+          // otherwise fall back to color alpha (which pptxtojson may have dropped).
+          const lineAlpha = el.opacity !== undefined ? el.opacity : c.alpha
+
           const options: pptxgen.ShapeProps = {
             x: el.left / ratioPx2Inch.value,
             y: el.top / ratioPx2Inch.value,
             w: (maxX - minX) / ratioPx2Inch.value,
             h: (maxY - minY) / ratioPx2Inch.value,
             line: {
-              color: c.color, 
-              transparency: (1 - c.alpha) * 100,
-              width: el.width / ratioPx2Pt.value, 
+              color: c.color,
+              transparency: (1 - lineAlpha) * 100,
+              width: el.width / ratioPx2Pt.value,
               dashType: dashTypeMap[el.style] as 'solid' | 'dash' | 'sysDot',
               beginArrowType: el.points[0] ? 'arrow' : 'none',
               endArrowType: el.points[1] ? 'arrow' : 'none',

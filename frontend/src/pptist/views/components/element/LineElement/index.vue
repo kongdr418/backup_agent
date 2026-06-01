@@ -38,10 +38,11 @@
         </defs>
 				<path
           class="line-point"
-          :d="path" 
-          :stroke="elementInfo.color" 
-          :stroke-width="elementInfo.width" 
+          :d="path"
+          :stroke="elementInfo.color"
+          :stroke-width="elementInfo.width"
           :stroke-dasharray="lineDashArray"
+          :stroke-opacity="elementInfo.opacity"
           fill="none"
         ></path>
 				<path
