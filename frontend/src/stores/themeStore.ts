@@ -16,10 +16,10 @@ type Effective = 'light' | 'dark'
 const STORAGE_KEY = 'ai_creator.theme'
 
 function getInitialMode(): Mode {
-  if (typeof window === 'undefined') return 'auto'
+  if (typeof window === 'undefined') return 'light'
   const stored = localStorage.getItem(STORAGE_KEY)
   if (stored === 'auto' || stored === 'light' || stored === 'dark') return stored
-  return 'auto'
+  return 'light'
 }
 
 function getSystemDark(): boolean {

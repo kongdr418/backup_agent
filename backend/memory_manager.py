@@ -206,12 +206,13 @@ class MemoryManager:
         today = datetime.now().strftime("%Y-%m-%d")
         time_str = datetime.now().strftime("%H:%M:%S")
 
+        context_part = f'\n**场景**: {context}' if context else ''
         entry = f"""## 对话记录 - {time_str}
 
 **用户**: {user_message[:200]}{'...' if len(user_message) > 200 else ''}
 
 **AI**: {ai_response[:500]}{'...' if len(ai_response) > 500 else ''}
-{f'\n**场景**: {context}' if context else ''}
+{context_part}
 """
         self.append_to_session(entry)
 

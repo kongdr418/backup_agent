@@ -142,6 +142,7 @@ class PPTGenerator:
 ''')
         
         # 完整的 JS 脚本
+        safe_output_path = output_path.replace('\\', '/')
         script = f'''const PptxGenJS = require("pptxgenjs");
 
 const pptx = new PptxGenJS();
@@ -152,7 +153,7 @@ pptx.author = "MiniMax Agent";
 let slide;
 {''.join(slides_js)}
 
-pptx.writeFile({{ fileName: "{output_path.replace('\\', '/')}" }})
+pptx.writeFile({{ fileName: "{safe_output_path}" }})
     .then(() => console.log("PPT 生成成功: {output_path}"))
     .catch(err => {{ console.error("错误:", err); process.exit(1); }});
 '''

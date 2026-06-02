@@ -34,15 +34,6 @@
         >
           <Settings class="w-[16px] h-[16px]" />
         </button>
-        <button
-          class="action-btn"
-          :title="`主题: ${mode} (生效: ${effective})`"
-          @click="toggle"
-        >
-          <Sun v-if="effective === 'dark'" class="w-[16px] h-[16px]" />
-          <Moon v-else class="w-[16px] h-[16px]" />
-        </button>
-
         <div class="avatar-dot" title="账户">
           <User class="w-[14px] h-[14px]" />
         </div>
@@ -62,14 +53,10 @@ import {
   FolderOpen,
   Brain,
   Settings,
-  Sun,
-  Moon,
   User,
 } from 'lucide-vue-next'
-import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
-const { mode, effective, toggle } = useTheme()
 
 type NavItem = {
   path: string
@@ -166,7 +153,7 @@ onMounted(() => {
 watch(() => route.fullPath, () => nextTick(moveIndicator))
 
 // expose for template
-defineExpose({ mode, effective })
+defineExpose({})
 </script>
 
 <style scoped>
