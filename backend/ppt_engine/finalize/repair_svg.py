@@ -24,6 +24,8 @@ _SPAN_CLOSE_RE = re.compile(r"</span\s*>", re.IGNORECASE)
 # run renders as one logical line.
 
 
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
 def _unnest_text(content: str) -> tuple[str, int]:
     """Convert any inner ``<text>`` nested inside an outer ``<text>`` into ``<tspan>``.
 
@@ -34,6 +36,10 @@ def _unnest_text(content: str) -> tuple[str, int]:
     accidental nesting collapse cleanly.
     """
     changes = 0
+
+    # Strip comments before scanning so ``<text>`` inside ``<!-- ... -->``
+    # does not imbalance the open/close tag count and cause an infinite loop.
+    content, _comment_count = _COMMENT_RE.subn("", content)
 
     def _scan_once(src: str) -> tuple[str, int]:
         out = []
@@ -67,6 +73,10 @@ def _unnest_text(content: str) -> tuple[str, int]:
                         nxt_open = text_open_re.search(src, j)
                         nxt_close = text_close_re.search(src, j)
                         if nxt_close is None:
+                            # No matching close tag found — advance i past
+                            # this open tag so the outer loop can proceed.
+                            out.append(src[i:inner_open_end])
+                            i = inner_open_end
                             break
                         if nxt_open is not None and nxt_open.start() < nxt_close.start():
                             sub_depth += 1
