@@ -98,6 +98,7 @@
               {{ submitting ? '提交中...' : '提交答案' }}
             </button>
             <button class="secondary-btn" :disabled="submitting" @click="resetQuiz">重做</button>
+            <button class="secondary-btn" :disabled="!currentQuizResult" @click="goNext">下一页</button>
           </div>
 
           <div v-if="currentQuizResult" class="result-box">
@@ -515,18 +516,11 @@ function clearAdvanceTimer() {
 
 function shouldAutoAdvance() {
   if (currentScene.value?.type === 'report') return false
-
-  if (currentScene.value?.type === 'quiz') {
-    return Boolean(
-      autoPlayEnabled.value
-        && currentQuizResult.value
-        && currentIndex.value < lastContentSceneIndex.value,
-    )
-  }
+  // 测验场景：答题结束后不再自动跳转，让用户自行查看解析后手动翻页
+  if (currentScene.value?.type === 'quiz') return false
 
   return Boolean(
     autoPlayEnabled.value
-      && currentScene.value?.type !== 'quiz'
       && currentIndex.value < lastContentSceneIndex.value,
   )
 }
@@ -569,6 +563,8 @@ function toggleAutoPlay() {
 }
 
 function handleAudioEnded() {
+  // 测验场景：音频播放完后不自动跳转，让用户自行查看解析
+  if (currentScene.value?.type === 'quiz') return
   if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
     showReportAfterClassroomEnd()
     return
@@ -615,13 +611,7 @@ async function submitQuiz() {
       message.success(result.feedback_action.text)
     }
     report.value = null
-    if (isClassroomComplete.value) {
-      if (currentIndex.value === lastContentSceneIndex.value && !currentAudioUrl.value && canOpenReportScene.value) {
-        await showReportAfterClassroomEnd()
-      } else {
-        scheduleAutoAdvance(1200)
-      }
-    }
+    // 不再自动跳转到报告，由用户手动控制翻页
   } catch (err) {
     message.error(err instanceof Error ? err.message : '提交失败')
   } finally {
@@ -688,7 +678,8 @@ watch(
   async () => {
     clearAdvanceTimer()
     if (!autoPlayEnabled.value) return
-    if (currentScene.value?.type === 'quiz' && !currentQuizResult.value) return
+    // 测验场景：无论是否已提交答案，均不自动跳转，由用户手动控制翻页
+    if (currentScene.value?.type === 'quiz') return
 
     if (!currentAudioUrl.value) {
       if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
@@ -1086,6 +1077,14 @@ function sceneTypeLabel(type: string) {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.quiz-actions .primary-btn,
+.quiz-actions .secondary-btn {
+  padding: 0 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .primary-btn,
