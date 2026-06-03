@@ -428,7 +428,10 @@ type: quiz
                 {"role": "user", "content": prompt}
             ],
             temperature=0.8,
-            max_tokens=3000
+            # 提升上限：prompt 要求 15-25 题 × 4 选项，3000 tokens 在题目数/长度稍多时
+            # 会被截断，导致 JSON 字符串未闭合、json.loads 抛 Unterminated string 错误。
+            # 6000 留出充足余量，覆盖常规课堂测验输出。
+            max_tokens=6000
         )
 
 
