@@ -472,6 +472,12 @@ def chat_stream():
                     request_logger.debug(f"[STREAM] 生成器 item {chunk_count}: 进度 stage={item.get('stage')} percent={item.get('percent')} kind={item.get('kind')}")
                     yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
 
+                # 情况8：结构化错误事件（生成器内部失败时由 _err_event 产出）
+                # 修复：原先被兜底分支丢弃，导致前端收不到错误、UI 永远卡在最后一个进度
+                elif isinstance(item, dict) and item.get('type') == 'error':
+                    request_logger.warning(f'[STREAM] 生成器 item {chunk_count}: 错误事件 kind={item.get("kind")} message={item.get("message")}')
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
                 # 其他情况：忽略
                 else:
                     request_logger.warning(f'[STREAM] 生成器 item {chunk_count}: 未知类型 {type(item)}')
