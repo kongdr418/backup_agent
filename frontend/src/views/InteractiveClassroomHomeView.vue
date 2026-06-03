@@ -255,6 +255,10 @@ async function onGenerate() {
       tts_voice: settingStore.settings.tts_voice,
       tts_api_key: settingStore.getEffectiveTTSApiKey(),
       tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+      content_model: settingStore.settings.content_model,
+      content_api_key: settingStore.getEffectiveContentApiKey(),
+      content_base_url: settingStore.getEffectiveContentBaseUrl(),
+      content_provider_type: settingStore.getContentProviderType(),
     })
     message.success('课堂已生成')
     await loadList()
@@ -287,6 +291,10 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       tts_voice: settingStore.settings.tts_voice,
       tts_api_key: settingStore.getEffectiveTTSApiKey(),
       tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+      content_model: settingStore.settings.content_model,
+      content_api_key: settingStore.getEffectiveContentApiKey(),
+      content_base_url: settingStore.getEffectiveContentBaseUrl(),
+      content_provider_type: settingStore.getContentProviderType(),
     })
     message.success('课堂已重新生成')
     await loadList()

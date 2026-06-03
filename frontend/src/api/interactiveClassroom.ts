@@ -10,6 +10,10 @@ export interface InteractiveClassroomGenerateRequest {
   tts_voice?: string
   tts_api_key?: string
   tts_base_url?: string
+  content_model?: string
+  content_api_key?: string
+  content_base_url?: string
+  content_provider_type?: string
 }
 
 export interface StudentProfile {
@@ -116,7 +120,7 @@ export async function generateInteractiveClassroom(body: InteractiveClassroomGen
     status: string
     classroom: InteractiveClassroomPayload
   }>('/api/interactive-classroom/generate', body, {
-    timeout: 180_000,
+    timeout: 600_000,
   })
   return res.data
 }

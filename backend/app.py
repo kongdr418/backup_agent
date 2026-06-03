@@ -2578,6 +2578,9 @@ def interactive_classroom_generate():
     if ppt_job_id and not re.match(r'^[a-zA-Z0-9_.-]{1,128}$', ppt_job_id):
         return jsonify({'success': False, 'error': '非法 ppt_job_id'}), 400
 
+    # 同步内容生成模型配置到 shared_config（LLM 测验生成需要）
+    _apply_content_llm_config(data)
+
     tts_config = _build_classroom_tts_config(data=data)
 
     payload = CLASSROOM_GENERATOR.generate(

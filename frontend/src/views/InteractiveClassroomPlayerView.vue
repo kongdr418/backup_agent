@@ -347,11 +347,7 @@ function clearAdvanceTimer() {
 
 function shouldAutoAdvance() {
   if (currentScene.value?.type === 'quiz') {
-    return Boolean(
-      autoPlayEnabled.value
-        && currentQuizResult.value
-        && currentIndex.value < orderedScenes.value.length - 1,
-    )
+    return false
   }
 
   return Boolean(

@@ -378,6 +378,10 @@ async function onCreateClassroom() {
       tts_voice: settingStore.settings.tts_voice,
       tts_api_key: settingStore.getEffectiveTTSApiKey(),
       tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+      content_model: settingStore.settings.content_model,
+      content_api_key: settingStore.getEffectiveContentApiKey(),
+      content_base_url: settingStore.getEffectiveContentBaseUrl(),
+      content_provider_type: settingStore.getContentProviderType(),
     })
     message.success('交互式课堂已生成')
     router.push(`/interactive-classroom/${res.classroom_id}`)
