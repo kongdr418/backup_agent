@@ -49,6 +49,7 @@ class InteractiveClassroom:
     created_at: str
     updated_at: str
     tts: dict[str, str]
+    student_profile: dict[str, str] = field(default_factory=dict)
     source: dict[str, Any] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
     knowledge_points: list[str] = field(default_factory=list)

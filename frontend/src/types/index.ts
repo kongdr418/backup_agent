@@ -54,8 +54,10 @@ export interface SseEvent {
   base64?: string
   title?: string
   image_base64?: string
+  image_filename?: string
   prompt?: string
   audio_base64?: string
+  audio_filename?: string
   voiceover_text?: string
   xiaohongshu?: string
   content?: string
@@ -101,6 +103,7 @@ export interface GeneratedFile {
   created: string
   icon?: string
   slide_count?: number
+  job_id?: string
 }
 
 // ---------- Settings ----------

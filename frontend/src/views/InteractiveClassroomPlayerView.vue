@@ -28,6 +28,9 @@
           <div class="topic">{{ classroom.topic }}</div>
         </div>
         <div class="stage-actions">
+          <button class="text-btn" :disabled="reportLoading" @click="toggleReport">
+            {{ reportLoading ? '生成报告中' : reportVisible ? '收起报告' : '学习报告' }}
+          </button>
           <button
             class="icon-btn"
             :class="{ active: autoPlayEnabled }"
@@ -101,14 +104,70 @@
           </div>
 
           <div v-if="currentQuizResult" class="result-box">
-            <div class="score-ring">{{ currentQuizResult.score }}</div>
+            <div class="score-ring">{{ currentQuizResult.score }}%</div>
             <div>
               <div class="result-summary">
                 完成 {{ currentQuizResult.total }} 题，答对 {{ currentQuizResult.correct }} 题
               </div>
               <div class="result-tip">{{ feedbackText || '系统已记录本次答题结果。' }}</div>
             </div>
+            <button class="secondary-btn" :disabled="reportLoading" @click="toggleReport">
+              {{ reportVisible ? '收起报告' : '查看报告' }}
+            </button>
           </div>
+        </div>
+      </section>
+
+      <section v-if="reportVisible && report" class="report-panel">
+        <div class="report-head">
+          <div>
+            <div class="report-kicker">课后学习报告</div>
+            <h3>{{ report.topic }}</h3>
+          </div>
+          <div class="report-head-actions">
+            <div class="report-score">{{ report.score }}%</div>
+            <button class="icon-btn" title="收起报告" @click="reportVisible = false">
+              <XCircle class="icon" />
+            </button>
+          </div>
+        </div>
+
+        <div class="report-grid">
+          <div class="report-metric">
+            <span>答题进度</span>
+            <strong>{{ report.answered_quiz_count }} / {{ report.quiz_scene_count }}</strong>
+          </div>
+          <div class="report-metric">
+            <span>正确题数</span>
+            <strong>{{ report.correct }} / {{ report.total }}</strong>
+          </div>
+          <div class="report-metric">
+            <span>得分</span>
+            <strong>{{ report.earned_points }} / {{ report.total_points }}</strong>
+          </div>
+        </div>
+
+        <div v-if="report.weak_points.length" class="report-section">
+          <div class="report-label">薄弱点</div>
+          <div class="tag-row">
+            <span v-for="point in report.weak_points" :key="point" class="tag weak">{{ point }}</span>
+          </div>
+        </div>
+
+        <div v-if="reportKnowledgeRows.length" class="report-section">
+          <div class="report-label">知识点掌握度</div>
+          <div class="mastery-list">
+            <div v-for="row in reportKnowledgeRows" :key="row.name" class="mastery-row">
+              <span>{{ row.name }}</span>
+              <div class="mastery-bar"><i :style="{ width: row.mastery + '%' }" /></div>
+              <strong>{{ row.mastery }}%</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="report-section">
+          <div class="report-label">下一步建议</div>
+          <p>{{ report.next_recommendation }}</p>
         </div>
       </section>
 
@@ -143,7 +202,9 @@ import { CheckCircle, ChevronLeft, ChevronRight, PauseCircle, PlayCircle, Volume
 import { getUserId } from '@/composables/useUserId'
 import {
   getInteractiveClassroom,
+  getInteractiveClassroomReport,
   submitInteractiveClassroomAnswer,
+  type ClassroomReport,
   type InteractiveClassroomAction,
   type InteractiveClassroomPayload,
   type InteractiveClassroomQuestion,
@@ -158,6 +219,9 @@ const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
 const submitting = ref(false)
+const reportLoading = ref(false)
+const report = ref<ClassroomReport | null>(null)
+const reportVisible = ref(false)
 const autoPlayEnabled = ref(true)
 const audioRef = ref<HTMLAudioElement | null>(null)
 const advanceTimer = ref<number | null>(null)
@@ -206,9 +270,14 @@ const allAnswered = computed(() => {
 
 const feedbackText = computed(() => currentQuizResult.value?.feedback_action?.text || '')
 
+const reportKnowledgeRows = computed(() => {
+  const summary = report.value?.knowledge_summary || {}
+  return Object.entries(summary).map(([name, row]) => ({ name, mastery: row.mastery }))
+})
+
 const playbackStatusText = computed(() => {
   if (!autoPlayEnabled.value) return '手动播放'
-  if (currentScene.value?.type === 'quiz') return currentQuizResult.value ? '测验已完成，手动继续' : '测验暂停'
+  if (currentScene.value?.type === 'quiz') return currentQuizResult.value ? '反馈后自动继续' : '测验暂停'
   if (currentIndex.value >= orderedScenes.value.length - 1) return '最后一页'
   return '自动播放'
 })
@@ -231,18 +300,28 @@ const currentAudioUrl = computed(() => {
 function setAnswer(questionId: string, value: string) {
   const sceneId = currentScene.value?.id
   if (!sceneId) return
+  const question = questions.value.find((item) => item.id === questionId)
+  const prevAnswers = answersByScene.value[sceneId] || {}
+  const prevValues = prevAnswers[questionId] || []
+  const nextValues = question?.type === 'multiple'
+    ? (
+        prevValues.includes(value)
+          ? prevValues.filter((item) => item !== value)
+          : [...prevValues, value].sort()
+      )
+    : [value]
   answersByScene.value = {
     ...answersByScene.value,
     [sceneId]: {
-      ...(answersByScene.value[sceneId] || {}),
-      [questionId]: [value],
+      ...prevAnswers,
+      [questionId]: nextValues,
     },
   }
 }
 
 function optionClass(questionId: string, value: string) {
   const result = resultByQuestion.value[questionId]
-  const selected = currentAnswers.value[questionId]?.[0] === value
+  const selected = (currentAnswers.value[questionId] || []).includes(value)
   return {
     selected,
     correct: result?.correct_answer.includes(value),
@@ -256,7 +335,7 @@ function isCorrectOption(questionId: string, value: string) {
 
 function isWrongSelectedOption(questionId: string, value: string) {
   const result = resultByQuestion.value[questionId]
-  return Boolean(result && currentAnswers.value[questionId]?.[0] === value && !result.correct_answer.includes(value))
+  return Boolean(result && (currentAnswers.value[questionId] || []).includes(value) && !result.correct_answer.includes(value))
 }
 
 function clearAdvanceTimer() {
@@ -267,6 +346,14 @@ function clearAdvanceTimer() {
 }
 
 function shouldAutoAdvance() {
+  if (currentScene.value?.type === 'quiz') {
+    return Boolean(
+      autoPlayEnabled.value
+        && currentQuizResult.value
+        && currentIndex.value < orderedScenes.value.length - 1,
+    )
+  }
+
   return Boolean(
     autoPlayEnabled.value
       && currentScene.value?.type !== 'quiz'
@@ -343,11 +430,38 @@ async function submitQuiz() {
     if (result.feedback_action?.text) {
       message.success(result.feedback_action.text)
     }
+    report.value = null
+    reportVisible.value = false
   } catch (err) {
     message.error(err instanceof Error ? err.message : '提交失败')
   } finally {
     submitting.value = false
   }
+}
+
+async function loadReport() {
+  if (!classroom.value) return
+  reportLoading.value = true
+  try {
+    report.value = await getInteractiveClassroomReport(classroom.value.id)
+    reportVisible.value = true
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '报告生成失败')
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+async function toggleReport() {
+  if (reportVisible.value) {
+    reportVisible.value = false
+    return
+  }
+  if (report.value) {
+    reportVisible.value = true
+    return
+  }
+  await loadReport()
 }
 
 async function loadClassroom() {
@@ -369,13 +483,14 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [currentScene.value?.id, currentAudioUrl.value, autoPlayEnabled.value],
+  () => [currentScene.value?.id, currentAudioUrl.value, autoPlayEnabled.value, currentQuizResult.value?.score],
   async () => {
     clearAdvanceTimer()
-    if (!autoPlayEnabled.value || currentScene.value?.type === 'quiz') return
+    if (!autoPlayEnabled.value) return
+    if (currentScene.value?.type === 'quiz' && !currentQuizResult.value) return
 
     if (!currentAudioUrl.value) {
-      scheduleAutoAdvance(5000)
+      scheduleAutoAdvance(currentScene.value?.type === 'quiz' ? 1800 : 5000)
       return
     }
 
@@ -521,6 +636,21 @@ watch(
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+.text-btn {
+  height: 36px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.text-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .icon-btn:disabled {
@@ -743,6 +873,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .score-ring {
@@ -770,6 +901,132 @@ watch(
   background: rgb(var(--bg-surface-rgb));
   display: grid;
   gap: 8px;
+}
+
+.report-panel {
+  border-top: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  padding: 16px 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-kicker {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.report-head h3 {
+  margin: 3px 0 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 18px;
+}
+
+.report-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-score {
+  min-width: 68px;
+  border-radius: 8px;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-metric {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-base-rgb));
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.report-metric span,
+.report-label {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.report-metric strong {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 16px;
+}
+
+.report-section {
+  display: grid;
+  gap: 8px;
+}
+
+.report-section p {
+  margin: 0;
+  color: rgb(var(--ink-2-rgb));
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.tag-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.tag.weak {
+  background: rgb(220 38 38 / 0.08);
+  color: rgb(185 28 28);
+}
+
+.mastery-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mastery-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr 44px;
+  gap: 10px;
+  align-items: center;
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+}
+
+.mastery-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgb(var(--bg-subtle-rgb));
+  overflow: hidden;
+}
+
+.mastery-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(16 185 129);
 }
 
 .teacher-mark {
@@ -832,6 +1089,11 @@ watch(
   .result-box {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .report-grid,
+  .mastery-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -52,6 +52,7 @@
   --nav-chat:     #2D5016;   /* 森林绿 */
   --nav-ppt:      #7C4A8C;   /* 茄紫 */
   --nav-video:    #2D6B7C;   /* 深青 */
+  --nav-classroom:#0F766E;   /* 智慧课堂 = 教学青绿 */
   --nav-library:  #8C5A2B;   /* 琥珀棕 */
   --nav-memory:  #6B4A5E;     /* 玫瑰灰 */
   --nav-settings:#5E6B7C;     /* 石墨蓝灰 */
@@ -61,6 +62,7 @@
   --nav-chat-bg:    #E8F0E2;
   --nav-ppt-bg:     #F0E8F5;
   --nav-video-bg:   #E2EEF2;
+  --nav-classroom-bg:#E0F2EF;
   --nav-library-bg: #F5EEE2;
   --nav-memory-bg:  #F2E8EC;
   --nav-settings-bg:#EEF0F2;
@@ -145,6 +147,7 @@
   --nav-chat-bg:    #1C2E10;
   --nav-ppt-bg:     #2A1A3D;
   --nav-video-bg:   #0E2D3D;
+  --nav-classroom-bg:#0D332E;
   --nav-library-bg: #3D2A10;
   --nav-memory-bg:  #3D1028;
   --nav-settings-bg:#1C2530;

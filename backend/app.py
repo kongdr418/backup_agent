@@ -15,6 +15,7 @@ from video_generator import VideoGenerator
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene
+from interactive_classroom.report_service import build_classroom_report
 from interactive_classroom.tts_service import ClassroomTTSService
 import json
 import os
@@ -137,6 +138,43 @@ def _scan_dir(base_dir: str, user_id: str) -> str:
         os.makedirs(path, exist_ok=True)
         return path
     return base_dir
+
+
+def _is_safe_job_id(value: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9_.-]{1,128}$', value or ''))
+
+
+def _resolve_svg_job_dir(job_id: str, user_id: str) -> tuple[str, str]:
+    """Find a generated SVG PPT job even when dev host changes user_id.
+
+    Browser storage is isolated by host. When localhost is switched to
+    127.0.0.1 to bypass a broken dev cache, the frontend may send a fresh
+    user_id. For preview/editing existing jobs, fall back to global and other
+    user job directories by job_id.
+    """
+    if not _is_safe_job_id(job_id):
+        return '', user_id
+
+    base_dir = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    candidates: list[tuple[str, str]] = []
+    if user_id != 'anonymous':
+        candidates.append((os.path.join(base_dir, 'users', user_id, job_id), user_id))
+    candidates.append((os.path.join(base_dir, job_id), 'anonymous'))
+
+    users_dir = os.path.join(base_dir, 'users')
+    if os.path.isdir(users_dir):
+        try:
+            for owner_id in os.listdir(users_dir):
+                if owner_id == user_id or not re.match(r'^[a-zA-Z0-9_-]{1,128}$', owner_id):
+                    continue
+                candidates.append((os.path.join(users_dir, owner_id, job_id), owner_id))
+        except OSError:
+            pass
+
+    for path, owner_id in candidates:
+        if os.path.isdir(path):
+            return path, owner_id
+    return '', user_id
 
 
 def _user_output_dir(base_dir: str, user_id: str) -> str:
@@ -1292,6 +1330,7 @@ def get_files():
                 'name': display_name,
                 'type': 'ppt',
                 'type_label': 'PPT',
+                'job_id': job_dir,
                 'path': filepath,
                 'size': stat.st_size,
                 'size_formatted': f"{stat.st_size / 1024:.1f} KB",
@@ -1981,8 +2020,9 @@ def ppt_svg_preview(job_id, slide_num):
     """获取指定页的 SVG 内容"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -2011,8 +2051,9 @@ def ppt_svg_preview_all(job_id):
     """获取所有页的 SVG 内容"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -2041,8 +2082,9 @@ def ppt_svg_download(job_id):
     """下载生成的 PPTX 文件"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
 
     # 优先使用 PPTist 编辑后的版本
     pptist_pptx = os.path.join(base_dir, 'pptist', 'current.pptx')
@@ -2107,13 +2149,12 @@ def pptist_preview_deck(job_id):
     """PPTist 编辑器加载 deck 数据"""
     import glob
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     # 检查是否已有保存的 deck
@@ -2126,14 +2167,14 @@ def pptist_preview_deck(job_id):
             deck['source']['kind'] = 'preview'
             deck['source']['id'] = job_id
             deck['source']['saved_deck'] = True
-            uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+            uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
             deck['source']['source_pptx_url'] = f'/api/ppt-svg/download/{job_id}{uid_qs}'
             return jsonify(deck)
         except (json.JSONDecodeError, OSError):
             pass
 
     # 返回 blank deck，让 PPTist 通过 source_pptx_url 导入 PPTX
-    uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+    uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
     return jsonify({
         'title': os.path.basename(job_dir),
         'width': 1280,
@@ -2154,13 +2195,12 @@ def pptist_preview_deck(job_id):
 def pptist_save_deck(job_id):
     """保存 PPTist deck JSON"""
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     payload = request.get_json(silent=True) or {}
@@ -2194,13 +2234,12 @@ def pptist_export_deck(job_id):
     """接收 PPTist 导出的 PPTX 文件"""
     import glob
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     if 'file' not in request.files:
@@ -2532,6 +2571,7 @@ def interactive_classroom_generate():
     topic = (data.get('topic') or '').strip()
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
+    student_profile = data.get('student_profile') if isinstance(data.get('student_profile'), dict) else {}
 
     if not topic:
         return jsonify({'success': False, 'error': 'topic 不能为空'}), 400
@@ -2546,6 +2586,7 @@ def interactive_classroom_generate():
         course=course,
         tts_config=tts_config,
         ppt_job_id=ppt_job_id,
+        student_profile=student_profile,
     )
 
     return jsonify({
@@ -2573,6 +2614,36 @@ def interactive_classroom_get(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
     return jsonify({'success': True, 'classroom': classroom})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>', methods=['PATCH'])
+def interactive_classroom_update(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    data = request.json or {}
+    title = (data.get('title') or '').strip()
+    if not title:
+        return jsonify({'success': False, 'error': 'title 不能为空'}), 400
+
+    ok = CLASSROOM_STORAGE.rename_classroom(user_id, classroom_id, title)
+    if not ok:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    return jsonify({'success': True, 'classroom': classroom})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>', methods=['DELETE'])
+def interactive_classroom_delete(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    ok = CLASSROOM_STORAGE.delete_classroom(user_id, classroom_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    return jsonify({'success': True})
 
 
 @app.route('/api/interactive-classroom/<classroom_id>/answer', methods=['POST'])
@@ -2632,9 +2703,27 @@ def interactive_classroom_answer(classroom_id):
         'score': eval_result.get('score', 0),
         'correct': eval_result.get('correct', 0),
         'total': eval_result.get('total', 0),
+        'earned_points': eval_result.get('earned_points', 0),
+        'total_points': eval_result.get('total_points', 0),
         'results': eval_result.get('results', []),
         'feedback_action': feedback_action,
     })
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/report', methods=['GET'])
+def interactive_classroom_report(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+    report = build_classroom_report(classroom, answers)
+    CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+    return jsonify({'success': True, 'report': report})
 
 
 @app.route('/api/interactive-classroom/<classroom_id>/audio/<filename>', methods=['GET'])

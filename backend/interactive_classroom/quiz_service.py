@@ -16,7 +16,8 @@ def evaluate_quiz_scene(scene: dict[str, Any], answers: dict[str, Any]) -> dict[
     results: list[dict[str, Any]] = []
     correct = 0
     total = 0
-    score = 0
+    earned_points = 0
+    total_points = 0
 
     for q in questions:
         qid = q.get("id", "")
@@ -25,9 +26,10 @@ def evaluate_quiz_scene(scene: dict[str, Any], answers: dict[str, Any]) -> dict[
         is_correct = got == expected and len(expected) > 0
         points = int(q.get("points", 1) or 1)
         total += 1
+        total_points += points
         if is_correct:
             correct += 1
-            score += points
+            earned_points += points
         results.append(
             {
                 "question_id": qid,
@@ -48,9 +50,11 @@ def evaluate_quiz_scene(scene: dict[str, Any], answers: dict[str, Any]) -> dict[
     )
 
     return {
-        "score": score,
+        "score": round((earned_points / total_points) * 100) if total_points else 0,
         "correct": correct,
         "total": total,
+        "earned_points": earned_points,
+        "total_points": total_points,
         "results": results,
         "feedback_text": feedback_text,
     }
