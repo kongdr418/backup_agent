@@ -169,7 +169,7 @@
                     <Loader2 v-if="ttsTesting" class="w-3.5 h-3.5 animate-spin" /><Volume2 v-else class="w-3.5 h-3.5" />{{ ttsTesting ? '合成中...' : '播放' }}
                   </button>
                 </div>
-                <audio ref="ttsAudioRef" :src="ttsAudioUrl" style="display:none" @ended="ttsAudioUrl = null" />
+                <audio ref="ttsAudioRef" :src="ttsAudioUrl || undefined" style="display:none" @ended="ttsAudioUrl = null" />
                 <div v-if="ttsTestResult" class="result-card" :class="ttsTestResult.success ? 'result-success' : 'result-error'">
                   <CheckCircle2 v-if="ttsTestResult.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ ttsTestResult.message }}</span>
                 </div>

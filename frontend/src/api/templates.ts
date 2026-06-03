@@ -20,6 +20,7 @@ export interface TemplatePreview {
   pages: Record<string, string>
   label: string
   pageOrder: string[]
+  getLabel?: (key: string) => string
 }
 
 const PAGE_LABELS: Record<string, string> = {

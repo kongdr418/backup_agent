@@ -34,9 +34,9 @@
         >
           <Settings class="w-[16px] h-[16px]" />
         </button>
-        <div class="avatar-dot" title="账户">
+        <button class="avatar-dot" title="用户画像" @click="router.push('/student-profile')">
           <User class="w-[14px] h-[14px]" />
-        </div>
+        </button>
       </div>
     </div>
   </header>
@@ -44,25 +44,26 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   LayoutDashboard,
   MessageSquare,
   Presentation,
   Video,
+  GraduationCap,
   FolderOpen,
-  Brain,
   Settings,
   User,
 } from 'lucide-vue-next'
 
 const route = useRoute()
+const router = useRouter()
 
 type NavItem = {
   path: string
   label: string
   icon: unknown
-  hue: 'dashboard' | 'chat' | 'ppt' | 'video' | 'library' | 'memory' | 'settings'
+  hue: 'dashboard' | 'chat' | 'ppt' | 'video' | 'classroom' | 'library' | 'memory' | 'settings'
 }
 
 const nav: NavItem[] = [
@@ -70,6 +71,7 @@ const nav: NavItem[] = [
   { path: '/chat', label: '对话', icon: MessageSquare, hue: 'chat' },
   { path: '/ppt-studio', label: 'PPT 工作台', icon: Presentation, hue: 'ppt' },
   { path: '/video-studio', label: '微课', icon: Video, hue: 'video' },
+  { path: '/interactive-classroom', label: '智慧课堂', icon: GraduationCap, hue: 'classroom' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
   // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
 ]
@@ -89,6 +91,7 @@ const INDICATOR_COLORS: Record<string, string> = {
   '/chat': 'var(--nav-chat)',
   '/ppt-studio': 'var(--nav-ppt)',
   '/video-studio': 'var(--nav-video)',
+  '/interactive-classroom': 'var(--nav-classroom)',
   '/library': 'var(--nav-library)',
   '/memory': 'var(--nav-memory)',
 }
@@ -259,6 +262,7 @@ defineExpose({})
 .hue-chat { --hue-active: var(--nav-chat); }
 .hue-ppt { --hue-active: var(--nav-ppt); }
 .hue-video { --hue-active: var(--nav-video); }
+.hue-classroom { --hue-active: var(--nav-classroom); }
 .hue-library { --hue-active: var(--nav-library); }
 .hue-memory { --hue-active: var(--nav-memory); }
 .hue-settings { --hue-active: var(--nav-settings); }
@@ -306,6 +310,21 @@ defineExpose({})
   color: var(--ink-secondary);
   border: 1px solid var(--line);
   margin-left: 4px;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.avatar-dot:hover {
+  background: rgb(var(--bg-subtle-rgb) / 0.7);
+  color: var(--ink-primary);
+}
+
+.avatar-dot:active {
+  transform: scale(0.94);
 }
 
 /* 窄屏兜底:nav 自适应折叠(简化处理 — 隐藏文字) */

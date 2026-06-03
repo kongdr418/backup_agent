@@ -27,7 +27,19 @@ const routes: RouteRecordRaw[] = [
         path: 'video-studio',
         name: 'video-studio',
         component: () => import('./views/VideoStudioView.vue'),
-        meta: { title: '微课' },
+        meta: { title: '微课视频' },
+      },
+      {
+        path: 'interactive-classroom',
+        name: 'interactive-classroom-home',
+        component: () => import('./views/InteractiveClassroomHomeView.vue'),
+        meta: { title: '交互式课堂' },
+      },
+      {
+        path: 'interactive-classroom/:classroomId',
+        name: 'interactive-classroom-player',
+        component: () => import('./views/InteractiveClassroomPlayerView.vue'),
+        meta: { title: '课堂播放' },
       },
       {
         path: 'library',
@@ -46,6 +58,12 @@ const routes: RouteRecordRaw[] = [
         name: 'memory',
         component: () => import('./views/MemoryView.vue'),
         meta: { title: '记忆' },
+      },
+      {
+        path: 'student-profile',
+        name: 'student-profile',
+        component: () => import('./views/StudentProfileView.vue'),
+        meta: { title: '用户画像' },
       },
     ],
   },

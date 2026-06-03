@@ -12,9 +12,15 @@ import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
+from interactive_classroom.storage import ClassroomStorage
+from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.quiz_service import evaluate_quiz_scene
+from interactive_classroom.report_service import build_classroom_report
+from interactive_classroom.tts_service import ClassroomTTSService
 import json
 import os
 import shutil
+import mimetypes
 import logging
 import re
 import sys
@@ -61,6 +67,51 @@ def get_memory_manager():
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
+CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
+CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
+
+
+def _build_classroom_tts_config(data=None, classroom=None):
+    data = data or {}
+    classroom_tts = (classroom or {}).get('tts', {})
+    memory = get_memory_manager()
+    cfg = memory.get_config().get('content_settings', {})
+
+    provider = (
+        data.get('tts_provider')
+        or classroom_tts.get('provider')
+        or cfg.get('tts_provider')
+        or 'edge-tts'
+    )
+    model = (
+        data.get('tts_model')
+        or classroom_tts.get('model')
+        or cfg.get('tts_model')
+        or (TTS_PROVIDERS.get(provider, {}).get('models', [{}])[0].get('id', ''))
+    )
+    voice = (
+        data.get('tts_voice')
+        or classroom_tts.get('voice')
+        or cfg.get('tts_voice')
+        or 'zh-CN-XiaoxiaoNeural'
+    )
+    api_key = data.get('tts_api_key') or cfg.get('tts_api_key') or ''
+    base_url = (
+        data.get('tts_base_url')
+        or cfg.get('tts_base_url')
+        or TTS_PROVIDERS.get(provider, {}).get('defaultBaseUrl', '')
+    )
+
+    if not api_key and provider in SERVER_API_KEYS:
+        api_key = SERVER_API_KEYS[provider]
+
+    return {
+        'provider': provider,
+        'api_key': api_key,
+        'base_url': base_url,
+        'model': model,
+        'voice': voice,
+    }
 
 # 视频生成任务追踪（内存字典，job_id → 状态）
 video_jobs = {}
@@ -87,6 +138,43 @@ def _scan_dir(base_dir: str, user_id: str) -> str:
         os.makedirs(path, exist_ok=True)
         return path
     return base_dir
+
+
+def _is_safe_job_id(value: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9_.-]{1,128}$', value or ''))
+
+
+def _resolve_svg_job_dir(job_id: str, user_id: str) -> tuple[str, str]:
+    """Find a generated SVG PPT job even when dev host changes user_id.
+
+    Browser storage is isolated by host. When localhost is switched to
+    127.0.0.1 to bypass a broken dev cache, the frontend may send a fresh
+    user_id. For preview/editing existing jobs, fall back to global and other
+    user job directories by job_id.
+    """
+    if not _is_safe_job_id(job_id):
+        return '', user_id
+
+    base_dir = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
+    candidates: list[tuple[str, str]] = []
+    if user_id != 'anonymous':
+        candidates.append((os.path.join(base_dir, 'users', user_id, job_id), user_id))
+    candidates.append((os.path.join(base_dir, job_id), 'anonymous'))
+
+    users_dir = os.path.join(base_dir, 'users')
+    if os.path.isdir(users_dir):
+        try:
+            for owner_id in os.listdir(users_dir):
+                if owner_id == user_id or not re.match(r'^[a-zA-Z0-9_-]{1,128}$', owner_id):
+                    continue
+                candidates.append((os.path.join(users_dir, owner_id, job_id), owner_id))
+        except OSError:
+            pass
+
+    for path, owner_id in candidates:
+        if os.path.isdir(path):
+            return path, owner_id
+    return '', user_id
 
 
 def _user_output_dir(base_dir: str, user_id: str) -> str:
@@ -1242,6 +1330,7 @@ def get_files():
                 'name': display_name,
                 'type': 'ppt',
                 'type_label': 'PPT',
+                'job_id': job_dir,
                 'path': filepath,
                 'size': stat.st_size,
                 'size_formatted': f"{stat.st_size / 1024:.1f} KB",
@@ -1931,8 +2020,9 @@ def ppt_svg_preview(job_id, slide_num):
     """获取指定页的 SVG 内容"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -1961,8 +2051,9 @@ def ppt_svg_preview_all(job_id):
     """获取所有页的 SVG 内容"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
     svg_dir = os.path.join(base_dir, 'svg_final')
     if not os.path.exists(svg_dir):
         svg_dir = os.path.join(base_dir, 'svg_output')
@@ -1991,8 +2082,9 @@ def ppt_svg_download(job_id):
     """下载生成的 PPTX 文件"""
     import glob
     user_id = get_request_user_id()
-    svg_base = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    base_dir = os.path.join(svg_base, job_id)
+    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not base_dir:
+        return jsonify({'error': '任务不存在'}), 404
 
     # 优先使用 PPTist 编辑后的版本
     pptist_pptx = os.path.join(base_dir, 'pptist', 'current.pptx')
@@ -2057,13 +2149,12 @@ def pptist_preview_deck(job_id):
     """PPTist 编辑器加载 deck 数据"""
     import glob
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     # 检查是否已有保存的 deck
@@ -2076,14 +2167,14 @@ def pptist_preview_deck(job_id):
             deck['source']['kind'] = 'preview'
             deck['source']['id'] = job_id
             deck['source']['saved_deck'] = True
-            uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+            uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
             deck['source']['source_pptx_url'] = f'/api/ppt-svg/download/{job_id}{uid_qs}'
             return jsonify(deck)
         except (json.JSONDecodeError, OSError):
             pass
 
     # 返回 blank deck，让 PPTist 通过 source_pptx_url 导入 PPTX
-    uid_qs = f'?user_id={user_id}' if user_id != 'anonymous' else ''
+    uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
     return jsonify({
         'title': os.path.basename(job_dir),
         'width': 1280,
@@ -2104,13 +2195,12 @@ def pptist_preview_deck(job_id):
 def pptist_save_deck(job_id):
     """保存 PPTist deck JSON"""
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     payload = request.get_json(silent=True) or {}
@@ -2144,13 +2234,12 @@ def pptist_export_deck(job_id):
     """接收 PPTist 导出的 PPTX 文件"""
     import glob
     user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
 
     if '..' in job_id or '/' in job_id or '\\' in job_id:
         return jsonify({'error': '非法 job_id'}), 400
 
-    job_dir = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_dir):
+    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
+    if not job_dir:
         return jsonify({'error': '任务不存在'}), 404
 
     if 'file' not in request.files:
@@ -2471,6 +2560,196 @@ def ppt_video_clear():
 
     request_logger.info(f'[PPT-VIDEO] 已清空 {deleted} 个视频目录')
     return jsonify({'success': True, 'deleted_count': deleted, 'errors': errors})
+
+
+# ==================== Interactive Classroom API ====================
+
+@app.route('/api/interactive-classroom/generate', methods=['POST'])
+def interactive_classroom_generate():
+    data = request.json or {}
+    user_id = get_request_user_id()
+    topic = (data.get('topic') or '').strip()
+    course = (data.get('course') or '通用课程').strip()
+    ppt_job_id = (data.get('ppt_job_id') or '').strip()
+    student_profile = data.get('student_profile') if isinstance(data.get('student_profile'), dict) else {}
+
+    if not topic:
+        return jsonify({'success': False, 'error': 'topic 不能为空'}), 400
+    if ppt_job_id and not re.match(r'^[a-zA-Z0-9_.-]{1,128}$', ppt_job_id):
+        return jsonify({'success': False, 'error': '非法 ppt_job_id'}), 400
+
+    tts_config = _build_classroom_tts_config(data=data)
+
+    payload = CLASSROOM_GENERATOR.generate(
+        user_id=user_id,
+        topic=topic,
+        course=course,
+        tts_config=tts_config,
+        ppt_job_id=ppt_job_id,
+        student_profile=student_profile,
+    )
+
+    return jsonify({
+        'success': True,
+        'classroom_id': payload.get('id'),
+        'status': payload.get('status', 'ready'),
+        'classroom': payload,
+    })
+
+
+@app.route('/api/interactive-classroom/list', methods=['GET'])
+def interactive_classroom_list():
+    user_id = get_request_user_id()
+    rows = CLASSROOM_STORAGE.list_classrooms(user_id)
+    return jsonify({'classrooms': rows})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>', methods=['GET'])
+def interactive_classroom_get(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    return jsonify({'success': True, 'classroom': classroom})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>', methods=['PATCH'])
+def interactive_classroom_update(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    data = request.json or {}
+    title = (data.get('title') or '').strip()
+    if not title:
+        return jsonify({'success': False, 'error': 'title 不能为空'}), 400
+
+    ok = CLASSROOM_STORAGE.rename_classroom(user_id, classroom_id, title)
+    if not ok:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    return jsonify({'success': True, 'classroom': classroom})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>', methods=['DELETE'])
+def interactive_classroom_delete(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    ok = CLASSROOM_STORAGE.delete_classroom(user_id, classroom_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/answer', methods=['POST'])
+def interactive_classroom_answer(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    data = request.json or {}
+    scene_id = (data.get('scene_id') or '').strip()
+    answers = data.get('answers') or {}
+    if not scene_id or not isinstance(answers, dict):
+        return jsonify({'success': False, 'error': 'scene_id 或 answers 非法'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    scene = next((s for s in classroom.get('scenes', []) if s.get('id') == scene_id), None)
+    if scene is None or scene.get('type') != 'quiz':
+        return jsonify({'success': False, 'error': 'quiz scene 不存在'}), 404
+
+    eval_result = evaluate_quiz_scene(scene, answers)
+    CLASSROOM_STORAGE.save_answers(
+        user_id=user_id,
+        classroom_id=classroom_id,
+        scene_id=scene_id,
+        answers_payload={'answers': answers, 'evaluation': eval_result},
+    )
+
+    feedback_action = {
+        'id': f'feedback_{scene_id}',
+        'type': 'quiz_feedback',
+        'agent_id': 'teacher',
+        'text': eval_result.get('feedback_text', ''),
+        'audio_url': '',
+    }
+
+    feedback_text = feedback_action['text']
+    if feedback_text:
+        try:
+            audio_dir = CLASSROOM_STORAGE.audio_dir(user_id, classroom_id)
+            tts = ClassroomTTSService(
+                output_dir=audio_dir,
+                tts_config=_build_classroom_tts_config(data=data, classroom=classroom),
+            )
+            filename = tts.synthesize_action(feedback_action['id'], feedback_text, audio_dir)
+            if filename:
+                feedback_action['audio_url'] = (
+                    f'/api/interactive-classroom/{classroom_id}/audio/{filename}'
+                )
+        except Exception:
+            feedback_action['audio_url'] = ''
+
+    return jsonify({
+        'success': True,
+        'score': eval_result.get('score', 0),
+        'correct': eval_result.get('correct', 0),
+        'total': eval_result.get('total', 0),
+        'earned_points': eval_result.get('earned_points', 0),
+        'total_points': eval_result.get('total_points', 0),
+        'results': eval_result.get('results', []),
+        'feedback_action': feedback_action,
+    })
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/report', methods=['GET'])
+def interactive_classroom_report(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+    report = build_classroom_report(classroom, answers)
+    CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+    return jsonify({'success': True, 'report': report})
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/audio/<filename>', methods=['GET'])
+def interactive_classroom_audio(classroom_id, filename):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'success': False, 'error': '非法 filename'}), 400
+
+    audio_path = os.path.join(
+        BACKEND_DIR,
+        'memory',
+        'users',
+        user_id,
+        'interactive_classrooms',
+        classroom_id,
+        'audio',
+        filename,
+    )
+    if not os.path.exists(audio_path):
+        return jsonify({'success': False, 'error': '音频不存在'}), 404
+
+    from flask import send_file
+    guessed_type, _ = mimetypes.guess_type(audio_path)
+    return send_file(audio_path, mimetype=guessed_type or 'application/octet-stream')
 
 
 # ==================== Templates API ====================

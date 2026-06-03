@@ -47,6 +47,14 @@
         </div>
         <div class="header-actions">
           <button
+            class="action-btn"
+            :disabled="creatingClassroom"
+            title="生成交互式课堂"
+            @click="onCreateClassroom"
+          >
+            <span class="btn-label">{{ creatingClassroom ? '生成中' : '转课堂' }}</span>
+          </button>
+          <button
             class="video-mobile-create-btn md:hidden action-btn"
             title="参数"
             @click="drawerOpen = true"
@@ -64,6 +72,33 @@
           </button>
         </div>
       </header>
+
+      <section v-if="creatingClassroom" class="studio-progress-panel">
+        <div class="studio-progress-head">
+          <div>
+            <div class="studio-progress-title">{{ activeClassroomProgressStep.title }}</div>
+            <div class="studio-progress-desc">{{ activeClassroomProgressStep.desc }}</div>
+          </div>
+          <div class="studio-progress-meta">
+            <span>{{ classroomElapsedSeconds }}s</span>
+            <span v-if="store.gen.totalSlides">{{ store.gen.totalSlides }} 页课件</span>
+          </div>
+        </div>
+        <div class="studio-progress-track">
+          <div class="studio-progress-fill" :style="{ width: classroomProgressPercent + '%' }"></div>
+        </div>
+        <div class="studio-step-list">
+          <div
+            v-for="(step, index) in classroomProgressSteps"
+            :key="step.title"
+            class="studio-step-item"
+            :class="{ done: index < activeClassroomProgressIndex, active: index === activeClassroomProgressIndex }"
+          >
+            <span class="studio-step-dot"></span>
+            <span>{{ step.title }}</span>
+          </div>
+        </div>
+      </section>
 
       <!-- Content Body -->
       <div class="content-body">
@@ -112,7 +147,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { History, SlidersHorizontal, X } from 'lucide-vue-next'
 import { useMessage, useDialog } from 'naive-ui'
 
@@ -127,10 +163,15 @@ import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
+import { generateInteractiveClassroom } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
+import { useStudentProfile } from '@/composables/useStudentProfile'
 
 const store = usePptStore()
 const settingStore = useSettingStore()
+const router = useRouter()
+const route = useRoute()
+const { profile: studentProfile } = useStudentProfile()
 useRefreshGuard()
 
 const pptModelLabel = computed(() => {
@@ -164,6 +205,50 @@ const dialog = useDialog()
 const activeIdx = ref(0)
 const historyOpen = ref(false)
 const drawerOpen = ref(false)
+const creatingClassroom = ref(false)
+const classroomCourse = ref('Python 程序设计')
+const classroomElapsedSeconds = ref(0)
+const classroomProgressTimer = ref<number | null>(null)
+
+const classroomProgressSteps = [
+  { title: '读取课件', desc: '读取当前 PPT job 的 SVG 页面、标题和页面文本。' },
+  { title: '组织课堂', desc: '把课件页面编排成讲解场景，并插入随堂测验位置。' },
+  { title: '生成互动', desc: '根据页面内容生成讲解词、测验题和答题反馈。' },
+  { title: '合成音频', desc: '调用当前 TTS 配置，为课堂讲解和反馈生成音频。' },
+  { title: '保存跳转', desc: '保存课堂数据，生成完成后自动进入智慧课堂播放器。' },
+]
+
+const activeClassroomProgressIndex = computed(() => {
+  if (!creatingClassroom.value) return 0
+  if (classroomElapsedSeconds.value < 2) return 0
+  if (classroomElapsedSeconds.value < 5) return 1
+  if (classroomElapsedSeconds.value < 10) return 2
+  if (classroomElapsedSeconds.value < 20) return 3
+  return 4
+})
+
+const activeClassroomProgressStep = computed(() => classroomProgressSteps[activeClassroomProgressIndex.value])
+const classroomProgressPercent = computed(() => {
+  if (!creatingClassroom.value) return 0
+  const base = [12, 32, 54, 76, 88][activeClassroomProgressIndex.value] || 12
+  const drift = Math.min(8, Math.floor(classroomElapsedSeconds.value / 6))
+  return Math.min(92, base + drift)
+})
+
+function startClassroomProgressTimer() {
+  stopClassroomProgressTimer()
+  classroomElapsedSeconds.value = 0
+  classroomProgressTimer.value = window.setInterval(() => {
+    classroomElapsedSeconds.value += 1
+  }, 1000)
+}
+
+function stopClassroomProgressTimer() {
+  if (classroomProgressTimer.value !== null) {
+    window.clearInterval(classroomProgressTimer.value)
+    classroomProgressTimer.value = null
+  }
+}
 
 // keep active idx valid when slides arrive
 watch(
@@ -184,8 +269,37 @@ watch(
 )
 
 onMounted(() => {
+  applyClassroomDraft()
   store.refreshJobs().catch(() => undefined)
 })
+
+onBeforeUnmount(() => {
+  stopClassroomProgressTimer()
+})
+
+function firstQueryValue(value: unknown) {
+  if (Array.isArray(value)) return value[0] || ''
+  return typeof value === 'string' ? value : ''
+}
+
+function applyClassroomDraft() {
+  if (firstQueryValue(route.query.from) !== 'interactive-classroom') return
+
+  const topic = firstQueryValue(route.query.topic).trim()
+  const course = firstQueryValue(route.query.course).trim()
+  if (topic) {
+    store.params = {
+      ...store.params,
+      topic,
+      deep_research: false,
+      visual_critic: false,
+    }
+    store.resetGen()
+  }
+  if (course) {
+    classroomCourse.value = course
+  }
+}
 
 const statusTone = computed<'neutral' | 'success' | 'warning' | 'danger'>(() => {
   switch (store.gen.status) {
@@ -244,6 +358,35 @@ function onDownload() {
   if (!store.gen.jobId) return
   const url = `${pptDownloadUrl(store.gen.jobId)}?user_id=${encodeURIComponent(getUserId())}`
   window.open(url, '_blank', 'noopener')
+}
+
+async function onCreateClassroom() {
+  if (!store.params.topic?.trim()) {
+    message.warning('请先填写课程主题')
+    return
+  }
+  creatingClassroom.value = true
+  startClassroomProgressTimer()
+  try {
+    const res = await generateInteractiveClassroom({
+      topic: store.params.topic,
+      course: classroomCourse.value || store.params.topic,
+      ppt_job_id: store.gen.jobId || undefined,
+      student_profile: studentProfile.value,
+      tts_provider: settingStore.settings.tts_provider,
+      tts_model: settingStore.settings.tts_model,
+      tts_voice: settingStore.settings.tts_voice,
+      tts_api_key: settingStore.getEffectiveTTSApiKey(),
+      tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+    })
+    message.success('交互式课堂已生成')
+    router.push(`/interactive-classroom/${res.classroom_id}`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : '课堂生成失败')
+  } finally {
+    creatingClassroom.value = false
+    stopClassroomProgressTimer()
+  }
 }
 
 function onReset() {
@@ -374,6 +517,102 @@ function onClearAllJobs() {
   flex-shrink: 0;
 }
 
+.studio-progress-panel {
+  flex-shrink: 0;
+  margin: 14px 24px 0;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 12px;
+  background: rgb(var(--bg-surface-rgb));
+  padding: 14px 16px;
+}
+
+.studio-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.studio-progress-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.studio-progress-desc {
+  margin-top: 4px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.studio-progress-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.studio-progress-track {
+  margin-top: 12px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(var(--line-rgb));
+}
+
+.studio-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #10b981;
+  transition: width 240ms ease;
+}
+
+.studio-step-list {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.studio-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.studio-step-item.done,
+.studio-step-item.active {
+  color: rgb(var(--ink-1-rgb));
+}
+
+.studio-step-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 999px;
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.studio-step-item.done .studio-step-dot {
+  border-color: #10b981;
+  background: #10b981;
+}
+
+.studio-step-item.active .studio-step-dot {
+  border-color: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+}
+
 .header-left {
   display: flex;
   align-items: center;
@@ -475,6 +714,19 @@ function onClearAllJobs() {
   .content-header {
     height: auto;
     padding: 12px 16px;
+  }
+
+  .studio-progress-panel {
+    margin: 12px 16px 0;
+  }
+
+  .studio-progress-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .studio-step-list {
+    grid-template-columns: 1fr;
   }
 
   .content-title {
