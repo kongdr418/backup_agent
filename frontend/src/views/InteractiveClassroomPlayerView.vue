@@ -10,13 +10,13 @@
         v-for="(scene, idx) in orderedScenes"
         :key="scene.id"
         class="scene-btn"
-        :class="{ active: idx === currentIndex }"
+        :class="{ active: idx === currentIndex, locked: scene.type === 'report' && !canOpenReportScene }"
         @click="selectScene(idx)"
       >
-        <span class="scene-index">{{ idx + 1 }}</span>
-        <span class="scene-copy">
+          <span class="scene-index">{{ idx + 1 }}</span>
+          <span class="scene-copy">
           <span class="scene-title">{{ scene.title }}</span>
-          <span class="scene-type">{{ scene.type === 'quiz' ? '测验' : '讲解' }}</span>
+          <span class="scene-type">{{ sceneTypeLabel(scene.type) }}</span>
         </span>
       </button>
     </aside>
@@ -28,9 +28,6 @@
           <div class="topic">{{ classroom.topic }}</div>
         </div>
         <div class="stage-actions">
-          <button class="text-btn" :disabled="reportLoading" @click="toggleReport">
-            {{ reportLoading ? '生成报告中' : reportVisible ? '收起报告' : '学习报告' }}
-          </button>
           <button
             class="icon-btn"
             :class="{ active: autoPlayEnabled }"
@@ -55,6 +52,11 @@
       </header>
 
       <section class="scene-body">
+        <div class="scene-title-row">
+          <span class="scene-kind">{{ sceneKindLabel }}</span>
+          <h2>{{ currentScene.title }}</h2>
+        </div>
+
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
           <div v-if="sceneSvg" class="svg-box" v-html="sceneSvg" />
           <pre v-else class="md-box">{{ sceneMarkdown || '本页暂无内容' }}</pre>
@@ -106,67 +108,76 @@
               </div>
               <div class="result-tip">{{ feedbackText || '系统已记录本次答题结果。' }}</div>
             </div>
-            <button class="secondary-btn" :disabled="reportLoading" @click="toggleReport">
-              {{ reportVisible ? '收起报告' : '查看报告' }}
-            </button>
           </div>
         </div>
-      </section>
 
-      <section v-if="reportVisible && report" class="report-panel">
-        <div class="report-head">
-          <div>
+        <div v-else-if="currentScene.type === 'report'" class="report-page">
+          <div v-if="reportLoading && !report" class="report-empty">
             <div class="report-kicker">课后学习报告</div>
-            <h3>{{ report.topic }}</h3>
+            <h3>正在整理本节课堂表现...</h3>
           </div>
-          <div class="report-head-actions">
-            <div class="report-score">{{ report.score }}%</div>
-            <button class="icon-btn" title="收起报告" @click="reportVisible = false">
-              <XCircle class="icon" />
-            </button>
-          </div>
-        </div>
 
-        <div class="report-grid">
-          <div class="report-metric">
-            <span>答题进度</span>
-            <strong>{{ report.answered_quiz_count }} / {{ report.quiz_scene_count }}</strong>
-          </div>
-          <div class="report-metric">
-            <span>正确题数</span>
-            <strong>{{ report.correct }} / {{ report.total }}</strong>
-          </div>
-          <div class="report-metric">
-            <span>得分</span>
-            <strong>{{ report.earned_points }} / {{ report.total_points }}</strong>
-          </div>
-        </div>
-
-        <div v-if="report.weak_points.length" class="report-section">
-          <div class="report-label">薄弱点</div>
-          <div class="tag-row">
-            <span v-for="point in report.weak_points" :key="point" class="tag weak">{{ point }}</span>
-          </div>
-        </div>
-
-        <div v-if="reportKnowledgeRows.length" class="report-section">
-          <div class="report-label">知识点掌握度</div>
-          <div class="mastery-list">
-            <div v-for="row in reportKnowledgeRows" :key="row.name" class="mastery-row">
-              <span>{{ row.name }}</span>
-              <div class="mastery-bar"><i :style="{ width: row.mastery + '%' }" /></div>
-              <strong>{{ row.mastery }}%</strong>
+          <div v-else-if="report" class="report-sheet">
+            <div class="report-hero">
+              <div>
+                <div class="report-kicker">课后学习报告</div>
+                <h3>{{ report.topic }}</h3>
+                <p>{{ report.next_recommendation }}</p>
+              </div>
+              <div class="report-score-card">
+                <span>综合得分</span>
+                <strong>{{ report.score }}%</strong>
+              </div>
             </div>
-          </div>
-        </div>
 
-        <div class="report-section">
-          <div class="report-label">下一步建议</div>
-          <p>{{ report.next_recommendation }}</p>
+            <div class="report-grid">
+              <div class="report-metric">
+                <span>答题进度</span>
+                <strong>{{ report.answered_quiz_count }} / {{ report.quiz_scene_count }}</strong>
+              </div>
+              <div class="report-metric">
+                <span>正确题数</span>
+                <strong>{{ report.correct }} / {{ report.total }}</strong>
+              </div>
+              <div class="report-metric">
+                <span>得分</span>
+                <strong>{{ report.earned_points }} / {{ report.total_points }}</strong>
+              </div>
+            </div>
+
+            <div class="report-columns">
+              <section class="report-block">
+                <div class="report-label">薄弱点</div>
+                <div v-if="report.weak_points.length" class="tag-row">
+                  <span v-for="point in report.weak_points" :key="point" class="tag weak">{{ point }}</span>
+                </div>
+                <p v-else class="muted-copy">本节暂无明显薄弱点，可以继续进入下一阶段学习。</p>
+              </section>
+
+              <section class="report-block">
+                <div class="report-label">强项</div>
+                <div v-if="report.strong_points.length" class="tag-row">
+                  <span v-for="point in report.strong_points" :key="point" class="tag strong">{{ point }}</span>
+                </div>
+                <p v-else class="muted-copy">完成更多测验后，系统会沉淀更稳定的强项判断。</p>
+              </section>
+            </div>
+
+            <section v-if="reportKnowledgeRows.length" class="report-block">
+              <div class="report-label">知识点掌握度</div>
+              <div class="mastery-list">
+                <div v-for="row in reportKnowledgeRows" :key="row.name" class="mastery-row">
+                  <span>{{ row.name }}</span>
+                  <div class="mastery-bar"><i :style="{ width: row.mastery + '%' }" /></div>
+                  <strong>{{ row.mastery }}%</strong>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
 
-      <footer class="narrator">
+      <footer v-if="currentScene.type !== 'report'" class="narrator">
         <div class="narrator-card">
           <div class="teacher-mark">
             <div class="teacher-avatar"><Volume2 class="icon" /></div>
@@ -253,6 +264,7 @@ import {
   type InteractiveClassroomAction,
   type InteractiveClassroomPayload,
   type InteractiveClassroomQuestion,
+  type InteractiveClassroomScene,
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 
@@ -266,7 +278,7 @@ const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
 const submitting = ref(false)
 const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
-const reportVisible = ref(false)
+const reportAutoShown = ref(false)
 const autoPlayEnabled = ref(true)
 const isAudioPlaying = ref(false)
 const currentAudioTime = ref(0)
@@ -329,9 +341,20 @@ function formatAudioTime(seconds: number): string {
 const audioRef = ref<HTMLAudioElement | null>(null)
 const advanceTimer = ref<number | null>(null)
 
-const orderedScenes = computed(() =>
+const baseScenes = computed(() =>
   [...(classroom.value?.scenes || [])].sort((a, b) => (a.order || 0) - (b.order || 0)),
 )
+
+const reportScene = computed<InteractiveClassroomScene>(() => ({
+  id: 'scene_report',
+  type: 'report',
+  title: '学习报告',
+  order: baseScenes.value.length + 1,
+  content: {},
+  actions: [],
+}))
+
+const orderedScenes = computed(() => [...baseScenes.value, reportScene.value])
 
 const currentScene = computed(() => orderedScenes.value[currentIndex.value] || null)
 
@@ -376,6 +399,29 @@ const feedbackText = computed(() => currentQuizResult.value?.feedback_action?.te
 const reportKnowledgeRows = computed(() => {
   const summary = report.value?.knowledge_summary || {}
   return Object.entries(summary).map(([name, row]) => ({ name, mastery: row.mastery }))
+})
+
+const quizSceneIds = computed(() =>
+  baseScenes.value.filter((scene) => scene.type === 'quiz').map((scene) => scene.id),
+)
+
+const answeredQuizCount = computed(() => {
+  const localCount = quizSceneIds.value.filter((sceneId) => Boolean(quizResultsByScene.value[sceneId])).length
+  return Math.max(localCount, report.value?.answered_quiz_count || 0)
+})
+
+const isClassroomComplete = computed(() =>
+  quizSceneIds.value.length > 0 && answeredQuizCount.value === quizSceneIds.value.length,
+)
+
+const canOpenReportScene = computed(() => answeredQuizCount.value >= 3)
+
+const lastContentSceneIndex = computed(() => Math.max(0, baseScenes.value.length - 1))
+
+const sceneKindLabel = computed(() => {
+  if (currentScene.value?.type === 'quiz') return '课堂互动'
+  if (currentScene.value?.type === 'report') return '学习档案'
+  return '教师讲解'
 })
 
 const playbackStatusText = computed(() => {
@@ -449,14 +495,20 @@ function clearAdvanceTimer() {
 }
 
 function shouldAutoAdvance() {
+  if (currentScene.value?.type === 'report') return false
+
   if (currentScene.value?.type === 'quiz') {
-    return false
+    return Boolean(
+      autoPlayEnabled.value
+        && currentQuizResult.value
+        && currentIndex.value < lastContentSceneIndex.value,
+    )
   }
 
   return Boolean(
     autoPlayEnabled.value
       && currentScene.value?.type !== 'quiz'
-      && currentIndex.value < orderedScenes.value.length - 1,
+      && currentIndex.value < lastContentSceneIndex.value,
   )
 }
 
@@ -470,8 +522,16 @@ function scheduleAutoAdvance(delay = 900) {
 }
 
 function selectScene(idx: number) {
+  const target = orderedScenes.value[idx]
+  if (target?.type === 'report' && !canOpenReportScene.value) {
+    message.warning('完成至少 3 次随堂测验后才能查看学习报告')
+    return
+  }
   clearAdvanceTimer()
   currentIndex.value = idx
+  if (target?.type === 'report') {
+    showReport().catch(() => undefined)
+  }
 }
 
 function goPrev() {
@@ -490,6 +550,10 @@ function toggleAutoPlay() {
 }
 
 function handleAudioEnded() {
+  if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
+    showReportAfterClassroomEnd()
+    return
+  }
   scheduleAutoAdvance()
 }
 
@@ -500,6 +564,8 @@ function resetQuiz() {
   const { [sceneId]: _result, ...restResults } = quizResultsByScene.value
   answersByScene.value = restAnswers
   quizResultsByScene.value = restResults
+  reportAutoShown.value = false
+  report.value = null
 }
 
 function applyFeedbackAction(action?: InteractiveClassroomAction) {
@@ -530,7 +596,13 @@ async function submitQuiz() {
       message.success(result.feedback_action.text)
     }
     report.value = null
-    reportVisible.value = false
+    if (isClassroomComplete.value) {
+      if (currentIndex.value === lastContentSceneIndex.value && !currentAudioUrl.value && canOpenReportScene.value) {
+        await showReportAfterClassroomEnd()
+      } else {
+        scheduleAutoAdvance(1200)
+      }
+    }
   } catch (err) {
     message.error(err instanceof Error ? err.message : '提交失败')
   } finally {
@@ -538,29 +610,34 @@ async function submitQuiz() {
   }
 }
 
-async function loadReport() {
+async function loadReport(silent = false) {
   if (!classroom.value) return
   reportLoading.value = true
   try {
     report.value = await getInteractiveClassroomReport(classroom.value.id)
-    reportVisible.value = true
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '报告生成失败')
+    if (!silent) message.error(err instanceof Error ? err.message : '报告生成失败')
   } finally {
     reportLoading.value = false
   }
 }
 
-async function toggleReport() {
-  if (reportVisible.value) {
-    reportVisible.value = false
+async function showReport() {
+  if (!canOpenReportScene.value) {
+    message.warning('完成至少 3 次随堂测验后才能查看学习报告')
     return
   }
-  if (report.value) {
-    reportVisible.value = true
-    return
-  }
+  if (report.value) return
   await loadReport()
+}
+
+async function showReportAfterClassroomEnd() {
+  if (reportAutoShown.value) return
+  if (!canOpenReportScene.value) return
+  reportAutoShown.value = true
+  await showReport()
+  const reportIndex = orderedScenes.value.findIndex((scene) => scene.type === 'report')
+  if (reportIndex >= 0) selectScene(reportIndex)
 }
 
 async function loadClassroom() {
@@ -568,6 +645,12 @@ async function loadClassroom() {
   if (!classroomId) return
   try {
     classroom.value = await getInteractiveClassroom(classroomId)
+    await loadReport(true)
+    if (route.query.scene === 'report') {
+      await showReport()
+      const reportIndex = orderedScenes.value.findIndex((scene) => scene.type === 'report')
+      if (canOpenReportScene.value && reportIndex >= 0) currentIndex.value = reportIndex
+    }
   } catch (err) {
     message.error(err instanceof Error ? err.message : '加载失败')
   }
@@ -589,6 +672,12 @@ watch(
     if (currentScene.value?.type === 'quiz' && !currentQuizResult.value) return
 
     if (!currentAudioUrl.value) {
+      if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
+        window.setTimeout(() => {
+          showReportAfterClassroomEnd().catch(() => undefined)
+        }, currentScene.value?.type === 'quiz' ? 1200 : 3500)
+        return
+      }
       scheduleAutoAdvance(currentScene.value?.type === 'quiz' ? 1800 : 5000)
       return
     }
@@ -602,6 +691,12 @@ watch(
   },
   { flush: 'post' },
 )
+
+function sceneTypeLabel(type: string) {
+  if (type === 'quiz') return '测验'
+  if (type === 'report') return canOpenReportScene.value ? '报告' : '未解锁'
+  return '讲解'
+}
 </script>
 
 <style scoped>
@@ -658,6 +753,14 @@ watch(
 .scene-btn.active {
   background: rgb(var(--bg-subtle-rgb));
   border-color: rgb(var(--line-rgb));
+}
+
+.scene-btn.locked {
+  opacity: 0.55;
+}
+
+.scene-btn.locked:hover {
+  background: transparent;
 }
 
 .scene-index {
@@ -1013,19 +1116,31 @@ watch(
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-.report-panel {
-  border-top: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-surface-rgb));
-  padding: 16px 18px;
-  display: grid;
-  gap: 14px;
+.report-page {
+  width: min(1080px, 100%);
+  margin: 0 auto;
 }
 
-.report-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.report-empty,
+.report-sheet {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  padding: 18px;
+}
+
+.report-sheet {
+  display: grid;
+  gap: 16px;
+}
+
+.report-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 18px;
+  align-items: stretch;
+  border-bottom: 1px solid rgb(var(--line-rgb));
+  padding-bottom: 16px;
 }
 
 .report-kicker {
@@ -1033,27 +1148,39 @@ watch(
   font-size: 12px;
 }
 
-.report-head h3 {
-  margin: 3px 0 0;
+.report-hero h3,
+.report-empty h3 {
+  margin: 6px 0 0;
   color: rgb(var(--ink-1-rgb));
-  font-size: 18px;
+  font-size: 24px;
 }
 
-.report-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.report-hero p,
+.muted-copy {
+  margin: 8px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.7;
 }
 
-.report-score {
-  min-width: 68px;
+.report-score-card {
   border-radius: 8px;
   background: rgb(var(--ink-1-rgb));
   color: rgb(var(--bg-surface-rgb));
-  padding: 8px 10px;
-  text-align: center;
-  font-size: 20px;
-  font-weight: 700;
+  padding: 16px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.report-score-card span {
+  font-size: 12px;
+  opacity: 0.78;
+}
+
+.report-score-card strong {
+  font-size: 36px;
+  line-height: 1;
 }
 
 .report-grid {
@@ -1082,16 +1209,19 @@ watch(
   font-size: 16px;
 }
 
-.report-section {
+.report-columns {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.report-section p {
-  margin: 0;
-  color: rgb(var(--ink-2-rgb));
-  font-size: 14px;
-  line-height: 1.7;
+.report-block {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-base-rgb));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
 }
 
 .tag-row {
@@ -1109,6 +1239,11 @@ watch(
 .tag.weak {
   background: rgb(220 38 38 / 0.08);
   color: rgb(185 28 28);
+}
+
+.tag.strong {
+  background: rgb(16 185 129 / 0.10);
+  color: rgb(5 150 105);
 }
 
 .mastery-list {
@@ -1342,6 +1477,8 @@ watch(
   }
 
   .report-grid,
+  .report-columns,
+  .report-hero,
   .mastery-row {
     grid-template-columns: 1fr;
   }

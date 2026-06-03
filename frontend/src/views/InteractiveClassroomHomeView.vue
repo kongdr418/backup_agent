@@ -94,6 +94,7 @@
             <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
           </button>
           <div class="item-actions">
+            <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">学习报告</button>
             <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">重新生成</button>
             <button class="mini-btn" @click="renameClassroom(item)">重命名</button>
             <button class="mini-btn danger" @click="deleteClassroom(item)">删除</button>
@@ -101,6 +102,7 @@
         </div>
       </div>
     </div>
+
   </div>
 </template>
 
@@ -114,6 +116,7 @@ import {
   deleteInteractiveClassroom,
   generateInteractiveClassroom,
   getInteractiveClassroom,
+  getInteractiveClassroomReport,
   listInteractiveClassrooms,
   renameInteractiveClassroom,
   type InteractiveClassroomListItem,
@@ -162,6 +165,7 @@ const course = ref('Python 程序设计')
 const selectedPptJobId = ref('')
 const loading = ref(false)
 const loadingList = ref(false)
+const reportLoading = ref(false)
 const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
 const elapsedSeconds = ref(0)
@@ -336,6 +340,22 @@ async function renameClassroom(item: InteractiveClassroomListItem) {
     await loadList()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '重命名失败')
+  }
+}
+
+async function openReport(item: InteractiveClassroomListItem) {
+  reportLoading.value = true
+  try {
+    const report = await getInteractiveClassroomReport(item.id)
+    if (report.answered_quiz_count < 3) {
+      message.warning('完成至少 3 次随堂测验后才能查看学习报告')
+      return
+    }
+    router.push(`/interactive-classroom/${item.id}?scene=report`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '报告加载失败')
+  } finally {
+    reportLoading.value = false
   }
 }
 
