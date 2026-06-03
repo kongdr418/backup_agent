@@ -10,41 +10,25 @@
       </div>
 
       <div class="profile-grid">
-        <label class="profile-field">
+        <div class="profile-field">
           <span>学习基础</span>
-          <select v-model="profile.basis" class="field">
-            <option value="零基础">零基础</option>
-            <option value="有基础">有基础</option>
-            <option value="进阶学习">进阶学习</option>
-          </select>
-        </label>
+          <n-select v-model:value="profile.basis" :options="basisOptions" size="small" />
+        </div>
 
-        <label class="profile-field">
+        <div class="profile-field">
           <span>学习目标</span>
-          <select v-model="profile.goal" class="field">
-            <option value="考试通过">考试通过</option>
-            <option value="项目实战">项目实战</option>
-            <option value="概念理解">概念理解</option>
-          </select>
-        </label>
+          <n-select v-model:value="profile.goal" :options="goalOptions" size="small" />
+        </div>
 
-        <label class="profile-field">
+        <div class="profile-field">
           <span>讲解偏好</span>
-          <select v-model="profile.style" class="field">
-            <option value="图解+案例">图解+案例</option>
-            <option value="步骤推导">步骤推导</option>
-            <option value="对比辨析">对比辨析</option>
-          </select>
-        </label>
+          <n-select v-model:value="profile.style" :options="styleOptions" size="small" />
+        </div>
 
-        <label class="profile-field">
+        <div class="profile-field">
           <span>题目难度</span>
-          <select v-model="profile.difficulty" class="field">
-            <option value="基础">基础</option>
-            <option value="中等">中等</option>
-            <option value="挑战">挑战</option>
-          </select>
-        </label>
+          <n-select v-model:value="profile.difficulty" :options="difficultyOptions" size="small" />
+        </div>
       </div>
 
       <div class="summary">
@@ -61,11 +45,34 @@
 </template>
 
 <script setup lang="ts">
+import { NSelect } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import { useStudentProfile } from '@/composables/useStudentProfile'
 
 const message = useMessage()
 const { profile, resetProfile } = useStudentProfile()
+
+const basisOptions: SelectOption[] = [
+  { label: '零基础', value: '零基础' },
+  { label: '有基础', value: '有基础' },
+  { label: '进阶学习', value: '进阶学习' },
+]
+const goalOptions: SelectOption[] = [
+  { label: '考试通过', value: '考试通过' },
+  { label: '项目实战', value: '项目实战' },
+  { label: '概念理解', value: '概念理解' },
+]
+const styleOptions: SelectOption[] = [
+  { label: '图解+案例', value: '图解+案例' },
+  { label: '步骤推导', value: '步骤推导' },
+  { label: '对比辨析', value: '对比辨析' },
+]
+const difficultyOptions: SelectOption[] = [
+  { label: '基础', value: '基础' },
+  { label: '中等', value: '中等' },
+  { label: '挑战', value: '挑战' },
+]
 
 function handleReset() {
   resetProfile()

@@ -10,38 +10,22 @@
       </div>
 
       <div class="profile-grid">
-        <label class="profile-field">
+        <div class="profile-field">
           <span>学习基础</span>
-          <select v-model="studentProfile.basis" class="field compact">
-            <option value="零基础">零基础</option>
-            <option value="有基础">有基础</option>
-            <option value="进阶学习">进阶学习</option>
-          </select>
-        </label>
-        <label class="profile-field">
+          <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" />
+        </div>
+        <div class="profile-field">
           <span>学习目标</span>
-          <select v-model="studentProfile.goal" class="field compact">
-            <option value="考试通过">考试通过</option>
-            <option value="项目实战">项目实战</option>
-            <option value="概念理解">概念理解</option>
-          </select>
-        </label>
-        <label class="profile-field">
+          <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" />
+        </div>
+        <div class="profile-field">
           <span>讲解偏好</span>
-          <select v-model="studentProfile.style" class="field compact">
-            <option value="图解+案例">图解+案例</option>
-            <option value="步骤推导">步骤推导</option>
-            <option value="对比辨析">对比辨析</option>
-          </select>
-        </label>
-        <label class="profile-field">
+          <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" />
+        </div>
+        <div class="profile-field">
           <span>题目难度</span>
-          <select v-model="studentProfile.difficulty" class="field compact">
-            <option value="基础">基础</option>
-            <option value="中等">中等</option>
-            <option value="挑战">挑战</option>
-          </select>
-        </label>
+          <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" />
+        </div>
       </div>
 
       <button class="primary-btn" :disabled="loading" @click="goPptStudio">
@@ -54,12 +38,12 @@
           <div class="reuse-desc">如果文件库里已有 PPT Studio 课件，可以直接选择并生成课堂。</div>
         </div>
         <div class="reuse-actions">
-          <select v-model="selectedPptJobId" class="field reuse-select">
-            <option value="">选择已有课件</option>
-            <option v-for="file in pptCoursewareOptions" :key="file.id" :value="getPptJobId(file)">
-              {{ file.name }}{{ file.slide_count ? ` · ${file.slide_count} 页` : '' }}
-            </option>
-          </select>
+          <n-select
+            v-model:value="selectedPptJobId"
+            :options="pptSelectOptions"
+            size="small"
+            class="reuse-select"
+          />
           <button class="secondary-btn" :disabled="loading || !selectedPptJobId" @click="onGenerate">
             <span v-if="loading" class="btn-spinner dark" aria-hidden="true"></span>
             {{ loading ? '生成中' : '生成课堂' }}
@@ -123,6 +107,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { NSelect } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import {
   deleteInteractiveClassroom,
@@ -141,6 +127,35 @@ const router = useRouter()
 const message = useMessage()
 const settingStore = useSettingStore()
 const { profile: studentProfile } = useStudentProfile()
+
+const basisOptions: SelectOption[] = [
+  { label: '零基础', value: '零基础' },
+  { label: '有基础', value: '有基础' },
+  { label: '进阶学习', value: '进阶学习' },
+]
+const goalOptions: SelectOption[] = [
+  { label: '考试通过', value: '考试通过' },
+  { label: '项目实战', value: '项目实战' },
+  { label: '概念理解', value: '概念理解' },
+]
+const styleOptions: SelectOption[] = [
+  { label: '图解+案例', value: '图解+案例' },
+  { label: '步骤推导', value: '步骤推导' },
+  { label: '对比辨析', value: '对比辨析' },
+]
+const difficultyOptions: SelectOption[] = [
+  { label: '基础', value: '基础' },
+  { label: '中等', value: '中等' },
+  { label: '挑战', value: '挑战' },
+]
+
+const pptSelectOptions = computed<SelectOption[]>(() => [
+  { label: '选择已有课件', value: '' },
+  ...pptCoursewareOptions.value.map((file) => ({
+    label: `${file.name}${file.slide_count ? ` · ${file.slide_count} 页` : ''}`,
+    value: getPptJobId(file),
+  })),
+])
 
 const topic = ref('')
 const course = ref('Python 程序设计')
