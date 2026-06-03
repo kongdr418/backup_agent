@@ -55,11 +55,6 @@
       </header>
 
       <section class="scene-body">
-        <div class="scene-title-row">
-          <span class="scene-kind">{{ currentScene.type === 'quiz' ? '课堂互动' : '教师讲解' }}</span>
-          <h2>{{ currentScene.title }}</h2>
-        </div>
-
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
           <div v-if="sceneSvg" class="svg-box" v-html="sceneSvg" />
           <pre v-else class="md-box">{{ sceneMarkdown || '本页暂无内容' }}</pre>
@@ -172,21 +167,71 @@
       </section>
 
       <footer class="narrator">
-        <div class="teacher-mark">
-          <Volume2 class="icon" />
-          <span>AI 教师</span>
-          <span class="play-status">{{ playbackStatusText }}</span>
+        <div class="narrator-card">
+          <div class="teacher-mark">
+            <div class="teacher-avatar"><Volume2 class="icon" /></div>
+            <div class="teacher-meta">
+              <div class="teacher-name">AI 教师</div>
+              <div class="play-status">{{ playbackStatusText }}</div>
+            </div>
+          </div>
+          <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
+          <template v-if="currentAudioUrl">
+            <audio
+              ref="audioRef"
+              :key="currentAudioUrl"
+              :src="currentAudioUrl"
+              :autoplay="autoPlayEnabled && currentScene.type !== 'quiz'"
+              @ended="handleAudioEnded"
+              @play="isAudioPlaying = true"
+              @pause="isAudioPlaying = false"
+              @loadedmetadata="onAudioLoaded"
+              @timeupdate="onAudioTimeUpdate"
+              @volumechange="onAudioVolumeChange"
+              @ratechange="onAudioRateChange"
+            />
+            <div class="audio-player">
+              <button
+                type="button"
+                class="audio-btn audio-btn--play"
+                :title="isAudioPlaying ? '暂停' : '播放'"
+                @click="toggleAudioPlay"
+              >
+                <Pause v-if="isAudioPlaying" class="audio-icon" />
+                <Play v-else class="audio-icon" />
+              </button>
+              <span class="audio-time">{{ formatAudioTime(currentAudioTime) }} / {{ formatAudioTime(audioDuration) }}</span>
+              <div class="audio-volume">
+                <button
+                  type="button"
+                  class="audio-btn"
+                  :title="audioVolume === 0 ? '取消静音' : '静音'"
+                  @click="toggleAudioMute"
+                >
+                  <VolumeX v-if="audioVolume === 0" class="audio-icon" />
+                  <Volume2 v-else class="audio-icon" />
+                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :value="audioVolume"
+                  class="audio-slider"
+                  @input="onAudioVolumeInput"
+                />
+              </div>
+              <button
+                type="button"
+                class="audio-rate"
+                :title="`倍速 ${audioPlaybackRate}x`"
+                @click="cyclePlaybackRate"
+              >
+                {{ audioPlaybackRate }}x
+              </button>
+            </div>
+          </template>
         </div>
-        <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
-        <audio
-          v-if="currentAudioUrl"
-          ref="audioRef"
-          :key="currentAudioUrl"
-          :src="currentAudioUrl"
-          controls
-          :autoplay="autoPlayEnabled && currentScene.type !== 'quiz'"
-          @ended="handleAudioEnded"
-        />
       </footer>
     </main>
   </div>
@@ -198,7 +243,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { CheckCircle, ChevronLeft, ChevronRight, PauseCircle, PlayCircle, Volume2, XCircle } from 'lucide-vue-next'
+import { CheckCircle, ChevronLeft, ChevronRight, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
   getInteractiveClassroom,
@@ -223,6 +268,64 @@ const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
 const reportVisible = ref(false)
 const autoPlayEnabled = ref(true)
+const isAudioPlaying = ref(false)
+const currentAudioTime = ref(0)
+const audioDuration = ref(0)
+const audioVolume = ref(1)
+const audioPlaybackRate = ref(1)
+const playbackRateOptions = [0.75, 1, 1.25, 1.5, 2]
+
+function onAudioLoaded() {
+  audioDuration.value = audioRef.value?.duration || 0
+}
+
+function onAudioTimeUpdate() {
+  currentAudioTime.value = audioRef.value?.currentTime || 0
+}
+
+function onAudioVolumeChange() {
+  audioVolume.value = audioRef.value?.volume ?? 1
+}
+
+function onAudioRateChange() {
+  audioPlaybackRate.value = audioRef.value?.playbackRate || 1
+}
+
+function toggleAudioPlay() {
+  const el = audioRef.value
+  if (!el) return
+  if (el.paused) {
+    el.play().catch(() => {})
+  } else {
+    el.pause()
+  }
+}
+
+function toggleAudioMute() {
+  const el = audioRef.value
+  if (!el) return
+  el.volume = el.volume > 0 ? 0 : 1
+}
+
+function onAudioVolumeInput(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (audioRef.value) audioRef.value.volume = value
+}
+
+function cyclePlaybackRate() {
+  const el = audioRef.value
+  if (!el) return
+  const idx = playbackRateOptions.indexOf(audioPlaybackRate.value)
+  const next = playbackRateOptions[(idx + 1) % playbackRateOptions.length]
+  el.playbackRate = next
+}
+
+function formatAudioTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 const audioRef = ref<HTMLAudioElement | null>(null)
 const advanceTimer = ref<number | null>(null)
 
@@ -692,14 +795,18 @@ watch(
   border-radius: 8px;
   background: #fff;
   padding: 10px;
-  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
 }
 
 .svg-box :deep(svg) {
-  width: 100%;
-  height: auto;
-  max-height: calc(100vh - 250px);
   display: block;
+  width: auto;
+  height: auto;
+  max-width: 900px;
+  max-height: 56vh;
 }
 
 .md-box {
@@ -892,11 +999,18 @@ watch(
 }
 
 .narrator {
-  border-top: 1px solid rgb(var(--line-rgb));
-  padding: 12px 18px;
+  padding: 12px 18px 16px;
+  background: transparent;
+}
+
+.narrator-card {
   background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 12px;
+  padding: 14px 16px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .report-panel {
@@ -1026,27 +1140,167 @@ watch(
 }
 
 .teacher-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.teacher-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgb(var(--forest-pale-rgb));
+  color: rgb(var(--forest-rgb));
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: rgb(var(--ink-2-rgb));
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.teacher-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.teacher-name {
   font-size: 13px;
   font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+  line-height: 1.2;
 }
 
 .play-status {
+  align-self: flex-start;
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 1px 8px;
   color: rgb(var(--ink-3-rgb));
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .speech-text {
   color: rgb(var(--ink-2-rgb));
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 1.7;
+  padding-left: 42px;
+}
+
+.audio-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 42px;
+  width: calc(100% - 42px);
+  padding-top: 2px;
+}
+
+.audio-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.audio-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+
+.audio-btn--play {
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  border-color: rgb(var(--ink-1-rgb));
+}
+
+.audio-btn--play:hover {
+  background: rgb(var(--ink-2-rgb));
+  color: rgb(var(--bg-surface-rgb));
+}
+
+.audio-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.audio-time {
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+  font-variant-numeric: tabular-nums;
+  min-width: 86px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.audio-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.audio-slider {
+  width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgb(var(--line-rgb));
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.audio-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgb(var(--ink-1-rgb));
+  cursor: pointer;
+  border: none;
+}
+
+.audio-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgb(var(--ink-1-rgb));
+  cursor: pointer;
+  border: none;
+}
+
+.audio-rate {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.audio-rate:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
 }
 
 .loading {
