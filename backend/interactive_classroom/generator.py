@@ -35,6 +35,9 @@ def _unique_texts(rows: list[str], limit: int = 12) -> list[str]:
         text = _clean_text(row)
         if len(text) < 2 or text in seen:
             continue
+        # 过滤 SVG 里的占位符文本，如 slide_001、page 1、（slide_001 关键点）等
+        if re.search(r"\b(slide|page)[_\-\s]*\d+\b", text, flags=re.I):
+            continue
         seen.add(text)
         result.append(text)
         if len(result) >= limit:
@@ -49,18 +52,36 @@ def _extract_svg_texts(svg: str) -> list[str]:
     return _unique_texts(matches)
 
 
-def _derive_slide_title(idx: int, filename: str, svg_texts: list[str]) -> str:
+def _derive_slide_title(idx: int, filename: str, svg_texts: list[str], manuscript_note: str = "") -> str:
+    # 1) 优先从讲稿（manuscript）提炼标题 —— 讲稿是对本页内容最准确的概括
+    if manuscript_note:
+        first = manuscript_note.split("。")[0].strip()
+        # 去掉常见的引导前缀，保留核心主题
+        first = re.sub(
+            r"^(在本章中|在这一页|在本节|本页|本节|本章|首先|接下来|我们|下面|现在|这里)\s*[，,、．.]?\s*",
+            "",
+            first,
+        )
+        first = _clean_text(first)
+        if 4 <= len(first) <= 20:
+            return first
+        if len(first) > 20:
+            return first[:18] + "..."
+
+    # 2) 从文件名提取（过滤 slide N / page N 等占位符）
     stem = os.path.splitext(os.path.basename(filename))[0]
     stem = re.sub(r"^\s*\d+[\s_.\-、]*", "", stem)
     stem = re.sub(r"[_\-]+", " ", stem)
     stem = _clean_text(stem)
-    if 2 <= len(stem) <= 40 and not re.match(r"^slide\s*\d+$", stem, flags=re.I):
+    if 2 <= len(stem) <= 40 and not re.match(r"^(slide|page)\s*\d+$", stem, flags=re.I):
         return stem
 
+    # 3) 从 SVG 文本提取（兜底，不再优先）
     for text in svg_texts:
         candidate = _clean_text(text)
         if 2 <= len(candidate) <= 40:
             return candidate
+
     return f"第 {idx} 页"
 
 
@@ -264,8 +285,8 @@ class InteractiveClassroomGenerator:
                 svg = f.read()
 
             svg_texts = _extract_svg_texts(svg)
-            title = _derive_slide_title(idx, fname, svg_texts)
             manuscript_note = manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else ""
+            title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
             speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
 
             scenes.append(
@@ -552,7 +573,16 @@ class InteractiveClassroomGenerator:
                 normalized_type = "multiple" if len(answers) > 1 or "多" in qtype else "single"
                 knowledge_point = _clean_text(str(row.get("knowledge_point") or module.get("title") or ""))
                 if not knowledge_point:
-                    knowledge_point = next((point for point in scene_points if point), "")
+                    knowledge_point = next(
+                        (
+                            point
+                            for point in scene_points
+                            if point and not re.search(r"\b(slide|page)[_\-\s]*\d+\b", point, flags=re.I)
+                        ),
+                        "",
+                    )
+                if not knowledge_point:
+                    knowledge_point = topic
 
                 questions.append(
                     {

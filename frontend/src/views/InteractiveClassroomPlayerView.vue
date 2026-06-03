@@ -15,7 +15,7 @@
       >
           <span class="scene-index">{{ idx + 1 }}</span>
           <span class="scene-copy">
-          <span class="scene-title">{{ scene.title }}</span>
+          <span class="scene-title">{{ formatSceneTitle(scene) }}</span>
           <span class="scene-type">{{ sceneTypeLabel(scene.type) }}</span>
         </span>
       </button>
@@ -179,14 +179,20 @@
 
       <footer v-if="currentScene.type !== 'report'" class="narrator">
         <div class="narrator-card">
-          <div class="teacher-mark">
-            <div class="teacher-avatar"><Volume2 class="icon" /></div>
-            <div class="teacher-meta">
-              <div class="teacher-name">AI 教师</div>
-              <div class="play-status">{{ playbackStatusText }}</div>
+          <div class="narrator-body">
+            <div class="teacher-mark">
+              <div class="teacher-avatar">
+                <Volume2 v-if="isAudioPlaying" class="icon avatar-pulse" />
+                <VolumeX v-else class="icon" />
+              </div>
+              <div class="teacher-meta">
+                <div class="teacher-name">AI 教师</div>
+                <div class="play-status">{{ playbackStatusText }}</div>
+              </div>
             </div>
+            <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
           </div>
-          <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
+
           <template v-if="currentAudioUrl">
             <audio
               ref="audioRef"
@@ -201,45 +207,54 @@
               @volumechange="onAudioVolumeChange"
               @ratechange="onAudioRateChange"
             />
-            <div class="audio-player">
-              <button
-                type="button"
-                class="audio-btn audio-btn--play"
-                :title="isAudioPlaying ? '暂停' : '播放'"
-                @click="toggleAudioPlay"
-              >
-                <Pause v-if="isAudioPlaying" class="audio-icon" />
-                <Play v-else class="audio-icon" />
-              </button>
-              <span class="audio-time">{{ formatAudioTime(currentAudioTime) }} / {{ formatAudioTime(audioDuration) }}</span>
-              <div class="audio-volume">
+            <div class="audio-bar">
+              <div class="audio-controls">
                 <button
                   type="button"
-                  class="audio-btn"
-                  :title="audioVolume === 0 ? '取消静音' : '静音'"
-                  @click="toggleAudioMute"
+                  class="audio-play-btn"
+                  :title="isAudioPlaying ? '暂停' : '播放'"
+                  @click="toggleAudioPlay"
                 >
-                  <VolumeX v-if="audioVolume === 0" class="audio-icon" />
-                  <Volume2 v-else class="audio-icon" />
+                  <Pause v-if="isAudioPlaying" class="audio-play-icon" />
+                  <Play v-else class="audio-play-icon" />
                 </button>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  :value="audioVolume"
-                  class="audio-slider"
-                  @input="onAudioVolumeInput"
-                />
+
+                <span class="audio-time">
+                  <em>{{ formatAudioTime(currentAudioTime) }}</em>
+                  <i>/</i>
+                  <span>{{ formatAudioTime(audioDuration) }}</span>
+                </span>
+
+                <div class="audio-volume">
+                  <button
+                    type="button"
+                    class="audio-tool-btn"
+                    :title="audioVolume === 0 ? '取消静音' : '静音'"
+                    @click="toggleAudioMute"
+                  >
+                    <VolumeX v-if="audioVolume === 0" class="audio-tool-icon" />
+                    <Volume2 v-else class="audio-tool-icon" />
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    :value="audioVolume"
+                    class="audio-slider"
+                    @input="onAudioVolumeInput"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  class="audio-rate"
+                  :title="`倍速 ${audioPlaybackRate}x`"
+                  @click="cyclePlaybackRate"
+                >
+                  {{ audioPlaybackRate }}x
+                </button>
               </div>
-              <button
-                type="button"
-                class="audio-rate"
-                :title="`倍速 ${audioPlaybackRate}x`"
-                @click="cyclePlaybackRate"
-              >
-                {{ audioPlaybackRate }}x
-              </button>
             </div>
           </template>
         </div>
@@ -410,11 +425,15 @@ const answeredQuizCount = computed(() => {
   return Math.max(localCount, report.value?.answered_quiz_count || 0)
 })
 
-const isClassroomComplete = computed(() =>
-  quizSceneIds.value.length > 0 && answeredQuizCount.value === quizSceneIds.value.length,
-)
+const isClassroomComplete = computed(() => {
+  if (quizSceneIds.value.length === 0) return true
+  return answeredQuizCount.value === quizSceneIds.value.length
+})
 
-const canOpenReportScene = computed(() => answeredQuizCount.value >= 3)
+const canOpenReportScene = computed(() => {
+  if (quizSceneIds.value.length === 0) return true
+  return answeredQuizCount.value === quizSceneIds.value.length
+})
 
 const lastContentSceneIndex = computed(() => Math.max(0, baseScenes.value.length - 1))
 
@@ -524,7 +543,7 @@ function scheduleAutoAdvance(delay = 900) {
 function selectScene(idx: number) {
   const target = orderedScenes.value[idx]
   if (target?.type === 'report' && !canOpenReportScene.value) {
-    message.warning('完成至少 3 次随堂测验后才能查看学习报告')
+    message.warning('完成所有随堂测验后才能查看学习报告')
     return
   }
   clearAdvanceTimer()
@@ -624,7 +643,7 @@ async function loadReport(silent = false) {
 
 async function showReport() {
   if (!canOpenReportScene.value) {
-    message.warning('完成至少 3 次随堂测验后才能查看学习报告')
+    message.warning('完成所有随堂测验后才能查看学习报告')
     return
   }
   if (report.value) return
@@ -691,6 +710,26 @@ watch(
   },
   { flush: 'post' },
 )
+
+function formatSceneTitle(scene: InteractiveClassroomScene): string {
+  const rawTitle = scene.title || ''
+  // 跳过默认占位标题：page 1、slide 1、第 1 页、1 等
+  if (rawTitle && !/^(page|slide|p|s)\s*\d+$/i.test(rawTitle) && !/^第\s*\d+\s*页?$/.test(rawTitle) && !/^\d+$/.test(rawTitle)) {
+    return rawTitle
+  }
+  const speech = scene.actions?.find((a) => a.type === 'speech')?.text || ''
+  if (speech) {
+    const clean = speech.replace(/^这一页的主题是[“\"]/, '').replace(/[”\"]。.*/, '').trim()
+    if (clean.length >= 2 && clean.length <= 20) return clean
+    const firstSentence = speech.split(/[。.!?！？]/)[0].trim()
+    if (firstSentence.length >= 2 && firstSentence.length <= 20) return firstSentence
+    if (firstSentence.length > 20) return firstSentence.slice(0, 18) + '...'
+  }
+  const kp = scene.knowledge_points?.[0]
+  if (kp && kp.length >= 2 && kp.length <= 20) return kp
+  if (kp && kp.length > 20) return kp.slice(0, 18) + '...'
+  return rawTitle || '课堂内容'
+}
 
 function sceneTypeLabel(type: string) {
   if (type === 'quiz') return '测验'
@@ -1109,11 +1148,18 @@ function sceneTypeLabel(type: string) {
 .narrator-card {
   background: rgb(var(--bg-surface-rgb));
   border: 1px solid rgb(var(--line-rgb));
-  border-radius: 12px;
-  padding: 14px 16px;
-  display: grid;
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.narrator-body {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .report-page {
@@ -1281,21 +1327,36 @@ function sceneTypeLabel(type: string) {
 }
 
 .teacher-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   background: rgb(var(--forest-pale-rgb));
   color: rgb(var(--forest-rgb));
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: background 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+.teacher-avatar .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.avatar-pulse {
+  animation: avatarPulse 2s ease-in-out infinite;
+}
+
+@keyframes avatarPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.92); }
 }
 
 .teacher-meta {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -1310,71 +1371,92 @@ function sceneTypeLabel(type: string) {
   align-self: flex-start;
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 2px 9px;
   color: rgb(var(--ink-3-rgb));
   font-size: 11px;
   font-weight: 500;
   line-height: 1.4;
+  background: rgb(var(--bg-base-rgb));
 }
 
 .speech-text {
   color: rgb(var(--ink-2-rgb));
   font-size: 13.5px;
   line-height: 1.7;
-  padding-left: 42px;
+  padding-left: 44px;
 }
 
-.audio-player {
+.audio-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-left: 42px;
-  width: calc(100% - 42px);
-  padding-top: 2px;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: 44px;
+  width: calc(100% - 44px);
+  padding-top: 10px;
+  border-top: 1px solid rgb(var(--line-rgb));
 }
 
-.audio-btn {
-  width: 28px;
+.audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-play-btn {
+  width: 32px;
   height: 28px;
-  border-radius: 6px;
-  border: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-surface-rgb));
-  color: rgb(var(--ink-2-rgb));
+  border-radius: 7px;
+  border: none;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+  transition: background 150ms var(--ease-out), transform 150ms var(--ease-out);
 }
 
-.audio-btn:hover {
-  background: rgb(var(--bg-subtle-rgb));
-  color: rgb(var(--ink-1-rgb));
-}
-
-.audio-btn--play {
-  background: rgb(var(--ink-1-rgb));
-  color: rgb(var(--bg-surface-rgb));
-  border-color: rgb(var(--ink-1-rgb));
-}
-
-.audio-btn--play:hover {
+.audio-play-btn:hover {
   background: rgb(var(--ink-2-rgb));
-  color: rgb(var(--bg-surface-rgb));
+  transform: scale(1.05);
 }
 
-.audio-icon {
+.audio-play-btn:active {
+  transform: scale(0.95);
+}
+
+.audio-play-icon {
   width: 14px;
   height: 14px;
 }
 
 .audio-time {
-  font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
-  min-width: 86px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.audio-time em {
+  font-style: normal;
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.audio-time i {
+  font-style: normal;
+  color: rgb(var(--ink-3-rgb));
+  opacity: 0.5;
+}
+
+.audio-time span {
+  color: rgb(var(--ink-3-rgb));
 }
 
 .audio-volume {
@@ -1384,8 +1466,34 @@ function sceneTypeLabel(type: string) {
   position: relative;
 }
 
+.audio-tool-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-base-rgb));
+  color: rgb(var(--ink-2-rgb));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 150ms var(--ease-out), color 150ms var(--ease-out), border-color 150ms var(--ease-out);
+}
+
+.audio-tool-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+  border-color: rgb(var(--ink-3-rgb));
+}
+
+.audio-tool-icon {
+  width: 13px;
+  height: 13px;
+}
+
 .audio-slider {
-  width: 80px;
+  width: 60px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
@@ -1401,41 +1509,44 @@ function sceneTypeLabel(type: string) {
 .audio-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background: rgb(var(--ink-1-rgb));
   cursor: pointer;
-  border: none;
+  border: 2px solid rgb(var(--bg-surface-rgb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .audio-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background: rgb(var(--ink-1-rgb));
   cursor: pointer;
-  border: none;
+  border: 2px solid rgb(var(--bg-surface-rgb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .audio-rate {
   height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
+  padding: 0 9px;
+  border-radius: 7px;
   border: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-surface-rgb));
+  background: rgb(var(--bg-base-rgb));
   color: rgb(var(--ink-2-rgb));
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+  transition: background 150ms var(--ease-out), color 150ms var(--ease-out), border-color 150ms var(--ease-out);
 }
 
 .audio-rate:hover {
   background: rgb(var(--bg-subtle-rgb));
   color: rgb(var(--ink-1-rgb));
+  border-color: rgb(var(--ink-3-rgb));
 }
 
 .loading {
