@@ -59,6 +59,27 @@ const downloadUrl = ref('')
 const jobId = route.params.jobId as string
 let studioController: PptistStudioController | null = null
 
+async function importPptistEntry() {
+  try {
+    return await import('@pptist/paper-entry')
+  } catch (err) {
+    if (!import.meta.env.DEV) throw err
+    return await import(/* @vite-ignore */ `/src/pptist/paper-entry.ts?t=${Date.now()}`)
+  }
+}
+
+function maybeRedirectToCacheBypassHost(err: unknown) {
+  if (!import.meta.env.DEV || window.location.hostname !== 'localhost') return false
+  const message = err instanceof Error ? err.message : String(err)
+  if (!message.includes('Failed to fetch dynamically imported module')) return false
+
+  const url = new URL(window.location.href)
+  url.hostname = '127.0.0.1'
+  loadingText.value = '检测到浏览器本地模块缓存异常，正在切换到 127.0.0.1 重新加载...'
+  window.location.replace(url.toString())
+  return true
+}
+
 const handleSave = async () => {
   if (!studioController || saving.value) return
   saving.value = true
@@ -75,7 +96,7 @@ onMounted(async () => {
   if (!containerRef.value) return
 
   try {
-    const { mountPptistStudio } = await import('@pptist/paper-entry')
+    const { mountPptistStudio } = await importPptistEntry()
 
     studioController = mountPptistStudio(containerRef.value, {
       source: { kind: 'preview', jobId },
@@ -105,6 +126,7 @@ onMounted(async () => {
     }, 500)
   } catch (err) {
     console.error('[PPTist] init failed:', err)
+    if (maybeRedirectToCacheBypassHost(err)) return
     loadingText.value = `加载失败: ${err instanceof Error ? err.message : String(err)}`
   }
 })

@@ -21,6 +21,7 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+.history/
 *.swp
 *.swo
 
@@ -101,3 +102,4 @@ docs/
 DEVELOPMENT_ROADMAP.md
 交互式课堂开发规划.md
 对标国家级一等奖完善建议.md
+AGENTS.md

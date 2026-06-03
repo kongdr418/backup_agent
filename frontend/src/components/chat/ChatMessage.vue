@@ -156,7 +156,7 @@ function copy() {
 }
 
 function onRegenerate() {
-  regenerate(props.message.id)
+  regenerate()
 }
 </script>
 

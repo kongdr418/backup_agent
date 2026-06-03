@@ -135,16 +135,10 @@ async function initPanzoom() {
 
     // pan-container 的 flexbox 已经把图片居中，panzoom 不需要额外偏移
     // 否则 translate 会叠加在 flexbox 居中之上，导致双倍偏移
-    const startX = 0
-    const startY = 0
-
     panzoomInstance = Panzoom(img, {
       maxScale: 5,
       minScale: 0.5,
       step: 0.3,
-      contain: false,
-      startX,
-      startY,
     })
   } catch {
     // panzoom not available, image still shows without zoom
