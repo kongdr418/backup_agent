@@ -583,12 +583,21 @@ class InteractiveClassroomGenerator:
         for scene in scenes:
             content = scene.content or {}
             extracted = content.get("extracted_text", [])
+            # 抓首条 speech action 的讲稿正文（如果有）—— 讲稿比 SVG 文本更"语义化"
+            speech_text = ""
+            for action in scene.actions or []:
+                if action.type == "speech" and action.text:
+                    speech_text = action.text
+                    break
+            if len(speech_text) > 320:
+                speech_text = speech_text[:320].rstrip("，。；、 ") + "…"
             summaries.append(
                 {
                     "scene_id": scene.id,
                     "title": scene.title,
                     "knowledge_points": scene.knowledge_points[:8],
                     "extracted_text": extracted[:16] if isinstance(extracted, list) else [],
+                    "speech_excerpt": speech_text,
                 }
             )
         return summaries
@@ -846,6 +855,153 @@ class InteractiveClassroomGenerator:
             actions=[],
         )
 
+    def _build_mindmap_prompt(
+        self,
+        topic: str,
+        slide_summaries: list[dict[str, Any]],
+        student_profile: dict[str, str] | None = None,
+    ) -> str:
+        """为 mindmap 场景生成 LLM prompt。
+
+        关键点：传讲稿正文（speech_excerpt），让 LLM 从语义归纳概念，
+        而不是只把 slide 标题换皮。
+        """
+        lines = [
+            f"请基于下面的课堂讲稿内容，为《{topic}》整理出一份**真正的知识结构图**（markmap 风格 Markdown）。",
+            "",
+            "## 课堂页面（含讲稿摘录）",
+        ]
+        for idx, slide in enumerate(slide_summaries, start=1):
+            title = str(slide.get("title") or "").strip() or f"第 {idx} 页"
+            points = [
+                str(p).strip() for p in (slide.get("knowledge_points") or []) if str(p).strip()
+            ][:6]
+            excerpt = str(slide.get("speech_excerpt") or "").strip()
+            lines.append(f"\n### 第 {idx} 页：{title}")
+            if points:
+                lines.append(f"- 关键点：{'；'.join(points)}")
+            if excerpt:
+                lines.append(f"- 讲稿：{excerpt}")
+
+        profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
+        if profile_hint:
+            lines.append(f"\n## 学生画像\n{profile_hint}\n")
+
+        lines.extend(
+            [
+                "\n## 输出要求（务必遵循）",
+                "1. **从讲稿里归纳真正的概念**，不要简单把页面标题当成分支名",
+                "2. 根节点 = 课堂主题（一级标题 #）",
+                "3. 一级分支 3-6 个，**按主题分类**（不是按页面顺序）",
+                "4. 二级分支 2-5 个，挂在最合适的一级下；最多两级",
+                "5. 每个节点 2-8 字，简洁直白",
+                "6. **只返回 Markdown 本身**，不要用 ``` 包裹，不要任何解释、前言、后语",
+                "7. 实在归纳不出时，输出：根节点 + 一级分支 = 主要概念（≤5 个），二级分支 = 讲到的关键名词",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _build_fallback_markmap_md(
+        self,
+        topic: str,
+        slide_summaries: list[dict[str, Any]],
+    ) -> str:
+        """LLM 失败时的兜底：根节点 + 每页标题作一级分支。"""
+        lines = [f"# {topic}"]
+        for idx, slide in enumerate(slide_summaries, start=1):
+            title = str(slide.get("title") or "").strip() or f"第 {idx} 页"
+            lines.append(f"- {title}")
+        return "\n".join(lines)
+
+    def _call_content_llm_markmap(self, prompt: str) -> str:
+        """走 content LLM 通道（与 quiz 共享），不依赖外部资源。"""
+        from generators.shared_config import content_llm_call
+
+        return content_llm_call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一位知识结构整理专家，擅长把课堂内容组织成层级清晰、"
+                        "用词简洁的思维导图。只输出 Markdown 大纲本身。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+        )
+
+    def _build_mindmap_scene(
+        self,
+        topic: str,
+        scenes: list[ClassroomScene],
+        student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
+    ) -> ClassroomScene | None:
+        """构造一个 mindmap 场景。
+
+        输入是已经排好的 [slide scenes] + [quiz scenes] 列表。
+        从 slide scenes 抽 title + knowledge_points，让 LLM 重组为 markmap markdown。
+        LLM 失败时回退到 flat fallback（根节点 + 每页标题）。
+        """
+        _raise_if_cancelled(cancel_check)
+
+        slide_scenes = [s for s in scenes if s.type == "slide"]
+        if not slide_scenes:
+            return None
+
+        slide_summaries = self._build_slide_summaries(slide_scenes)
+        markmap_md = ""
+        try:
+            prompt = self._build_mindmap_prompt(topic, slide_summaries, student_profile)
+            raw = self._call_content_llm_markmap(prompt)
+            _raise_if_cancelled(cancel_check)
+            # 防御：剥掉 ``` 围栏（即使 prompt 说了不要）
+            cleaned = re.sub(r"^```(?:markdown|md)?\s*\n?", "", (raw or "").strip())
+            cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+            cleaned = cleaned.strip()
+            # 防御：必须包含至少一个 # 标题
+            if cleaned and re.search(r"^#\s+\S", cleaned, flags=re.M):
+                markmap_md = cleaned
+        except Exception:
+            markmap_md = ""
+
+        if not markmap_md:
+            markmap_md = self._build_fallback_markmap_md(topic, slide_summaries)
+
+        # 收集所有 slide 知识点到场景 knowledge_points
+        merged_points: list[str] = []
+        for s in slide_scenes:
+            for p in [s.title, *s.knowledge_points]:
+                if p and p not in merged_points:
+                    merged_points.append(p)
+
+        speech_text = (
+            f"接下来我们用一张知识结构图，回顾《{topic}》这堂课讲了什么。"
+            f"你可以在图中看到主要的概念和它们之间的层级关系。"
+        )
+
+        scene_ts = int(datetime.now().timestamp() * 1000)
+        return ClassroomScene(
+            id=f"scene_mindmap_{scene_ts}",
+            type="mindmap",
+            title=f"知识结构：{topic}",
+            order=0,  # 后续 _renumber 会重排
+            knowledge_points=merged_points[:8] or [topic],
+            content={
+                "format": "markmap",
+                "markmap_md": markmap_md,
+                "source": "llm" if markmap_md and len(markmap_md) > 30 else "fallback",
+            },
+            actions=[
+                ClassroomAction(
+                    id=f"act_mindmap_{scene_ts}",
+                    type="speech",
+                    text=speech_text,
+                )
+            ],
+        )
+
     def _insert_quiz_scenes(
         self,
         topic: str,
@@ -948,6 +1104,23 @@ class InteractiveClassroomGenerator:
 
         _raise_if_cancelled(cancel_check)
         scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check, progress_callback)
+
+        # 阶段 2.5：在末尾追加一个 mindmap 场景（知识结构回顾）
+        # 仅当有 >= 2 个 slide 场景时才有意义
+        if sum(1 for s in scenes if s.type == "slide") >= 2:
+            mindmap_scene = self._build_mindmap_scene(
+                topic, scenes, normalized_profile, cancel_check
+            )
+            if mindmap_scene is not None:
+                _emit_progress(
+                    progress_callback,
+                    stage="build_scenes",
+                    stage_index=1,
+                    scene_index=len(scenes),
+                    scene_total=len(scenes) + 1,
+                )
+                scenes.append(mindmap_scene)
+
         for idx, scene in enumerate(scenes, start=1):
             _raise_if_cancelled(cancel_check)
             scene.order = idx

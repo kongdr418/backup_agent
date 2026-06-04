@@ -22,39 +22,17 @@
     </aside>
 
     <main class="stage">
-      <header class="stage-header">
-        <div>
-          <h1>{{ classroom.title }}</h1>
-          <div class="topic">{{ classroom.topic }}</div>
-        </div>
-        <div class="stage-actions">
-          <button
-            class="icon-btn"
-            :class="{ active: autoPlayEnabled }"
-            :title="autoPlayEnabled ? '关闭自动播放' : '开启自动播放'"
-            @click="toggleAutoPlay"
-          >
-            <PauseCircle v-if="autoPlayEnabled" class="icon" />
-            <PlayCircle v-else class="icon" />
-          </button>
-          <button class="icon-btn" :disabled="currentIndex === 0" title="上一页" @click="goPrev">
-            <ChevronLeft class="icon" />
-          </button>
-          <button
-            class="icon-btn"
-            :disabled="currentIndex >= orderedScenes.length - 1"
-            title="下一页"
-            @click="goNext"
-          >
-            <ChevronRight class="icon" />
-          </button>
-        </div>
-      </header>
-
       <section class="scene-body">
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
           <div v-if="sceneSvg" class="svg-box" v-html="sceneSvg" />
           <pre v-else class="md-box">{{ sceneMarkdown || '本页暂无内容' }}</pre>
+        </div>
+
+        <div v-else-if="currentScene.type === 'mindmap'" class="mindmap-wrap">
+          <MindmapScene
+            :markdown="sceneMarkmapMd"
+            :title="currentScene.title"
+          />
         </div>
 
         <div v-else-if="currentScene.type === 'quiz'" class="quiz-wrap">
@@ -224,12 +202,31 @@
               <div class="audio-controls">
                 <button
                   type="button"
-                  class="audio-play-btn"
-                  :title="isAudioPlaying ? '暂停' : '播放'"
-                  @click="toggleAudioPlay"
+                  class="audio-tool-btn"
+                  :disabled="currentIndex === 0"
+                  title="上一页"
+                  @click="goPrev"
                 >
-                  <Pause v-if="isAudioPlaying" class="audio-play-icon" />
-                  <Play v-else class="audio-play-icon" />
+                  <ChevronLeft class="audio-tool-icon" />
+                </button>
+                <button
+                  type="button"
+                  class="audio-tool-btn"
+                  :class="{ active: autoPlayEnabled }"
+                  :title="autoPlayEnabled ? '关闭自动播放' : '开启自动播放'"
+                  @click="toggleAutoPlay"
+                >
+                  <PauseCircle v-if="autoPlayEnabled" class="audio-tool-icon" />
+                  <PlayCircle v-else class="audio-tool-icon" />
+                </button>
+                <button
+                  type="button"
+                  class="audio-tool-btn"
+                  :disabled="currentIndex >= orderedScenes.length - 1"
+                  title="下一页"
+                  @click="goNext"
+                >
+                  <ChevronRight class="audio-tool-icon" />
                 </button>
 
                 <span class="audio-time">
@@ -297,6 +294,7 @@ import {
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
+import MindmapScene from '@/components/classroom/MindmapScene.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -397,6 +395,11 @@ const sceneSvg = computed(() => {
 const sceneMarkdown = computed(() => {
   const content = currentScene.value?.content || {}
   return (content.markdown as string) || ''
+})
+
+const sceneMarkmapMd = computed(() => {
+  const content = currentScene.value?.content || {}
+  return (content.markmap_md as string) || ''
 })
 
 const questions = computed(() => {
@@ -747,6 +750,7 @@ function formatSceneTitle(scene: InteractiveClassroomScene): string {
 
 function sceneTypeLabel(type: string) {
   if (type === 'quiz') return '测验'
+  if (type === 'mindmap') return '知识结构'
   if (type === 'report') return canOpenReportScene.value ? '报告' : '未解锁'
   return '讲解'
 }
@@ -1001,6 +1005,13 @@ function runTask(task: ClassroomRecommendedTask) {
   background: rgb(var(--bg-surface-rgb));
   padding: 14px;
   white-space: pre-wrap;
+}
+
+.mindmap-wrap {
+  width: 100%;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
 }
 
 .quiz-wrap {
