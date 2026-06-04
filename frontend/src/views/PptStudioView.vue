@@ -166,7 +166,6 @@ import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearnerProfile, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
-import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
