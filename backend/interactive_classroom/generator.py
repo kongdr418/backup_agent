@@ -5,12 +5,24 @@ import re
 import json
 from datetime import datetime
 from html import unescape
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from .schema import ClassroomAction, ClassroomScene, InteractiveClassroom
 from .storage import ClassroomStorage
 from .tts_service import ClassroomTTSService
+
+
+class ClassroomGenerationCancelled(Exception):
+    """Raised when an interactive classroom generation request is cancelled."""
+
+
+CancelCheck = Callable[[], bool]
+
+
+def _raise_if_cancelled(cancel_check: CancelCheck | None) -> None:
+    if cancel_check and cancel_check():
+        raise ClassroomGenerationCancelled("interactive classroom generation cancelled")
 
 
 def _sorted_svg_files(svg_dir: str) -> list[str]:
@@ -307,6 +319,7 @@ class InteractiveClassroomGenerator:
         user_id: str,
         ppt_job_id: str,
         student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> list[ClassroomScene]:
         job_dir = self._resolve_ppt_job_dir(user_id, ppt_job_id)
         if not job_dir:
@@ -320,6 +333,7 @@ class InteractiveClassroomGenerator:
         scenes: list[ClassroomScene] = []
 
         for idx, fname in enumerate(svg_files, start=1):
+            _raise_if_cancelled(cancel_check)
             path = os.path.join(svg_dir, fname)
             with open(path, "r", encoding="utf-8") as f:
                 svg = f.read()
@@ -358,7 +372,9 @@ class InteractiveClassroomGenerator:
         self,
         topic: str,
         student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> list[ClassroomScene]:
+        _raise_if_cancelled(cancel_check)
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
         suffix = f"本节会按学生画像调整：{profile_hint}。" if profile_hint else ""
         slides = [
@@ -652,11 +668,14 @@ class InteractiveClassroomGenerator:
         max_questions: int,
         qid_prefix: str,
         student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> list[dict[str, Any]]:
+        _raise_if_cancelled(cancel_check)
         if not self.llm_quiz_enabled:
             return []
         try:
             raw_json = self._generate_context_quiz_json(topic, scenes, max_questions, student_profile)
+            _raise_if_cancelled(cancel_check)
             return self._convert_llm_quiz_json(
                 raw_json=raw_json,
                 scenes=scenes,
@@ -674,7 +693,9 @@ class InteractiveClassroomGenerator:
         scenes: list[ClassroomScene],
         max_questions: int = 3,
         student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> ClassroomScene:
+        _raise_if_cancelled(cancel_check)
         qid_prefix = f"q{quiz_index}_"
         questions = self._build_llm_quiz_questions(
             topic,
@@ -682,7 +703,9 @@ class InteractiveClassroomGenerator:
             max_questions=max_questions,
             qid_prefix=qid_prefix,
             student_profile=student_profile,
+            cancel_check=cancel_check,
         )
+        _raise_if_cancelled(cancel_check)
         quiz_source = "llm_json" if questions else "slide_text"
         if not questions:
             questions = self._build_quiz_questions(
@@ -716,7 +739,9 @@ class InteractiveClassroomGenerator:
         topic: str,
         scenes: list[ClassroomScene],
         student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> list[ClassroomScene]:
+        _raise_if_cancelled(cancel_check)
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
         if not slide_scenes:
             return scenes
@@ -730,6 +755,7 @@ class InteractiveClassroomGenerator:
         quiz_source_index = 0
 
         for scene in slide_scenes:
+            _raise_if_cancelled(cancel_check)
             result.append(scene)
             if scene.id not in quiz_source_ids:
                 continue
@@ -750,6 +776,7 @@ class InteractiveClassroomGenerator:
                         scenes=pending_slides,
                         max_questions=2 if not is_last else 3,
                         student_profile=student_profile,
+                        cancel_check=cancel_check,
                     )
                 )
                 quiz_index += 1
@@ -765,20 +792,24 @@ class InteractiveClassroomGenerator:
         tts_config: dict[str, Any],
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> dict[str, Any]:
+        _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
         classroom_id = f"cls_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
         normalized_profile = _normalize_student_profile(student_profile)
 
         if ppt_job_id:
-            scenes = self._build_slide_scenes_from_ppt_job(user_id, ppt_job_id, normalized_profile)
+            scenes = self._build_slide_scenes_from_ppt_job(user_id, ppt_job_id, normalized_profile, cancel_check)
             if not scenes:
-                scenes = self._build_fallback_slide_scenes(topic, normalized_profile)
+                scenes = self._build_fallback_slide_scenes(topic, normalized_profile, cancel_check)
         else:
-            scenes = self._build_fallback_slide_scenes(topic, normalized_profile)
+            scenes = self._build_fallback_slide_scenes(topic, normalized_profile, cancel_check)
 
-        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile)
+        _raise_if_cancelled(cancel_check)
+        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check)
         for idx, scene in enumerate(scenes, start=1):
+            _raise_if_cancelled(cancel_check)
             scene.order = idx
 
         classroom = InteractiveClassroom(
@@ -814,7 +845,9 @@ class InteractiveClassroomGenerator:
         audio_dir = self.storage.audio_dir(user_id, classroom_id)
         tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
         for scene in classroom.scenes:
+            _raise_if_cancelled(cancel_check)
             for action in scene.actions:
+                _raise_if_cancelled(cancel_check)
                 if action.type != "speech":
                     continue
                 try:
@@ -824,6 +857,7 @@ class InteractiveClassroomGenerator:
                 except Exception:
                     action.audio_url = ""
 
+        _raise_if_cancelled(cancel_check)
         payload = classroom.to_dict()
         self.storage.save_classroom(user_id, classroom_id, payload)
         return payload

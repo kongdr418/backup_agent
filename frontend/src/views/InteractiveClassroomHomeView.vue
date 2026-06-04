@@ -110,7 +110,10 @@
             <div class="progress-title">课堂生成中</div>
             <div class="progress-desc">正在生成课堂内容、语音和学习记录，完成后会自动进入播放器。</div>
           </div>
-          <div class="progress-time">{{ elapsedSeconds }}s</div>
+          <div class="progress-side">
+            <div class="progress-time">{{ elapsedSeconds }}s</div>
+            <button class="progress-stop" @click="stopCurrentGeneration">停止</button>
+          </div>
         </div>
         <div class="progress-track">
           <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
@@ -211,18 +214,26 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import {
+  cancelInteractiveClassroomGeneration,
   deleteInteractiveClassroom,
-  generateInteractiveClassroom,
+  getInteractiveClassroomGenerationStatus,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   listInteractiveClassrooms,
   renameInteractiveClassroom,
+  startInteractiveClassroomGeneration,
   type InteractiveClassroomListItem,
 } from '@/api/interactiveClassroom'
 import { listFiles } from '@/api/files'
 import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
 import type { GeneratedFile } from '@/types'
+import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
+import {
+  clearPersistedClassroomGeneration,
+  loadPersistedClassroomGeneration,
+  savePersistedClassroomGeneration,
+} from '@/utils/classroomGenerationState'
 
 const router = useRouter()
 const message = useMessage()
@@ -268,6 +279,10 @@ const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
 const elapsedSeconds = ref(0)
 const progressTimer = ref<number | null>(null)
+const generationPollTimer = ref<number | null>(null)
+const activeRequestId = ref('')
+const activeStartedAt = ref(0)
+const activeSuccessMessage = ref('课堂已生成')
 
 const pptCoursewareOptions = computed(() =>
   files.value.filter((file) => Boolean(getPptJobId(file))),
@@ -280,11 +295,12 @@ const progressPercent = computed(() => {
   return Math.min(88, 72 + Math.floor((elapsed - 20) / 8))
 })
 
-function startProgressTimer() {
+function startProgressTimer(startedAt = Date.now()) {
   stopProgressTimer()
-  elapsedSeconds.value = 0
+  activeStartedAt.value = startedAt
+  elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
   progressTimer.value = window.setInterval(() => {
-    elapsedSeconds.value += 1
+    elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - activeStartedAt.value) / 1000))
   }, 1000)
 }
 
@@ -328,8 +344,19 @@ function goPptStudio() {
       from: 'interactive-classroom',
       topic: topic.value,
       course: course.value || undefined,
+      basis: studentProfile.value.basis,
+      goal: studentProfile.value.goal,
+      style: studentProfile.value.style,
+      difficulty: studentProfile.value.difficulty,
     },
   })
+}
+
+function stopGenerationPoll() {
+  if (generationPollTimer.value !== null) {
+    window.clearInterval(generationPollTimer.value)
+    generationPollTimer.value = null
+  }
 }
 
 async function onGenerate() {
@@ -342,10 +369,8 @@ async function onGenerate() {
     return
   }
 
-  loading.value = true
-  startProgressTimer()
   try {
-    const res = await generateInteractiveClassroom({
+    await beginClassroomGeneration({
       topic: topic.value,
       course: course.value || undefined,
       ppt_job_id: selectedPptJobId.value || undefined,
@@ -359,15 +384,10 @@ async function onGenerate() {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
-    })
-    message.success('课堂已生成')
-    await loadList()
-    router.push(`/interactive-classroom/${res.classroom_id}`)
+    }, '课堂已生成')
   } catch (err) {
+    if (isClassroomCancelError(err)) return
     message.error(err instanceof Error ? err.message : '生成失败')
-  } finally {
-    loading.value = false
-    stopProgressTimer()
   }
 }
 
@@ -394,12 +414,10 @@ function estimatedMinutes(sceneCount: number) {
 }
 
 async function regenerateClassroom(item: InteractiveClassroomListItem) {
-  loading.value = true
-  startProgressTimer()
   try {
     const original = await getInteractiveClassroom(item.id)
     const source = original.source || {}
-    const res = await generateInteractiveClassroom({
+    await beginClassroomGeneration({
       topic: original.topic || item.topic,
       course: original.course || item.course || undefined,
       ppt_job_id: typeof source.job_id === 'string' ? source.job_id : undefined,
@@ -413,16 +431,107 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
-    })
-    message.success('课堂已重新生成')
-    await loadList()
-    router.push(`/interactive-classroom/${res.classroom_id}`)
+    }, '课堂已重新生成')
   } catch (err) {
+    if (isClassroomCancelError(err)) return
     message.error(err instanceof Error ? err.message : '重新生成失败')
-  } finally {
-    loading.value = false
-    stopProgressTimer()
   }
+}
+
+async function beginClassroomGeneration(
+  body: Parameters<typeof startInteractiveClassroomGeneration>[0],
+  successMessage: string,
+) {
+  const requestId = createClassroomRequestId()
+  const startedAt = Date.now()
+  activeRequestId.value = requestId
+  activeSuccessMessage.value = successMessage
+  loading.value = true
+  startProgressTimer(startedAt)
+  savePersistedClassroomGeneration({
+    requestId,
+    surface: 'home',
+    topic: body.topic,
+    startedAt,
+  })
+  await startInteractiveClassroomGeneration({
+    ...body,
+    request_id: requestId,
+  })
+  startGenerationPolling(requestId)
+}
+
+function startGenerationPolling(requestId: string) {
+  stopGenerationPoll()
+  const poll = () => {
+    void checkGenerationStatus(requestId)
+  }
+  poll()
+  generationPollTimer.value = window.setInterval(poll, 1500)
+}
+
+async function checkGenerationStatus(requestId: string) {
+  try {
+    const job = await getInteractiveClassroomGenerationStatus(requestId)
+    if (job.status === 'done' && job.classroom_id) {
+      finishGeneration()
+      message.success(activeSuccessMessage.value)
+      await loadList()
+      router.push(`/interactive-classroom/${job.classroom_id}`)
+      return
+    }
+    if (job.status === 'cancelled') {
+      finishGeneration()
+      message.info('已停止课堂生成')
+      return
+    }
+    if (job.status === 'error') {
+      finishGeneration()
+      message.error(job.error || '生成失败')
+    }
+  } catch (err) {
+    if (isClassroomCancelError(err)) return
+    if (isClassroomGenerationMissingError(err)) {
+      finishGeneration()
+      message.warning('课堂生成状态已失效，请重新生成')
+      return
+    }
+    message.error(err instanceof Error ? err.message : '生成状态加载失败')
+  }
+}
+
+function finishGeneration() {
+  loading.value = false
+  activeRequestId.value = ''
+  stopGenerationPoll()
+  stopProgressTimer()
+  clearPersistedClassroomGeneration()
+}
+
+async function stopCurrentGeneration() {
+  const requestId = activeRequestId.value
+  if (requestId) {
+    await cancelInteractiveClassroomGeneration(requestId).catch(() => undefined)
+  }
+  finishGeneration()
+  message.info('已停止课堂生成')
+}
+
+function restorePersistedGeneration() {
+  const persisted = loadPersistedClassroomGeneration()
+  if (!persisted || persisted.surface !== 'home') return
+  activeRequestId.value = persisted.requestId
+  activeSuccessMessage.value = '课堂已生成'
+  loading.value = true
+  startProgressTimer(persisted.startedAt)
+  startGenerationPolling(persisted.requestId)
+}
+
+function createClassroomRequestId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `classroom:${crypto.randomUUID()}`
+  }
+  return `classroom:${Date.now()}:${Math.random().toString(16).slice(2)}`
 }
 
 async function renameClassroom(item: InteractiveClassroomListItem) {
@@ -471,10 +580,12 @@ async function deleteClassroom(item: InteractiveClassroomListItem) {
 
 onMounted(() => {
   loadList().catch(() => undefined)
+  restorePersistedGeneration()
 })
 
 onBeforeUnmount(() => {
   stopProgressTimer()
+  stopGenerationPoll()
 })
 </script>
 
@@ -990,6 +1101,14 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.progress-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .progress-title {
   font-size: 14px;
   font-weight: 700;
@@ -1008,6 +1127,25 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+.progress-stop {
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.progress-stop:hover {
+  border-color: rgba(184, 74, 43, 0.35);
+  color: var(--terra);
+  background: rgba(245, 232, 226, 0.56);
 }
 
 .progress-track {

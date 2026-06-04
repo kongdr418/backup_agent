@@ -2,6 +2,7 @@ import client from './client'
 
 export interface InteractiveClassroomGenerateRequest {
   topic: string
+  request_id?: string
   course?: string
   ppt_job_id?: string
   student_profile?: StudentProfile
@@ -14,6 +15,7 @@ export interface InteractiveClassroomGenerateRequest {
   content_api_key?: string
   content_base_url?: string
   content_provider_type?: string
+  signal?: AbortSignal
 }
 
 export interface StudentProfile {
@@ -56,6 +58,7 @@ export interface InteractiveClassroomScene {
   type: 'slide' | 'quiz' | 'summary' | string
   title: string
   order: number
+  knowledge_points?: string[]
   content: Record<string, unknown>
   actions: InteractiveClassroomAction[]
 }
@@ -69,6 +72,17 @@ export interface InteractiveClassroomPayload {
   student_profile?: StudentProfile
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
+}
+
+export interface InteractiveClassroomGenerationStatus {
+  request_id: string
+  topic?: string
+  status: 'running' | 'cancelling' | 'cancelled' | 'done' | 'error' | string
+  started_at?: string
+  updated_at?: string
+  classroom_id?: string
+  classroom?: InteractiveClassroomPayload
+  error?: string
 }
 
 export interface QuizSubmitResult {
@@ -114,14 +128,49 @@ export interface ClassroomReport {
 }
 
 export async function generateInteractiveClassroom(body: InteractiveClassroomGenerateRequest) {
+  const { signal, ...payload } = body
   const res = await client.post<{
     success: boolean
     classroom_id: string
     status: string
     classroom: InteractiveClassroomPayload
-  }>('/api/interactive-classroom/generate', body, {
+  }>('/api/interactive-classroom/generate', payload, {
     timeout: 600_000,
+    signal,
   })
+  return res.data
+}
+
+export async function startInteractiveClassroomGeneration(body: InteractiveClassroomGenerateRequest) {
+  const { signal, ...payload } = body
+  const res = await client.post<{
+    success: boolean
+    request_id: string
+    status: string
+    job: InteractiveClassroomGenerationStatus
+  }>('/api/interactive-classroom/generate', payload, {
+    timeout: 30_000,
+    signal,
+  })
+  return res.data
+}
+
+export async function getInteractiveClassroomGenerationStatus(requestId: string) {
+  const res = await client.get<{
+    success: boolean
+    job: InteractiveClassroomGenerationStatus
+  }>(`/api/interactive-classroom/generate/status/${encodeURIComponent(requestId)}`, {
+    timeout: 10_000,
+  })
+  return res.data.job
+}
+
+export async function cancelInteractiveClassroomGeneration(requestId: string) {
+  const res = await client.post<{ success: boolean; cancelled: boolean }>(
+    '/api/interactive-classroom/generate/cancel',
+    { request_id: requestId },
+    { timeout: 10_000 },
+  )
   return res.data
 }
 

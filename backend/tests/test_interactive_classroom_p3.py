@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from dataclasses import asdict
 
@@ -10,11 +11,12 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.generator import _derive_slide_title
 from interactive_classroom.quiz_service import evaluate_quiz_scene
 from interactive_classroom.report_service import build_classroom_report
 from interactive_classroom.schema import ClassroomScene
+from interactive_classroom.storage import ClassroomStorage
 
 
 def _slide(index: int, title: str, points: list[str]) -> ClassroomScene:
@@ -244,6 +246,26 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertGreater(report["total"], 0)
         self.assertLess(report["score"], 100)
         self.assertTrue(report["weak_points"])
+
+    def test_generate_stops_when_cancel_check_is_set_before_save(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = ClassroomStorage(tmpdir)
+            generator = InteractiveClassroomGenerator(
+                backend_dir=BACKEND_DIR,
+                storage=storage,
+                llm_quiz_enabled=False,
+            )
+
+            with self.assertRaises(ClassroomGenerationCancelled):
+                generator.generate(
+                    user_id="user_1",
+                    topic="测试主题",
+                    course="测试课程",
+                    tts_config={},
+                    cancel_check=lambda: True,
+                )
+
+            self.assertEqual([], storage.list_classrooms("user_1"))
 
 
 if __name__ == "__main__":

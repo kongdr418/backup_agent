@@ -73,30 +73,25 @@
         </div>
       </header>
 
-      <section v-if="creatingClassroom" class="studio-progress-panel">
+      <section v-if="creatingClassroom" class="studio-progress-panel" role="status" aria-live="polite">
         <div class="studio-progress-head">
           <div>
-            <div class="studio-progress-title">{{ activeClassroomProgressStep.title }}</div>
-            <div class="studio-progress-desc">{{ activeClassroomProgressStep.desc }}</div>
+            <div class="studio-progress-title">课堂生成中</div>
+            <div class="studio-progress-desc">
+              正在生成课堂内容、语音和学习记录，完成后会自动进入播放器。当前：{{ activeClassroomProgressStep.title }}
+            </div>
           </div>
-          <div class="studio-progress-meta">
-            <span>{{ classroomElapsedSeconds }}s</span>
-            <span v-if="store.gen.totalSlides">{{ store.gen.totalSlides }} 页课件</span>
+          <div class="studio-progress-side">
+            <div class="studio-progress-meta">
+              {{ classroomElapsedSeconds }}s<span v-if="store.gen.totalSlides"> · {{ store.gen.totalSlides }} 页课件</span>
+            </div>
+            <button class="studio-progress-stop" @click="cancelCreateClassroom">
+              停止
+            </button>
           </div>
         </div>
         <div class="studio-progress-track">
           <div class="studio-progress-fill" :style="{ width: classroomProgressPercent + '%' }"></div>
-        </div>
-        <div class="studio-step-list">
-          <div
-            v-for="(step, index) in classroomProgressSteps"
-            :key="step.title"
-            class="studio-step-item"
-            :class="{ done: index < activeClassroomProgressIndex, active: index === activeClassroomProgressIndex }"
-          >
-            <span class="studio-step-dot"></span>
-            <span>{{ step.title }}</span>
-          </div>
         </div>
       </section>
 
@@ -163,9 +158,20 @@ import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
-import { generateInteractiveClassroom } from '@/api/interactiveClassroom'
+import {
+  cancelInteractiveClassroomGeneration,
+  getInteractiveClassroomGenerationStatus,
+  startInteractiveClassroomGeneration,
+} from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
+import { buildClassroomPptNotes, type ClassroomLearnerProfile } from '@/utils/classroomPptNotes'
+import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
+import {
+  clearPersistedClassroomGeneration,
+  loadPersistedClassroomGeneration,
+  savePersistedClassroomGeneration,
+} from '@/utils/classroomGenerationState'
 
 const store = usePptStore()
 const settingStore = useSettingStore()
@@ -209,6 +215,9 @@ const creatingClassroom = ref(false)
 const classroomCourse = ref('Python 程序设计')
 const classroomElapsedSeconds = ref(0)
 const classroomProgressTimer = ref<number | null>(null)
+const classroomPollTimer = ref<number | null>(null)
+const classroomRequestId = ref('')
+const classroomStartedAt = ref(0)
 
 const classroomProgressSteps = [
   { title: '读取课件', desc: '读取当前 PPT job 的 SVG 页面、标题和页面文本。' },
@@ -230,16 +239,18 @@ const activeClassroomProgressIndex = computed(() => {
 const activeClassroomProgressStep = computed(() => classroomProgressSteps[activeClassroomProgressIndex.value])
 const classroomProgressPercent = computed(() => {
   if (!creatingClassroom.value) return 0
-  const base = [12, 32, 54, 76, 88][activeClassroomProgressIndex.value] || 12
-  const drift = Math.min(8, Math.floor(classroomElapsedSeconds.value / 6))
-  return Math.min(92, base + drift)
+  const elapsed = classroomElapsedSeconds.value
+  if (elapsed < 3) return 18 + elapsed * 8
+  if (elapsed < 20) return 42 + Math.floor((elapsed - 3) * 1.8)
+  return Math.min(88, 72 + Math.floor((elapsed - 20) / 8))
 })
 
-function startClassroomProgressTimer() {
+function startClassroomProgressTimer(startedAt = Date.now()) {
   stopClassroomProgressTimer()
-  classroomElapsedSeconds.value = 0
+  classroomStartedAt.value = startedAt
+  classroomElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
   classroomProgressTimer.value = window.setInterval(() => {
-    classroomElapsedSeconds.value += 1
+    classroomElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - classroomStartedAt.value) / 1000))
   }, 1000)
 }
 
@@ -247,6 +258,13 @@ function stopClassroomProgressTimer() {
   if (classroomProgressTimer.value !== null) {
     window.clearInterval(classroomProgressTimer.value)
     classroomProgressTimer.value = null
+  }
+}
+
+function stopClassroomPolling() {
+  if (classroomPollTimer.value !== null) {
+    window.clearInterval(classroomPollTimer.value)
+    classroomPollTimer.value = null
   }
 }
 
@@ -270,11 +288,13 @@ watch(
 
 onMounted(() => {
   applyClassroomDraft()
+  restoreClassroomGeneration()
   store.refreshJobs().catch(() => undefined)
 })
 
 onBeforeUnmount(() => {
   stopClassroomProgressTimer()
+  stopClassroomPolling()
 })
 
 function firstQueryValue(value: unknown) {
@@ -287,10 +307,12 @@ function applyClassroomDraft() {
 
   const topic = firstQueryValue(route.query.topic).trim()
   const course = firstQueryValue(route.query.course).trim()
+  const classroomProfile = getClassroomProfileFromQuery()
   if (topic) {
     store.params = {
       ...store.params,
       topic,
+      notes: buildClassroomPptNotes(classroomProfile, store.params.notes),
       deep_research: false,
       visual_critic: false,
     }
@@ -298,6 +320,19 @@ function applyClassroomDraft() {
   }
   if (course) {
     classroomCourse.value = course
+  }
+  studentProfile.value = {
+    ...studentProfile.value,
+    ...classroomProfile,
+  }
+}
+
+function getClassroomProfileFromQuery(): ClassroomLearnerProfile {
+  return {
+    basis: firstQueryValue(route.query.basis).trim() || studentProfile.value.basis,
+    goal: firstQueryValue(route.query.goal).trim() || studentProfile.value.goal,
+    style: firstQueryValue(route.query.style).trim() || studentProfile.value.style,
+    difficulty: firstQueryValue(route.query.difficulty).trim() || studentProfile.value.difficulty,
   }
 }
 
@@ -365,11 +400,21 @@ async function onCreateClassroom() {
     message.warning('请先填写课程主题')
     return
   }
+  const requestId = createClassroomRequestId()
+  const startedAt = Date.now()
+  classroomRequestId.value = requestId
   creatingClassroom.value = true
-  startClassroomProgressTimer()
+  startClassroomProgressTimer(startedAt)
+  savePersistedClassroomGeneration({
+    requestId,
+    surface: 'ppt-studio',
+    topic: store.params.topic,
+    startedAt,
+  })
   try {
-    const res = await generateInteractiveClassroom({
+    await startInteractiveClassroomGeneration({
       topic: store.params.topic,
+      request_id: requestId,
       course: classroomCourse.value || store.params.topic,
       ppt_job_id: store.gen.jobId || undefined,
       student_profile: studentProfile.value,
@@ -383,14 +428,86 @@ async function onCreateClassroom() {
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
     })
-    message.success('交互式课堂已生成')
-    router.push(`/interactive-classroom/${res.classroom_id}`)
+    startClassroomPolling(requestId)
   } catch (e) {
+    if (isClassroomCancelError(e)) {
+      message.info('已停止转课堂生成')
+      return
+    }
     message.error(e instanceof Error ? e.message : '课堂生成失败')
-  } finally {
-    creatingClassroom.value = false
-    stopClassroomProgressTimer()
+    finishClassroomGeneration()
   }
+}
+
+function cancelCreateClassroom() {
+  const requestId = classroomRequestId.value
+  if (requestId) {
+    cancelInteractiveClassroomGeneration(requestId).catch(() => undefined)
+  }
+  finishClassroomGeneration()
+  message.info('已停止转课堂生成')
+}
+
+function startClassroomPolling(requestId: string) {
+  stopClassroomPolling()
+  const poll = () => {
+    void checkClassroomGenerationStatus(requestId)
+  }
+  poll()
+  classroomPollTimer.value = window.setInterval(poll, 1500)
+}
+
+async function checkClassroomGenerationStatus(requestId: string) {
+  try {
+    const job = await getInteractiveClassroomGenerationStatus(requestId)
+    if (job.status === 'done' && job.classroom_id) {
+      finishClassroomGeneration()
+      message.success('交互式课堂已生成')
+      router.push(`/interactive-classroom/${job.classroom_id}`)
+      return
+    }
+    if (job.status === 'cancelled') {
+      finishClassroomGeneration()
+      message.info('已停止转课堂生成')
+      return
+    }
+    if (job.status === 'error') {
+      finishClassroomGeneration()
+      message.error(job.error || '课堂生成失败')
+    }
+  } catch (e) {
+    if (isClassroomCancelError(e)) return
+    if (isClassroomGenerationMissingError(e)) {
+      finishClassroomGeneration()
+      message.warning('转课堂生成状态已失效，请重新生成')
+      return
+    }
+    message.error(e instanceof Error ? e.message : '课堂生成状态加载失败')
+  }
+}
+
+function finishClassroomGeneration() {
+  classroomRequestId.value = ''
+  creatingClassroom.value = false
+  stopClassroomProgressTimer()
+  stopClassroomPolling()
+  clearPersistedClassroomGeneration()
+}
+
+function restoreClassroomGeneration() {
+  const persisted = loadPersistedClassroomGeneration()
+  if (!persisted || persisted.surface !== 'ppt-studio') return
+  classroomRequestId.value = persisted.requestId
+  creatingClassroom.value = true
+  startClassroomProgressTimer(persisted.startedAt)
+  startClassroomPolling(persisted.requestId)
+}
+
+function createClassroomRequestId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `classroom:${crypto.randomUUID()}`
+  }
+  return `classroom:${Date.now()}:${Math.random().toString(16).slice(2)}`
 }
 
 function onReset() {
@@ -524,39 +641,66 @@ function onClearAllJobs() {
 .studio-progress-panel {
   flex-shrink: 0;
   margin: 14px 24px 0;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 12px;
-  background: rgb(var(--bg-surface-rgb));
-  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 16px;
 }
 
 .studio-progress-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .studio-progress-title {
   font-size: 14px;
   font-weight: 700;
-  color: rgb(var(--ink-1-rgb));
+  color: var(--ink-primary);
 }
 
 .studio-progress-desc {
   margin-top: 4px;
-  color: rgb(var(--ink-3-rgb));
+  color: var(--ink-tertiary);
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-progress-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .studio-progress-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: rgb(var(--ink-3-rgb));
+  min-width: 42px;
+  text-align: right;
+  color: var(--ink-tertiary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.studio-progress-stop {
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.studio-progress-stop:hover {
+  border-color: rgba(184, 74, 43, 0.35);
+  color: var(--terra);
+  background: rgba(245, 232, 226, 0.56);
 }
 
 .studio-progress-track {
@@ -564,57 +708,14 @@ function onClearAllJobs() {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgb(var(--line-rgb));
+  background: var(--line);
 }
 
 .studio-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: #10b981;
-  transition: width 240ms ease;
-}
-
-.studio-step-list {
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.studio-step-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: rgb(var(--ink-3-rgb));
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.studio-step-item.done,
-.studio-step-item.active {
-  color: rgb(var(--ink-1-rgb));
-}
-
-.studio-step-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 999px;
-  background: rgb(var(--bg-surface-rgb));
-}
-
-.studio-step-item.done .studio-step-dot {
-  border-color: #10b981;
-  background: #10b981;
-}
-
-.studio-step-item.active .studio-step-dot {
-  border-color: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+  background: var(--forest);
+  transition: width 0.3s ease;
 }
 
 .header-left {
@@ -729,8 +830,15 @@ function onClearAllJobs() {
     gap: 8px;
   }
 
-  .studio-step-list {
-    grid-template-columns: 1fr;
+  .studio-progress-side {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .studio-progress-meta {
+    text-align: left;
   }
 
   .content-title {

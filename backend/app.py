@@ -13,7 +13,7 @@ from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from interactive_classroom.storage import ClassroomStorage
-from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene
 from interactive_classroom.report_service import build_classroom_report
 from interactive_classroom.tts_service import ClassroomTTSService
@@ -69,6 +69,146 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
+CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
+CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
+CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
+
+
+def _is_safe_classroom_request_id(value: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9_.:-]{1,128}$', value or ''))
+
+
+def _register_classroom_generation(request_id: str) -> threading.Event | None:
+    if not request_id:
+        return None
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        event = CLASSROOM_GENERATION_CANCELS.get(request_id)
+        if event is None:
+            event = threading.Event()
+            CLASSROOM_GENERATION_CANCELS[request_id] = event
+        return event
+
+
+def _classroom_generation_now() -> str:
+    return datetime.now().isoformat(timespec='seconds')
+
+
+def _prune_classroom_generation_jobs_locked(max_jobs: int = 80) -> None:
+    if len(CLASSROOM_GENERATION_JOBS) <= max_jobs:
+        return
+    removable = [
+        (job.get('updated_at') or job.get('started_at') or '', request_id)
+        for request_id, job in CLASSROOM_GENERATION_JOBS.items()
+        if job.get('status') not in {'running', 'cancelling'}
+    ]
+    removable.sort()
+    for _, request_id in removable[:max(0, len(CLASSROOM_GENERATION_JOBS) - max_jobs)]:
+        CLASSROOM_GENERATION_JOBS.pop(request_id, None)
+
+
+def _mark_classroom_generation_running(request_id: str, topic: str) -> dict | None:
+    if not request_id:
+        return None
+    now = _classroom_generation_now()
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
+        job = {
+            **current,
+            'request_id': request_id,
+            'topic': topic,
+            'status': 'running',
+            'started_at': current.get('started_at') or now,
+            'updated_at': now,
+        }
+        CLASSROOM_GENERATION_JOBS[request_id] = job
+        _prune_classroom_generation_jobs_locked()
+        return dict(job)
+
+
+def _mark_classroom_generation_done(request_id: str, classroom_id: str, classroom: dict) -> dict | None:
+    if not request_id:
+        return None
+    now = _classroom_generation_now()
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
+        job = {
+            **current,
+            'request_id': request_id,
+            'status': 'done',
+            'classroom_id': classroom_id,
+            'classroom': classroom,
+            'updated_at': now,
+        }
+        CLASSROOM_GENERATION_JOBS[request_id] = job
+        _prune_classroom_generation_jobs_locked()
+        return dict(job)
+
+
+def _mark_classroom_generation_cancelled(request_id: str) -> dict | None:
+    if not request_id:
+        return None
+    now = _classroom_generation_now()
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
+        job = {
+            **current,
+            'request_id': request_id,
+            'status': 'cancelled',
+            'updated_at': now,
+            'error': '课堂生成已停止',
+        }
+        CLASSROOM_GENERATION_JOBS[request_id] = job
+        _prune_classroom_generation_jobs_locked()
+        return dict(job)
+
+
+def _mark_classroom_generation_error(request_id: str, error: str) -> dict | None:
+    if not request_id:
+        return None
+    now = _classroom_generation_now()
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
+        job = {
+            **current,
+            'request_id': request_id,
+            'status': 'error',
+            'updated_at': now,
+            'error': error,
+        }
+        CLASSROOM_GENERATION_JOBS[request_id] = job
+        _prune_classroom_generation_jobs_locked()
+        return dict(job)
+
+
+def _get_classroom_generation_job(request_id: str) -> dict | None:
+    if not request_id:
+        return None
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        job = CLASSROOM_GENERATION_JOBS.get(request_id)
+        return dict(job) if job else None
+
+
+def _finish_classroom_generation(request_id: str) -> None:
+    if not request_id:
+        return
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        CLASSROOM_GENERATION_CANCELS.pop(request_id, None)
+
+
+def _cancel_classroom_generation(request_id: str) -> bool:
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        event = CLASSROOM_GENERATION_CANCELS.get(request_id)
+        if event is None:
+            return False
+        event.set()
+        job = CLASSROOM_GENERATION_JOBS.get(request_id)
+        if job and job.get('status') == 'running':
+            CLASSROOM_GENERATION_JOBS[request_id] = {
+                **job,
+                'status': 'cancelling',
+                'updated_at': _classroom_generation_now(),
+            }
+        return True
 
 
 def _build_classroom_tts_config(data=None, classroom=None):
@@ -2579,26 +2719,76 @@ def interactive_classroom_generate():
     topic = (data.get('topic') or '').strip()
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
+    request_id = (data.get('request_id') or '').strip()
     student_profile = data.get('student_profile') if isinstance(data.get('student_profile'), dict) else {}
 
     if not topic:
         return jsonify({'success': False, 'error': 'topic 不能为空'}), 400
     if ppt_job_id and not re.match(r'^[a-zA-Z0-9_.-]{1,128}$', ppt_job_id):
         return jsonify({'success': False, 'error': '非法 ppt_job_id'}), 400
+    if request_id and not _is_safe_classroom_request_id(request_id):
+        return jsonify({'success': False, 'error': '非法 request_id'}), 400
+
+    if request_id:
+        existing = _get_classroom_generation_job(request_id)
+        if existing:
+            return jsonify({'success': True, 'request_id': request_id, 'job': existing, 'status': existing.get('status')}), 202
 
     # 同步内容生成模型配置到 shared_config（LLM 测验生成需要）
     _apply_content_llm_config(data)
 
     tts_config = _build_classroom_tts_config(data=data)
 
-    payload = CLASSROOM_GENERATOR.generate(
-        user_id=user_id,
-        topic=topic,
-        course=course,
-        tts_config=tts_config,
-        ppt_job_id=ppt_job_id,
-        student_profile=student_profile,
-    )
+    cancel_event = _register_classroom_generation(request_id)
+    if request_id:
+        _mark_classroom_generation_running(request_id, topic)
+
+        def run_generation_job():
+            try:
+                payload = CLASSROOM_GENERATOR.generate(
+                    user_id=user_id,
+                    topic=topic,
+                    course=course,
+                    tts_config=tts_config,
+                    ppt_job_id=ppt_job_id,
+                    student_profile=student_profile,
+                    cancel_check=cancel_event.is_set if cancel_event is not None else None,
+                )
+                _mark_classroom_generation_done(request_id, payload.get('id'), payload)
+                request_logger.info(f'[INTERACTIVE-CLASSROOM] 后台生成完成 request_id={request_id}')
+            except ClassroomGenerationCancelled:
+                _mark_classroom_generation_cancelled(request_id)
+                request_logger.info(f'[INTERACTIVE-CLASSROOM] 后台生成已取消 request_id={request_id}')
+            except Exception as exc:
+                _mark_classroom_generation_error(request_id, str(exc))
+                request_logger.exception(f'[INTERACTIVE-CLASSROOM] 后台生成失败 request_id={request_id}')
+            finally:
+                _finish_classroom_generation(request_id)
+
+        thread = threading.Thread(target=run_generation_job, name=f'classroom-generation-{request_id}', daemon=True)
+        thread.start()
+        return jsonify({
+            'success': True,
+            'request_id': request_id,
+            'status': 'running',
+            'job': _get_classroom_generation_job(request_id),
+        }), 202
+
+    try:
+        payload = CLASSROOM_GENERATOR.generate(
+            user_id=user_id,
+            topic=topic,
+            course=course,
+            tts_config=tts_config,
+            ppt_job_id=ppt_job_id,
+            student_profile=student_profile,
+            cancel_check=cancel_event.is_set if cancel_event is not None else None,
+        )
+    except ClassroomGenerationCancelled:
+        request_logger.info(f'[INTERACTIVE-CLASSROOM] 生成已取消 request_id={request_id}')
+        return jsonify({'success': False, 'cancelled': True, 'error': '课堂生成已停止'}), 499
+    finally:
+        _finish_classroom_generation(request_id)
 
     return jsonify({
         'success': True,
@@ -2606,6 +2796,32 @@ def interactive_classroom_generate():
         'status': payload.get('status', 'ready'),
         'classroom': payload,
     })
+
+
+@app.route('/api/interactive-classroom/generate/cancel', methods=['POST'])
+def interactive_classroom_generate_cancel():
+    data = request.json or {}
+    request_id = (data.get('request_id') or '').strip()
+    if not request_id:
+        return jsonify({'success': False, 'error': 'request_id 不能为空'}), 400
+    if not _is_safe_classroom_request_id(request_id):
+        return jsonify({'success': False, 'error': '非法 request_id'}), 400
+
+    _cancel_classroom_generation(request_id)
+    request_logger.info(f'[INTERACTIVE-CLASSROOM] 收到取消请求 request_id={request_id}')
+    return jsonify({'success': True, 'cancelled': True})
+
+
+@app.route('/api/interactive-classroom/generate/status/<request_id>', methods=['GET'])
+def interactive_classroom_generate_status(request_id):
+    request_id = (request_id or '').strip()
+    if not _is_safe_classroom_request_id(request_id):
+        return jsonify({'success': False, 'error': '非法 request_id'}), 400
+
+    job = _get_classroom_generation_job(request_id)
+    if job is None:
+        return jsonify({'success': False, 'error': '生成任务不存在'}), 404
+    return jsonify({'success': True, 'job': job})
 
 
 @app.route('/api/interactive-classroom/list', methods=['GET'])
