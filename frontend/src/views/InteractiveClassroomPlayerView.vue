@@ -52,11 +52,6 @@
       </header>
 
       <section class="scene-body">
-        <div class="scene-title-row">
-          <span class="scene-kind">{{ sceneKindLabel }}</span>
-          <h2>{{ currentScene.title }}</h2>
-        </div>
-
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
           <div v-if="sceneSvg" class="svg-box" v-html="sceneSvg" />
           <pre v-else class="md-box">{{ sceneMarkdown || '本页暂无内容' }}</pre>
@@ -905,22 +900,6 @@ function sceneTypeLabel(type: string) {
   flex: 1;
   overflow: auto;
   padding: 18px;
-}
-
-.scene-title-row {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-
-.scene-kind {
-  font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
-}
-
-.scene-body h2 {
-  margin: 0;
-  font-size: 20px;
 }
 
 .svg-box {
