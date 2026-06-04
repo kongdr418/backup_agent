@@ -18,6 +18,58 @@ class ClassroomGenerationCancelled(Exception):
 
 
 CancelCheck = Callable[[], bool]
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    *,
+    stage: str,
+    stage_index: int,
+    scene_index: int = 0,
+    scene_total: int = 0,
+    scene: ClassroomScene | None = None,
+) -> None:
+    """向订阅者推送一帧 progress 事件。callback 抛错不会中断生成。"""
+    if callback is None:
+        return
+    try:
+        stage_label = next(
+            (s["label"] for s in GENERATION_STAGES if s["key"] == stage),
+            stage,
+        )
+        payload: dict[str, Any] = {
+            "type": "classroom_progress",
+            "stage": stage,
+            "stage_index": stage_index,
+            "stage_total": len(GENERATION_STAGES),
+            "stage_label": stage_label,
+            "scene_index": scene_index,
+            "scene_total": scene_total,
+        }
+        if scene is not None:
+            payload["scene"] = {
+                "id": scene.id,
+                "type": scene.type,
+                "title": scene.title,
+                "order": scene.order,
+            }
+        callback(payload)
+    except Exception:
+        # 进度推送永远不能让生成失败；吞掉回调异常
+        pass
+
+
+# 阶段定义：与前端 classRoomProgressSteps 的标题一一对应
+# 前端若要改名同步改两处
+GENERATION_STAGES: list[dict[str, str]] = [
+    {"key": "read_ppt",        "label": "读取课件"},
+    {"key": "build_scenes",    "label": "组织课堂"},
+    {"key": "insert_quizzes",  "label": "生成互动"},
+    {"key": "synthesize_tts",  "label": "合成音频"},
+    {"key": "save",            "label": "保存跳转"},
+]
+GENERATION_STAGE_KEYS: tuple[str, ...] = tuple(s["key"] for s in GENERATION_STAGES)
 
 
 def _raise_if_cancelled(cancel_check: CancelCheck | None) -> None:
@@ -326,6 +378,7 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[ClassroomScene]:
         job_dir = self._resolve_ppt_job_dir(user_id, ppt_job_id)
         if not job_dir:
@@ -338,6 +391,23 @@ class InteractiveClassroomGenerator:
         svg_files = _sorted_svg_files(svg_dir)
         scenes: list[ClassroomScene] = []
 
+        # 阶段 1 推进：开始读课件
+        _emit_progress(
+            progress_callback,
+            stage="read_ppt",
+            stage_index=0,
+            scene_index=0,
+            scene_total=len(svg_files),
+        )
+        # 阶段 2 推进：开始组织课堂
+        _emit_progress(
+            progress_callback,
+            stage="build_scenes",
+            stage_index=1,
+            scene_index=0,
+            scene_total=len(svg_files),
+        )
+
         for idx, fname in enumerate(svg_files, start=1):
             _raise_if_cancelled(cancel_check)
             path = os.path.join(svg_dir, fname)
@@ -349,28 +419,35 @@ class InteractiveClassroomGenerator:
             title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
             speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
 
-            scenes.append(
-                ClassroomScene(
-                    id=f"scene_slide_{idx:03d}",
-                    type="slide",
-                    title=title,
-                    order=idx,
-                    knowledge_points=svg_texts[:4],
-                    content={
-                        "format": "svg",
-                        "svg": svg,
-                        "ppt_slide": {"job_id": ppt_job_id, "page": idx, "filename": fname},
-                        "extracted_text": svg_texts,
-                        "speech_source": "manuscript" if manuscript_note else "svg_text",
-                    },
-                    actions=[
-                        ClassroomAction(
-                            id=f"act_slide_{idx:03d}",
-                            type="speech",
-                            text=speech_text,
-                        )
-                    ],
-                )
+            scene = ClassroomScene(
+                id=f"scene_slide_{idx:03d}",
+                type="slide",
+                title=title,
+                order=idx,
+                knowledge_points=svg_texts[:4],
+                content={
+                    "format": "svg",
+                    "svg": svg,
+                    "ppt_slide": {"job_id": ppt_job_id, "page": idx, "filename": fname},
+                    "extracted_text": svg_texts,
+                    "speech_source": "manuscript" if manuscript_note else "svg_text",
+                },
+                actions=[
+                    ClassroomAction(
+                        id=f"act_slide_{idx:03d}",
+                        type="speech",
+                        text=speech_text,
+                    )
+                ],
+            )
+            scenes.append(scene)
+            _emit_progress(
+                progress_callback,
+                stage="build_scenes",
+                stage_index=1,
+                scene_index=idx,
+                scene_total=len(svg_files),
+                scene=scene,
             )
         return scenes
 
@@ -379,6 +456,7 @@ class InteractiveClassroomGenerator:
         topic: str,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[ClassroomScene]:
         _raise_if_cancelled(cancel_check)
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
@@ -388,17 +466,39 @@ class InteractiveClassroomGenerator:
             ("核心概念", f"这一部分解释 {topic} 的核心概念、常见误区和一个最容易理解的例子。{suffix}"),
             ("总结过渡", f"我们先总结一遍 {topic} 的关键点，然后进入随堂测验，看看哪些地方已经掌握。{suffix}"),
         ]
+        _emit_progress(
+            progress_callback,
+            stage="read_ppt",
+            stage_index=0,
+            scene_index=0,
+            scene_total=len(slides),
+        )
+        _emit_progress(
+            progress_callback,
+            stage="build_scenes",
+            stage_index=1,
+            scene_index=0,
+            scene_total=len(slides),
+        )
         scenes: list[ClassroomScene] = []
         for idx, (title, speech) in enumerate(slides, start=1):
-            scenes.append(
-                ClassroomScene(
-                    id=f"scene_slide_{idx:03d}",
-                    type="slide",
-                    title=title,
-                    order=idx,
-                    content={"format": "markdown", "markdown": f"## {title}\n\n{speech}"},
-                    actions=[ClassroomAction(id=f"act_slide_{idx:03d}", type="speech", text=speech)],
-                )
+            _raise_if_cancelled(cancel_check)
+            scene = ClassroomScene(
+                id=f"scene_slide_{idx:03d}",
+                type="slide",
+                title=title,
+                order=idx,
+                content={"format": "markdown", "markdown": f"## {title}\n\n{speech}"},
+                actions=[ClassroomAction(id=f"act_slide_{idx:03d}", type="speech", text=speech)],
+            )
+            scenes.append(scene)
+            _emit_progress(
+                progress_callback,
+                stage="build_scenes",
+                stage_index=1,
+                scene_index=idx,
+                scene_total=len(slides),
+                scene=scene,
             )
         return scenes
 
@@ -700,6 +800,7 @@ class InteractiveClassroomGenerator:
         max_questions: int = 3,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> ClassroomScene:
         _raise_if_cancelled(cancel_check)
         qid_prefix = f"q{quiz_index}_"
@@ -746,11 +847,15 @@ class InteractiveClassroomGenerator:
         scenes: list[ClassroomScene],
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[ClassroomScene]:
         _raise_if_cancelled(cancel_check)
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
         if not slide_scenes:
             return scenes
+
+        # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
+        quiz_count_estimate = max(0, len([s for s in slide_scenes if _is_quiz_source_scene(s)]) // 2)
 
         result: list[ClassroomScene] = []
         quiz_index = 1
@@ -759,6 +864,15 @@ class InteractiveClassroomGenerator:
         quiz_source_ids = {scene.id for scene in quiz_source_slides}
         total_quiz_source_slides = len(quiz_source_slides)
         quiz_source_index = 0
+
+        # 阶段 3 推进：开始生成互动
+        _emit_progress(
+            progress_callback,
+            stage="insert_quizzes",
+            stage_index=2,
+            scene_index=0,
+            scene_total=max(quiz_count_estimate, 1),
+        )
 
         for scene in slide_scenes:
             _raise_if_cancelled(cancel_check)
@@ -774,16 +888,24 @@ class InteractiveClassroomGenerator:
             enough_for_final_quiz = is_last and pending_slides
 
             if enough_for_mid_quiz or enough_for_final_quiz:
-                result.append(
-                    self._build_quiz_scene(
-                        quiz_index=quiz_index,
-                        order=0,
-                        topic=topic,
-                        scenes=pending_slides,
-                        max_questions=2 if not is_last else 3,
-                        student_profile=student_profile,
-                        cancel_check=cancel_check,
-                    )
+                quiz_scene = self._build_quiz_scene(
+                    quiz_index=quiz_index,
+                    order=0,
+                    topic=topic,
+                    scenes=pending_slides,
+                    max_questions=2 if not is_last else 3,
+                    student_profile=student_profile,
+                    cancel_check=cancel_check,
+                    progress_callback=progress_callback,
+                )
+                result.append(quiz_scene)
+                _emit_progress(
+                    progress_callback,
+                    stage="insert_quizzes",
+                    stage_index=2,
+                    scene_index=quiz_index,
+                    scene_total=max(quiz_count_estimate, 1),
+                    scene=quiz_scene,
                 )
                 quiz_index += 1
                 pending_slides = []
@@ -799,6 +921,7 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
@@ -806,14 +929,20 @@ class InteractiveClassroomGenerator:
         normalized_profile = _normalize_student_profile(student_profile)
 
         if ppt_job_id:
-            scenes = self._build_slide_scenes_from_ppt_job(user_id, ppt_job_id, normalized_profile, cancel_check)
+            scenes = self._build_slide_scenes_from_ppt_job(
+                user_id, ppt_job_id, normalized_profile, cancel_check, progress_callback
+            )
             if not scenes:
-                scenes = self._build_fallback_slide_scenes(topic, normalized_profile, cancel_check)
+                scenes = self._build_fallback_slide_scenes(
+                    topic, normalized_profile, cancel_check, progress_callback
+                )
         else:
-            scenes = self._build_fallback_slide_scenes(topic, normalized_profile, cancel_check)
+            scenes = self._build_fallback_slide_scenes(
+                topic, normalized_profile, cancel_check, progress_callback
+            )
 
         _raise_if_cancelled(cancel_check)
-        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check)
+        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check, progress_callback)
         for idx, scene in enumerate(scenes, start=1):
             _raise_if_cancelled(cancel_check)
             scene.order = idx
@@ -850,20 +979,52 @@ class InteractiveClassroomGenerator:
 
         audio_dir = self.storage.audio_dir(user_id, classroom_id)
         tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
+
+        # 阶段 4：合成音频
+        speech_actions: list[tuple[ClassroomScene, ClassroomAction]] = []
         for scene in classroom.scenes:
-            _raise_if_cancelled(cancel_check)
             for action in scene.actions:
-                _raise_if_cancelled(cancel_check)
-                if action.type != "speech":
-                    continue
-                try:
-                    filename = tts.synthesize_action(action.id, action.text, audio_dir)
-                    if filename:
-                        action.audio_url = f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
-                except Exception:
-                    action.audio_url = ""
+                if action.type == "speech":
+                    speech_actions.append((scene, action))
+        _emit_progress(
+            progress_callback,
+            stage="synthesize_tts",
+            stage_index=3,
+            scene_index=0,
+            scene_total=len(speech_actions),
+        )
+        for idx, (_scene, action) in enumerate(speech_actions, start=1):
+            _raise_if_cancelled(cancel_check)
+            try:
+                filename = tts.synthesize_action(action.id, action.text, audio_dir)
+                if filename:
+                    action.audio_url = f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
+            except Exception:
+                action.audio_url = ""
+            _emit_progress(
+                progress_callback,
+                stage="synthesize_tts",
+                stage_index=3,
+                scene_index=idx,
+                scene_total=len(speech_actions),
+            )
 
         _raise_if_cancelled(cancel_check)
+        # 阶段 5：保存
+        _emit_progress(
+            progress_callback,
+            stage="save",
+            stage_index=4,
+            scene_index=0,
+            scene_total=1,
+        )
         payload = classroom.to_dict()
         self.storage.save_classroom(user_id, classroom_id, payload)
+        _emit_progress(
+            progress_callback,
+            stage="save",
+            stage_index=4,
+            scene_index=1,
+            scene_total=1,
+        )
         return payload

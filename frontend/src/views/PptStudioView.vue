@@ -136,6 +136,7 @@
       :loading="store.jobsLoading"
       @open="onOpenJob"
       @delete="onDeleteJob"
+      @classroom="onClassroomFromHistory"
       @clear-all="onClearAllJobs"
     />
   </div>
@@ -159,12 +160,11 @@ import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
 import {
-  cancelInteractiveClassroomGeneration,
-  getInteractiveClassroomGenerationStatus,
   startInteractiveClassroomGeneration,
 } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
+import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearnerProfile, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
 import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
 import {
@@ -214,10 +214,30 @@ const drawerOpen = ref(false)
 const creatingClassroom = ref(false)
 const classroomCourse = ref('Python 程序设计')
 const classroomElapsedSeconds = ref(0)
-const classroomProgressTimer = ref<number | null>(null)
-const classroomPollTimer = ref<number | null>(null)
 const classroomRequestId = ref('')
 const classroomStartedAt = ref(0)
+
+// SSE 流式进度
+const classroomStream = useInteractiveClassroomStream()
+classroomStream.onDone = (classroomId) => {
+  finishClassroomGeneration()
+  message.success('交互式课堂已生成')
+  router.push(`/interactive-classroom/${classroomId}`)
+}
+classroomStream.onCancelled = () => {
+  finishClassroomGeneration()
+  message.info('已停止转课堂生成')
+}
+classroomStream.onError = (err) => {
+  const isMissing = err.includes('404') || err.includes('生成任务不存在')
+  if (isMissing) {
+    finishClassroomGeneration()
+    message.warning('转课堂生成状态已失效，请重新生成')
+    return
+  }
+  finishClassroomGeneration()
+  message.error(err || '课堂生成失败')
+}
 
 const classroomProgressSteps = [
   { title: '读取课件', desc: '读取当前 PPT job 的 SVG 页面、标题和页面文本。' },
@@ -229,42 +249,28 @@ const classroomProgressSteps = [
 
 const activeClassroomProgressIndex = computed(() => {
   if (!creatingClassroom.value) return 0
-  if (classroomElapsedSeconds.value < 2) return 0
-  if (classroomElapsedSeconds.value < 5) return 1
-  if (classroomElapsedSeconds.value < 10) return 2
-  if (classroomElapsedSeconds.value < 20) return 3
-  return 4
+  // 直接用服务器给的 stage_index（0-based）；clamp 到合法范围
+  return Math.max(0, Math.min(classroomProgressSteps.length - 1, classroomStream.stageIndex.value))
 })
 
 const activeClassroomProgressStep = computed(() => classroomProgressSteps[activeClassroomProgressIndex.value])
-const classroomProgressPercent = computed(() => {
-  if (!creatingClassroom.value) return 0
-  const elapsed = classroomElapsedSeconds.value
-  if (elapsed < 3) return 18 + elapsed * 8
-  if (elapsed < 20) return 42 + Math.floor((elapsed - 3) * 1.8)
-  return Math.min(88, 72 + Math.floor((elapsed - 20) / 8))
-})
+const classroomProgressPercent = classroomStream.progressPercent
 
-function startClassroomProgressTimer(startedAt = Date.now()) {
-  stopClassroomProgressTimer()
+// 让顶栏显示一个合理的"已用秒数"：用本地计时器仍然滚动（方便用户感知），
+// 进度条则完全由服务器真实阶段驱动。
+let classroomElapsedInterval: number | null = null
+function startClassroomElapsedTicker(startedAt: number) {
+  stopClassroomElapsedTicker()
   classroomStartedAt.value = startedAt
   classroomElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-  classroomProgressTimer.value = window.setInterval(() => {
+  classroomElapsedInterval = window.setInterval(() => {
     classroomElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - classroomStartedAt.value) / 1000))
   }, 1000)
 }
-
-function stopClassroomProgressTimer() {
-  if (classroomProgressTimer.value !== null) {
-    window.clearInterval(classroomProgressTimer.value)
-    classroomProgressTimer.value = null
-  }
-}
-
-function stopClassroomPolling() {
-  if (classroomPollTimer.value !== null) {
-    window.clearInterval(classroomPollTimer.value)
-    classroomPollTimer.value = null
+function stopClassroomElapsedTicker() {
+  if (classroomElapsedInterval !== null) {
+    window.clearInterval(classroomElapsedInterval)
+    classroomElapsedInterval = null
   }
 }
 
@@ -293,8 +299,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  stopClassroomProgressTimer()
-  stopClassroomPolling()
+  stopClassroomElapsedTicker()
+  classroomStream.stop()
 })
 
 function firstQueryValue(value: unknown) {
@@ -412,27 +418,44 @@ function onDownload() {
 }
 
 async function onCreateClassroom() {
-  if (!store.params.topic?.trim()) {
-    message.warning('请先填写课程主题')
+  // 决定要转哪个 job 的课堂。用 store.gen.jobId（最近一次生成的 PPT，
+  // 或用户在历史抽屉里打开的那个）。
+  const pptJobId = store.gen.jobId || ''
+
+  // 主题兜底：表单里没有就用历史 job 的 topic，再没有就给个默认值
+  const fallbackTopic = (() => {
+    if (pptJobId) {
+      const fromJob = store.jobs.find((j) => j.job_id === pptJobId)
+      if (fromJob?.topic) return fromJob.topic
+      return `课堂-${pptJobId.slice(0, 8)}`
+    }
+    return ''
+  })()
+  const topic = (store.params.topic || '').trim() || fallbackTopic
+
+  // 只有当既没有 ppt_job_id 又没有 topic 时才阻止（不可能从零生成）
+  if (!pptJobId && !topic) {
+    message.warning('请先填写课程主题或选择一个历史 PPT')
     return
   }
+
   const requestId = createClassroomRequestId()
   const startedAt = Date.now()
   classroomRequestId.value = requestId
   creatingClassroom.value = true
-  startClassroomProgressTimer(startedAt)
+  startClassroomElapsedTicker(startedAt)
   savePersistedClassroomGeneration({
     requestId,
     surface: 'ppt-studio',
-    topic: store.params.topic,
+    topic,
     startedAt,
   })
   try {
     await startInteractiveClassroomGeneration({
-      topic: store.params.topic,
+      topic,
       request_id: requestId,
-      course: classroomCourse.value || store.params.topic,
-      ppt_job_id: store.gen.jobId || undefined,
+      course: classroomCourse.value || topic,
+      ppt_job_id: pptJobId || undefined,
       student_profile: studentProfile.value,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
@@ -444,13 +467,15 @@ async function onCreateClassroom() {
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
     })
-    startClassroomPolling(requestId)
+    // 启动 SSE 流
+    void classroomStream.start(requestId)
   } catch (e) {
-    if (isClassroomCancelError(e)) {
+    const text = e instanceof Error ? e.message : '课堂生成失败'
+    if (text.includes('课堂生成已停止')) {
       message.info('已停止转课堂生成')
       return
     }
-    message.error(e instanceof Error ? e.message : '课堂生成失败')
+    message.error(text)
     finishClassroomGeneration()
   }
 }
@@ -458,55 +483,19 @@ async function onCreateClassroom() {
 function cancelCreateClassroom() {
   const requestId = classroomRequestId.value
   if (requestId) {
-    cancelInteractiveClassroomGeneration(requestId).catch(() => undefined)
+    void classroomStream.cancel(requestId)
+  } else {
+    classroomStream.stop()
   }
   finishClassroomGeneration()
   message.info('已停止转课堂生成')
 }
 
-function startClassroomPolling(requestId: string) {
-  stopClassroomPolling()
-  const poll = () => {
-    void checkClassroomGenerationStatus(requestId)
-  }
-  poll()
-  classroomPollTimer.value = window.setInterval(poll, 1500)
-}
-
-async function checkClassroomGenerationStatus(requestId: string) {
-  try {
-    const job = await getInteractiveClassroomGenerationStatus(requestId)
-    if (job.status === 'done' && job.classroom_id) {
-      finishClassroomGeneration()
-      message.success('交互式课堂已生成')
-      router.push(`/interactive-classroom/${job.classroom_id}`)
-      return
-    }
-    if (job.status === 'cancelled') {
-      finishClassroomGeneration()
-      message.info('已停止转课堂生成')
-      return
-    }
-    if (job.status === 'error') {
-      finishClassroomGeneration()
-      message.error(job.error || '课堂生成失败')
-    }
-  } catch (e) {
-    if (isClassroomCancelError(e)) return
-    if (isClassroomGenerationMissingError(e)) {
-      finishClassroomGeneration()
-      message.warning('转课堂生成状态已失效，请重新生成')
-      return
-    }
-    message.error(e instanceof Error ? e.message : '课堂生成状态加载失败')
-  }
-}
-
 function finishClassroomGeneration() {
   classroomRequestId.value = ''
   creatingClassroom.value = false
-  stopClassroomProgressTimer()
-  stopClassroomPolling()
+  stopClassroomElapsedTicker()
+  classroomStream.stop()
   clearPersistedClassroomGeneration()
 }
 
@@ -515,8 +504,9 @@ function restoreClassroomGeneration() {
   if (!persisted || persisted.surface !== 'ppt-studio') return
   classroomRequestId.value = persisted.requestId
   creatingClassroom.value = true
-  startClassroomProgressTimer(persisted.startedAt)
-  startClassroomPolling(persisted.requestId)
+  startClassroomElapsedTicker(persisted.startedAt)
+  // 直接连 SSE；服务器会先发 classroom_start，done/cancelled/error 立即收敛
+  void classroomStream.start(persisted.requestId)
 }
 
 function createClassroomRequestId() {
@@ -556,6 +546,21 @@ async function onOpenJob(jobId: string) {
   } catch (e) {
     message.error(e instanceof Error ? e.message : '加载失败')
   }
+}
+
+async function onClassroomFromHistory(jobId: string) {
+  // 关掉抽屉，把 jobId 绑到当前 store（与打开历史 PPT 行为一致），
+  // 然后直接调 onCreateClassroom——它会用 store.gen.jobId 来找 SVG/讲稿。
+  historyOpen.value = false
+  if (store.gen.jobId !== jobId) {
+    // 没在预览这个 job 的话，先拉一次让它在右侧预览，方便看到 PPT 内容
+    try {
+      await onOpenJob(jobId)
+    } catch {
+      // 即便加载预览失败，也允许继续转课堂（generator 自己会去 svg_final/ 找文件）
+    }
+  }
+  await onCreateClassroom()
 }
 
 async function onDeleteJob(jobId: string) {

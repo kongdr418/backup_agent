@@ -1,4 +1,5 @@
 import client from './client'
+import { sseFetch } from './sse'
 
 export interface InteractiveClassroomGenerateRequest {
   topic: string
@@ -234,4 +235,67 @@ export async function getInteractiveClassroomReport(classroomId: string) {
     `/api/interactive-classroom/${encodeURIComponent(classroomId)}/report`,
   )
   return res.data.report
+}
+
+// ---------- SSE 流式生成进度 ----------
+
+export type ClassroomStreamEvent =
+  | {
+      type: 'classroom_start'
+      request_id: string
+      topic: string
+      stages: string[]
+      stage_total: number
+      stage_labels: Record<string, string>
+      scene_total: number
+    }
+  | {
+      type: 'classroom_progress'
+      request_id: string
+      stage: string
+      stage_index: number
+      stage_total: number
+      stage_label: string
+      scene_index: number
+      scene_total: number
+      scene?: { id: string; type: string; title: string; order: number }
+    }
+  | {
+      type: 'classroom_done'
+      request_id: string
+      classroom_id: string
+      scene_count: number
+    }
+  | { type: 'classroom_cancelled'; request_id: string }
+  | { type: 'classroom_error'; request_id: string; error: string }
+
+export function isClassroomTerminalEvent(
+  ev: ClassroomStreamEvent,
+): ev is Extract<ClassroomStreamEvent, { type: 'classroom_done' | 'classroom_cancelled' | 'classroom_error' }> {
+  return (
+    ev.type === 'classroom_done' ||
+    ev.type === 'classroom_cancelled' ||
+    ev.type === 'classroom_error'
+  )
+}
+
+/**
+ * 订阅课堂生成的实时进度（SSE）。
+ *
+ * 行为：
+ * - 服务器不存在该 request_id → fetch 抛 404，由调用方处理（清持久化 + 提示）
+ * - 服务器已结束 → 立即收一条 terminal 事件后流关闭
+ * - 服务器进行中 → 持续收 progress 事件，直到 terminal
+ * - 客户端断开 → 通过 signal abort SSE 连接；服务端不感知，但不会再 fanout 事件给已退订的 queue
+ */
+export async function* streamInteractiveClassroomGeneration(
+  requestId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<ClassroomStreamEvent, void, void> {
+  const url = `/api/interactive-classroom/generate/stream/${encodeURIComponent(requestId)}`
+  for await (const raw of sseFetch({ url, method: 'GET', signal })) {
+    if (!raw || typeof raw !== 'object' || typeof raw.type !== 'string') continue
+    const event = raw as unknown as ClassroomStreamEvent
+    yield event
+  }
 }

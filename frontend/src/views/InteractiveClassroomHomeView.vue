@@ -107,8 +107,15 @@
       <div v-if="loading" class="generation-progress" role="status" aria-live="polite">
         <div class="progress-head">
           <div>
-            <div class="progress-title">课堂生成中</div>
-            <div class="progress-desc">正在生成课堂内容、语音和学习记录，完成后会自动进入播放器。</div>
+            <div class="progress-title">课堂生成中 · {{ progressStageLabel }}</div>
+            <div class="progress-desc">
+              <template v-if="stream.lastScene.value">
+                正在处理：{{ stream.lastScene.value.title }}
+              </template>
+              <template v-else>
+                正在准备生成任务…
+              </template>
+            </div>
           </div>
           <div class="progress-side">
             <div class="progress-time">{{ elapsedSeconds }}s</div>
@@ -186,15 +193,24 @@
       </div>
     </section>
 
+    <n-modal
+      v-model:show="renameShow"
+      preset="dialog"
+      title="重命名课堂"
+      positive-text="确认"
+      negative-text="取消"
+      @positive-click="confirmRename"
+    >
+      <n-input v-model:value="renameValue" placeholder="新课堂名称" maxlength="80" show-count />
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NSelect } from 'naive-ui'
+import { NInput, NModal, NSelect, useDialog, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { useMessage } from 'naive-ui'
 import {
   ArrowRight,
   BarChart3,
@@ -214,9 +230,7 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import {
-  cancelInteractiveClassroomGeneration,
   deleteInteractiveClassroom,
-  getInteractiveClassroomGenerationStatus,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   listInteractiveClassrooms,
@@ -227,8 +241,8 @@ import {
 import { listFiles } from '@/api/files'
 import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
+import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import type { GeneratedFile } from '@/types'
-import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
@@ -237,7 +251,14 @@ import {
 
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const settingStore = useSettingStore()
+
+// 重命名弹窗状态
+const renameShow = ref(false)
+const renameValue = ref('')
+const renameTargetId = ref('')
+const renameTargetTitle = ref('')
 const { profile: studentProfile } = useStudentProfile()
 
 const basisOptions: SelectOption[] = [
@@ -277,37 +298,59 @@ const loadingList = ref(false)
 const reportLoading = ref(false)
 const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
-const elapsedSeconds = ref(0)
-const progressTimer = ref<number | null>(null)
-const generationPollTimer = ref<number | null>(null)
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
 const activeSuccessMessage = ref('课堂已生成')
 
+// SSE 流式进度
+const stream = useInteractiveClassroomStream()
+stream.onDone = async (classroomId) => {
+  finishGeneration()
+  message.success(activeSuccessMessage.value)
+  await loadList()
+  router.push(`/interactive-classroom/${classroomId}`)
+}
+stream.onCancelled = () => {
+  finishGeneration()
+  message.info('已停止课堂生成')
+}
+stream.onError = (err) => {
+  // 任务不存在（404）属于过期情况，特殊提示
+  const isMissing = err.includes('404') || err.includes('生成任务不存在')
+  if (isMissing) {
+    finishGeneration()
+    message.warning('课堂生成状态已失效，请重新生成')
+    return
+  }
+  finishGeneration()
+  message.error(err || '生成失败')
+}
+const progressPercent = stream.progressPercent
+
 const pptCoursewareOptions = computed(() =>
   files.value.filter((file) => Boolean(getPptJobId(file))),
 )
-const progressPercent = computed(() => {
-  if (!loading.value) return 0
-  const elapsed = elapsedSeconds.value
-  if (elapsed < 3) return 18 + elapsed * 8
-  if (elapsed < 20) return 42 + Math.floor((elapsed - 3) * 1.8)
-  return Math.min(88, 72 + Math.floor((elapsed - 20) / 8))
-})
 
-function startProgressTimer(startedAt = Date.now()) {
-  stopProgressTimer()
+// 当前阶段的中文标签；还没收到 progress 事件时给个默认
+const progressStageLabel = computed(
+  () => stream.stageLabel.value || '准备中',
+)
+
+// elapsedSeconds：loading 期间每秒滚动一次
+const elapsedSeconds = ref(0)
+let elapsedTimer: number | null = null
+function startElapsedTicker(startedAt: number) {
+  stopElapsedTicker()
   activeStartedAt.value = startedAt
   elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-  progressTimer.value = window.setInterval(() => {
+  elapsedTimer = window.setInterval(() => {
     elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - activeStartedAt.value) / 1000))
   }, 1000)
 }
-
-function stopProgressTimer() {
-  if (progressTimer.value !== null) {
-    window.clearInterval(progressTimer.value)
-    progressTimer.value = null
+function stopElapsedTicker() {
+  if (elapsedTimer !== null) {
+    window.clearInterval(elapsedTimer)
+    elapsedTimer = null
   }
 }
 
@@ -352,26 +395,31 @@ function goPptStudio() {
   })
 }
 
-function stopGenerationPoll() {
-  if (generationPollTimer.value !== null) {
-    window.clearInterval(generationPollTimer.value)
-    generationPollTimer.value = null
-  }
-}
-
 async function onGenerate() {
-  if (!topic.value) {
-    message.warning('请先输入主题')
-    return
-  }
   if (!selectedPptJobId.value) {
     message.warning('请先选择已有课件，或前往 PPT 工作台生成课件')
     return
   }
 
+  // Topic 兜底：用户没填时，用选中的 PPT 文件名/job_id 拼一个
+  const fallbackTopic = (() => {
+    const jobId = selectedPptJobId.value
+    const matched = files.value.find((f) => getPptJobId(f) === jobId)
+    if (matched?.name) return matched.name.replace(/\.svg$/i, '')
+    if (jobId) return `课堂-${jobId.slice(0, 8)}`
+    return ''
+  })()
+  const finalTopic = (topic.value || '').trim() || fallbackTopic
+
+  // 选了 PPT 之后 topic 不是必填；如果实在没法兜底才拦
+  if (!finalTopic) {
+    message.warning('请先输入主题或选择一个课件')
+    return
+  }
+
   try {
     await beginClassroomGeneration({
-      topic: topic.value,
+      topic: finalTopic,
       course: course.value || undefined,
       ppt_job_id: selectedPptJobId.value || undefined,
       student_profile: studentProfile.value,
@@ -386,8 +434,9 @@ async function onGenerate() {
       content_provider_type: settingStore.getContentProviderType(),
     }, '课堂已生成')
   } catch (err) {
-    if (isClassroomCancelError(err)) return
-    message.error(err instanceof Error ? err.message : '生成失败')
+    const text = err instanceof Error ? err.message : '生成失败'
+    if (text.includes('课堂生成已停止')) return
+    message.error(text)
   }
 }
 
@@ -433,8 +482,9 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       content_provider_type: settingStore.getContentProviderType(),
     }, '课堂已重新生成')
   } catch (err) {
-    if (isClassroomCancelError(err)) return
-    message.error(err instanceof Error ? err.message : '重新生成失败')
+    const text = err instanceof Error ? err.message : '重新生成失败'
+    if (text.includes('课堂生成已停止')) return
+    message.error(text)
   }
 }
 
@@ -447,7 +497,7 @@ async function beginClassroomGeneration(
   activeRequestId.value = requestId
   activeSuccessMessage.value = successMessage
   loading.value = true
-  startProgressTimer(startedAt)
+  startElapsedTicker(startedAt)
   savePersistedClassroomGeneration({
     requestId,
     surface: 'home',
@@ -458,60 +508,24 @@ async function beginClassroomGeneration(
     ...body,
     request_id: requestId,
   })
-  startGenerationPolling(requestId)
-}
-
-function startGenerationPolling(requestId: string) {
-  stopGenerationPoll()
-  const poll = () => {
-    void checkGenerationStatus(requestId)
-  }
-  poll()
-  generationPollTimer.value = window.setInterval(poll, 1500)
-}
-
-async function checkGenerationStatus(requestId: string) {
-  try {
-    const job = await getInteractiveClassroomGenerationStatus(requestId)
-    if (job.status === 'done' && job.classroom_id) {
-      finishGeneration()
-      message.success(activeSuccessMessage.value)
-      await loadList()
-      router.push(`/interactive-classroom/${job.classroom_id}`)
-      return
-    }
-    if (job.status === 'cancelled') {
-      finishGeneration()
-      message.info('已停止课堂生成')
-      return
-    }
-    if (job.status === 'error') {
-      finishGeneration()
-      message.error(job.error || '生成失败')
-    }
-  } catch (err) {
-    if (isClassroomCancelError(err)) return
-    if (isClassroomGenerationMissingError(err)) {
-      finishGeneration()
-      message.warning('课堂生成状态已失效，请重新生成')
-      return
-    }
-    message.error(err instanceof Error ? err.message : '生成状态加载失败')
-  }
+  // 启动 SSE 流（不再轮询）
+  void stream.start(requestId)
 }
 
 function finishGeneration() {
   loading.value = false
   activeRequestId.value = ''
-  stopGenerationPoll()
-  stopProgressTimer()
+  stopElapsedTicker()
+  stream.stop()
   clearPersistedClassroomGeneration()
 }
 
 async function stopCurrentGeneration() {
   const requestId = activeRequestId.value
   if (requestId) {
-    await cancelInteractiveClassroomGeneration(requestId).catch(() => undefined)
+    await stream.cancel(requestId)
+  } else {
+    stream.stop()
   }
   finishGeneration()
   message.info('已停止课堂生成')
@@ -523,8 +537,9 @@ function restorePersistedGeneration() {
   activeRequestId.value = persisted.requestId
   activeSuccessMessage.value = '课堂已生成'
   loading.value = true
-  startProgressTimer(persisted.startedAt)
-  startGenerationPolling(persisted.requestId)
+  startElapsedTicker(persisted.startedAt)
+  // 直接连 SSE：服务器会先发 start，再发当前累计进度或 terminal
+  void stream.start(persisted.requestId)
 }
 
 function createClassroomRequestId() {
@@ -534,20 +549,31 @@ function createClassroomRequestId() {
   return `classroom:${Date.now()}:${Math.random().toString(16).slice(2)}`
 }
 
-async function renameClassroom(item: InteractiveClassroomListItem) {
-  const nextTitle = window.prompt('输入新的课堂名称', item.title)
-  if (nextTitle === null) return
-  const title = nextTitle.trim()
+function renameClassroom(item: InteractiveClassroomListItem) {
+  renameTargetId.value = item.id
+  renameTargetTitle.value = item.title
+  renameValue.value = item.title
+  renameShow.value = true
+}
+
+async function confirmRename() {
+  const title = renameValue.value.trim()
   if (!title) {
     message.warning('课堂名称不能为空')
-    return
+    return false
+  }
+  if (title === renameTargetTitle.value) {
+    // 没改也直接关掉
+    return true
   }
   try {
-    await renameInteractiveClassroom(item.id, title)
+    await renameInteractiveClassroom(renameTargetId.value, title)
     message.success('已重命名')
     await loadList()
+    return true
   } catch (err) {
     message.error(err instanceof Error ? err.message : '重命名失败')
+    return false
   }
 }
 
@@ -567,15 +593,22 @@ async function openReport(item: InteractiveClassroomListItem) {
   }
 }
 
-async function deleteClassroom(item: InteractiveClassroomListItem) {
-  if (!window.confirm(`确定删除“${item.title}”？删除后无法恢复。`)) return
-  try {
-    await deleteInteractiveClassroom(item.id)
-    message.success('已删除')
-    await loadList()
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : '删除失败')
-  }
+function deleteClassroom(item: InteractiveClassroomListItem) {
+  dialog.warning({
+    title: '删除课堂',
+    content: `确定删除「${item.title}」？删除后无法恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteInteractiveClassroom(item.id)
+        message.success('已删除')
+        await loadList()
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : '删除失败')
+      }
+    },
+  })
 }
 
 onMounted(() => {
@@ -584,8 +617,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  stopProgressTimer()
-  stopGenerationPoll()
+  stopElapsedTicker()
+  stream.stop()
 })
 </script>
 

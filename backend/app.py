@@ -73,6 +73,11 @@ CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
 CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
 CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
 
+# SSE 订阅者：每个连上的前端对应一个 queue.Queue；生成线程把事件 fan-out 给所有订阅者
+import queue  # noqa: E402
+CLASSROOM_GENERATION_SUBSCRIBERS: dict[str, list[queue.Queue]] = {}
+CLASSROOM_GENERATION_SUBSCRIBERS_LOCK = threading.Lock()
+
 
 def _is_safe_classroom_request_id(value: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9_.:-]{1,128}$', value or ''))
@@ -209,6 +214,50 @@ def _cancel_classroom_generation(request_id: str) -> bool:
                 'updated_at': _classroom_generation_now(),
             }
         return True
+
+
+# ---------- SSE 订阅者 ----------
+
+def _classroom_subscribe(request_id: str) -> queue.Queue:
+    """注册一个 SSE 订阅者，返回该客户端的事件队列。"""
+    q: queue.Queue = queue.Queue(maxsize=512)
+    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
+        CLASSROOM_GENERATION_SUBSCRIBERS.setdefault(request_id, []).append(q)
+    return q
+
+
+def _classroom_unsubscribe(request_id: str, q: queue.Queue) -> None:
+    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
+        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id)
+        if not subs:
+            return
+        if q in subs:
+            subs.remove(q)
+        if not subs:
+            CLASSROOM_GENERATION_SUBSCRIBERS.pop(request_id, None)
+
+
+def _classroom_emit(request_id: str, event: dict) -> None:
+    """由生成线程调用：把事件 fan-out 到所有 SSE 订阅者。"""
+    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
+        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id, [])
+        for q in subs:
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                # 慢消费者：丢弃这一帧；不阻塞生成线程
+                pass
+
+
+def _classroom_close_subscribers(request_id: str) -> None:
+    """终端事件后调用：往所有订阅者塞一个 None 哨兵，让 SSE 循环退出。"""
+    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
+        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id, [])
+        for q in subs:
+            try:
+                q.put_nowait(None)
+            except queue.Full:
+                pass
 
 
 def _build_classroom_tts_config(data=None, classroom=None):
@@ -2744,6 +2793,12 @@ def interactive_classroom_generate():
         _mark_classroom_generation_running(request_id, topic)
 
         def run_generation_job():
+            def emit(event: dict) -> None:
+                _classroom_emit(request_id, event)
+
+            def on_progress(event: dict) -> None:
+                emit(event)
+
             try:
                 payload = CLASSROOM_GENERATOR.generate(
                     user_id=user_id,
@@ -2753,16 +2808,33 @@ def interactive_classroom_generate():
                     ppt_job_id=ppt_job_id,
                     student_profile=student_profile,
                     cancel_check=cancel_event.is_set if cancel_event is not None else None,
+                    progress_callback=on_progress,
                 )
                 _mark_classroom_generation_done(request_id, payload.get('id'), payload)
+                emit({
+                    'type': 'classroom_done',
+                    'request_id': request_id,
+                    'classroom_id': payload.get('id'),
+                    'scene_count': len(payload.get('scenes', [])),
+                })
                 request_logger.info(f'[INTERACTIVE-CLASSROOM] 后台生成完成 request_id={request_id}')
             except ClassroomGenerationCancelled:
                 _mark_classroom_generation_cancelled(request_id)
+                emit({
+                    'type': 'classroom_cancelled',
+                    'request_id': request_id,
+                })
                 request_logger.info(f'[INTERACTIVE-CLASSROOM] 后台生成已取消 request_id={request_id}')
             except Exception as exc:
                 _mark_classroom_generation_error(request_id, str(exc))
+                emit({
+                    'type': 'classroom_error',
+                    'request_id': request_id,
+                    'error': str(exc),
+                })
                 request_logger.exception(f'[INTERACTIVE-CLASSROOM] 后台生成失败 request_id={request_id}')
             finally:
+                _classroom_close_subscribers(request_id)
                 _finish_classroom_generation(request_id)
 
         thread = threading.Thread(target=run_generation_job, name=f'classroom-generation-{request_id}', daemon=True)
@@ -2822,6 +2894,95 @@ def interactive_classroom_generate_status(request_id):
     if job is None:
         return jsonify({'success': False, 'error': '生成任务不存在'}), 404
     return jsonify({'success': True, 'job': job})
+
+
+@app.route('/api/interactive-classroom/generate/stream/<request_id>', methods=['GET'])
+def interactive_classroom_generate_stream(request_id):
+    """SSE 课堂生成进度流。
+
+    - 任务不存在 → 404
+    - 任务已结束（done / cancelled / error）→ 立即发一条对应事件后关闭
+    - 任务进行中 → 订阅事件队列，按生成线程推送顺序流式输出
+    - 15s 无事件 → 发 SSE heartbeat 注释保活
+    """
+    request_id = (request_id or '').strip()
+    if not _is_safe_classroom_request_id(request_id):
+        return jsonify({'success': False, 'error': '非法 request_id'}), 400
+
+    job = _get_classroom_generation_job(request_id)
+    if job is None:
+        return jsonify({'success': False, 'error': '生成任务不存在'}), 404
+
+    from interactive_classroom.generator import GENERATION_STAGES
+
+    def _serialize(event: dict) -> str:
+        # ensure_ascii=False 让中文 step 标题/错误信息直接走 UTF-8
+        return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    def _terminal_event_from_job(job_dict: dict) -> dict | None:
+        status = job_dict.get('status')
+        if status == 'done':
+            return {
+                'type': 'classroom_done',
+                'request_id': request_id,
+                'classroom_id': job_dict.get('classroom_id'),
+                'scene_count': len((job_dict.get('classroom') or {}).get('scenes', [])),
+            }
+        if status == 'cancelled':
+            return {'type': 'classroom_cancelled', 'request_id': request_id}
+        if status == 'error':
+            return {
+                'type': 'classroom_error',
+                'request_id': request_id,
+                'error': job_dict.get('error') or '生成失败',
+            }
+        return None
+
+    def _start_event(job_dict: dict) -> dict:
+        # scene_total 在阶段 1 里才会知道；这里给个保守的占位 0 让前端知道有几个阶段
+        return {
+            'type': 'classroom_start',
+            'request_id': request_id,
+            'topic': job_dict.get('topic', ''),
+            'stages': [s['key'] for s in GENERATION_STAGES],
+            'stage_total': len(GENERATION_STAGES),
+            'stage_labels': {s['key']: s['label'] for s in GENERATION_STAGES},
+            'scene_total': 0,
+        }
+
+    terminal = _terminal_event_from_job(job)
+    queue_sub: queue.Queue | None = None
+
+    def gen():
+        # 无论何种情况，先发一个 classroom_start 让前端进入"流式"状态
+        yield _serialize(_start_event(job))
+
+        if terminal is not None:
+            yield _serialize(terminal)
+            return
+
+        # 任务仍在跑：订阅事件流
+        nonlocal queue_sub
+        queue_sub = _classroom_subscribe(request_id)
+        try:
+            while True:
+                try:
+                    event = queue_sub.get(timeout=15.0)
+                except queue.Empty:
+                    yield ":heartbeat\n\n"
+                    continue
+                if event is None:
+                    return
+                yield _serialize(event)
+        finally:
+            if queue_sub is not None:
+                _classroom_unsubscribe(request_id, queue_sub)
+
+    response = Response(gen(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'  # 反向代理禁用缓冲
+    response.headers['Connection'] = 'keep-alive'
+    return response
 
 
 @app.route('/api/interactive-classroom/list', methods=['GET'])
