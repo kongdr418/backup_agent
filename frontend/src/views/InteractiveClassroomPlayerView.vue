@@ -169,6 +169,23 @@
                 </div>
               </div>
             </section>
+
+            <section v-if="reportRecommendedTasks.length" class="report-block">
+              <div class="report-label">下一步学习任务</div>
+              <div class="task-list">
+                <article v-for="task in reportRecommendedTasks" :key="task.id" class="task-row">
+                  <div class="task-priority" :class="task.priority">{{ taskPriorityLabel(task.priority) }}</div>
+                  <div class="task-copy">
+                    <div class="task-title">{{ task.title }}</div>
+                    <p>{{ task.description }}</p>
+                    <div v-if="task.knowledge_points.length" class="tag-row">
+                      <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
+                    </div>
+                  </div>
+                  <div class="task-action">{{ task.action_label }}</div>
+                </article>
+              </div>
+            </section>
           </div>
         </div>
       </section>
@@ -411,6 +428,8 @@ const reportKnowledgeRows = computed(() => {
   const summary = report.value?.knowledge_summary || {}
   return Object.entries(summary).map(([name, row]) => ({ name, mastery: row.mastery }))
 })
+
+const reportRecommendedTasks = computed(() => report.value?.recommended_tasks || [])
 
 const quizSceneIds = computed(() =>
   baseScenes.value.filter((scene) => scene.type === 'quiz').map((scene) => scene.id),
@@ -721,6 +740,12 @@ function sceneTypeLabel(type: string) {
   if (type === 'quiz') return '测验'
   if (type === 'report') return canOpenReportScene.value ? '报告' : '未解锁'
   return '讲解'
+}
+
+function taskPriorityLabel(priority: string) {
+  if (priority === 'high') return '优先'
+  if (priority === 'medium') return '建议'
+  return '拓展'
 }
 </script>
 
@@ -1270,6 +1295,11 @@ function sceneTypeLabel(type: string) {
   color: rgb(5 150 105);
 }
 
+.tag.task-point {
+  background: rgb(15 23 42 / 0.06);
+  color: rgb(var(--ink-2-rgb));
+}
+
 .mastery-list {
   display: grid;
   gap: 8px;
@@ -1296,6 +1326,70 @@ function sceneTypeLabel(type: string) {
   height: 100%;
   border-radius: inherit;
   background: rgb(16 185 129);
+}
+
+.task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-row {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.task-priority {
+  border-radius: 8px;
+  padding: 5px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-subtle-rgb));
+}
+
+.task-priority.high {
+  color: rgb(185 28 28);
+  background: rgb(220 38 38 / 0.08);
+}
+
+.task-priority.medium {
+  color: rgb(180 83 9);
+  background: rgb(217 119 6 / 0.10);
+}
+
+.task-copy {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.task-title {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.task-copy p {
+  margin: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.task-action {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-base-rgb));
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .teacher-mark {
@@ -1568,8 +1662,13 @@ function sceneTypeLabel(type: string) {
   .report-grid,
   .report-columns,
   .report-hero,
+  .task-row,
   .mastery-row {
     grid-template-columns: 1fr;
+  }
+
+  .task-action {
+    width: fit-content;
   }
 }
 </style>

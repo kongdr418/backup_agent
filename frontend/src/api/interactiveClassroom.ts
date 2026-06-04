@@ -102,6 +102,17 @@ export interface QuizSubmitResult {
   feedback_action?: InteractiveClassroomAction
 }
 
+export interface ClassroomRecommendedTask {
+  id: string
+  type: string
+  title: string
+  description: string
+  priority: 'high' | 'medium' | 'low' | string
+  knowledge_points: string[]
+  target_scene_ids: string[]
+  action_label: string
+}
+
 export interface ClassroomReport {
   classroom_id: string
   title: string
@@ -125,6 +136,7 @@ export interface ClassroomReport {
   weak_points: string[]
   strong_points: string[]
   next_recommendation: string
+  recommended_tasks?: ClassroomRecommendedTask[]
 }
 
 export async function generateInteractiveClassroom(body: InteractiveClassroomGenerateRequest) {
