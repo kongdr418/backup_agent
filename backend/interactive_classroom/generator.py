@@ -52,6 +52,46 @@ def _extract_svg_texts(svg: str) -> list[str]:
     return _unique_texts(matches)
 
 
+def _clean_knowledge_point(value: str) -> str:
+    """清洗 LLM 直给的 knowledge_point 文本。
+
+    LLM 经常把页面占位符粘进来，例：
+      "page 15 关键点：布尔索引筛选"
+      "slide_5 要点:xxx"
+      "  page15关键点：xxx"
+
+    目标：剥掉 "page N" / "slide N" 和 "关键点" / "要点" 这类前缀，
+    保留真正的核心内容（"布尔索引筛选"），便于学习报告按知识点聚合。
+    """
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    # 反复剥前缀，最长 4 次（page N 关键点：xxx 关键点：xxx 这种叠层）
+    for _ in range(4):
+        prev = text
+        # 去掉开头的 page/slide + 可选分隔 + 数字（中文数字 / 阿拉伯数字）+ 可选分隔
+        text = re.sub(
+            r"^\s*(page|slide)\s*[\d_一-鿿]+[\s_\-:：、]*",
+            "",
+            text,
+            flags=re.I,
+        )
+        # 去掉开头的 "关键点" / "要点" / "知识点" + 可选分隔
+        text = re.sub(
+            r"^\s*(关键点|知识点|要点|核心点)\s*[：:、\s]*",
+            "",
+            text,
+        )
+        # 去掉开头的 "第N页/页N"（如 "第15页" / "页 15"）
+        text = re.sub(r"^\s*第?\s*\d+\s*页\s*[：:、\s]*", "", text)
+        if text == prev:
+            break
+        text = text.strip()
+
+    return text
+
+
 def _derive_slide_title(idx: int, filename: str, svg_texts: list[str], manuscript_note: str = "") -> str:
     # 1) 优先从讲稿（manuscript）提炼标题 —— 讲稿是对本页内容最准确的概括
     if manuscript_note:
@@ -571,8 +611,13 @@ class InteractiveClassroomGenerator:
 
                 qtype = str(row.get("type", "单选题"))
                 normalized_type = "multiple" if len(answers) > 1 or "多" in qtype else "single"
-                knowledge_point = _clean_text(str(row.get("knowledge_point") or module.get("title") or ""))
-                if not knowledge_point:
+                # 修复：原先不过滤 LLM 直给的 knowledge_point，导致 "page 15 关键点：xxx"
+                # 这种带 slide/page 占位符 + 关键点/要点 前缀的脏数据直接落到题目里，
+                # 进而污染 report.weak_points 标签。先清洗 LLM 提供的值；若清洗后仍
+                # 命中占位符模式或为空，再回退到 scene_points。
+                raw_kp = _clean_text(str(row.get("knowledge_point") or module.get("title") or ""))
+                knowledge_point = _clean_knowledge_point(raw_kp) if raw_kp else ""
+                if not knowledge_point or re.search(r"\b(slide|page)[_\-\s]*\d+\b", knowledge_point, flags=re.I):
                     knowledge_point = next(
                         (
                             point
