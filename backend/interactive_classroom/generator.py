@@ -40,6 +40,12 @@ def _clean_text(value: str) -> str:
     return value
 
 
+def _clean_quiz_text(value: str) -> str:
+    value = unescape(value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
 def _unique_texts(rows: list[str], limit: int = 12) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -573,10 +579,10 @@ class InteractiveClassroomGenerator:
         return text.strip()
 
     def _parse_option(self, option: Any, fallback_label: str) -> tuple[str, str]:
-        raw = _clean_text(str(option))
+        raw = _clean_quiz_text(str(option))
         match = re.match(r"^([A-Da-d])[\.\、\)\s：:]+(.+)$", raw)
         if match:
-            return match.group(1).upper(), _clean_text(match.group(2))
+            return match.group(1).upper(), _clean_quiz_text(match.group(2))
         return fallback_label, raw
 
     def _normalize_llm_answers(self, value: Any) -> list[str]:
@@ -608,7 +614,7 @@ class InteractiveClassroomGenerator:
             for row in module.get("questions", []) if isinstance(module, dict) else []:
                 if len(questions) >= max_questions:
                     break
-                text = _clean_text(str(row.get("text") or row.get("question") or ""))
+                text = _clean_quiz_text(str(row.get("text") or row.get("question") or ""))
                 raw_options = row.get("options", [])
                 answers = self._normalize_llm_answers(row.get("answer", []))
                 if not text or not isinstance(raw_options, list) or len(raw_options) < 4 or not answers:
@@ -652,7 +658,7 @@ class InteractiveClassroomGenerator:
                         "question": text,
                         "options": options,
                         "answer": answers,
-                        "analysis": _clean_text(str(row.get("analysis") or "请回到对应课堂页面复习该知识点。")),
+                        "analysis": _clean_quiz_text(str(row.get("analysis") or "请回到对应课堂页面复习该知识点。")),
                         "points": 1,
                         "knowledge_point": knowledge_point,
                     }

@@ -6,6 +6,13 @@ export interface ClassroomLearnerProfile {
 }
 
 const CLASSROOM_NOTES_TITLE = '【智慧课堂生成要求】'
+const CLASSROOM_LEARNING_CONTEXT_TITLE = '【智慧课堂学习路径上下文】'
+
+export interface ClassroomLearningContext {
+  weakPoints?: string[]
+  strongPoints?: string[]
+  nextRecommendation?: string
+}
 
 const PROFILE_FIELDS: Array<{
   key: keyof ClassroomLearnerProfile
@@ -26,6 +33,7 @@ export function stripClassroomPptNotes(notes = '') {
 export function buildClassroomPptNotes(
   profile: ClassroomLearnerProfile,
   existingNotes = '',
+  learningContext?: ClassroomLearningContext,
 ) {
   const lines = PROFILE_FIELDS
     .map(({ key, label }) => {
@@ -43,5 +51,15 @@ export function buildClassroomPptNotes(
     '请据此适配 PPT 内容组织、案例选择、解释深度和课堂互动题；画像仅作为生成策略，不要机械堆砌到学生可见文本中。',
   ].join('\n')
 
-  return [baseNotes, classroomNotes].filter(Boolean).join('\n\n')
+  const contextLines = [
+    learningContext?.weakPoints?.length ? `薄弱点：${learningContext.weakPoints.join('、')}` : '',
+    learningContext?.strongPoints?.length ? `已掌握：${learningContext.strongPoints.join('、')}` : '',
+    learningContext?.nextRecommendation?.trim() ? `下一步建议：${learningContext.nextRecommendation.trim()}` : '',
+  ].filter(Boolean)
+
+  const learningNotes = contextLines.length
+    ? [CLASSROOM_LEARNING_CONTEXT_TITLE, ...contextLines].join('\n')
+    : ''
+
+  return [baseNotes, classroomNotes, learningNotes].filter(Boolean).join('\n\n')
 }

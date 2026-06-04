@@ -165,7 +165,7 @@ import {
 } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
 import { useStudentProfile } from '@/composables/useStudentProfile'
-import { buildClassroomPptNotes, type ClassroomLearnerProfile } from '@/utils/classroomPptNotes'
+import { buildClassroomPptNotes, type ClassroomLearnerProfile, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
 import { isClassroomCancelError, isClassroomGenerationMissingError } from '@/utils/classroomCancel'
 import {
   clearPersistedClassroomGeneration,
@@ -308,11 +308,12 @@ function applyClassroomDraft() {
   const topic = firstQueryValue(route.query.topic).trim()
   const course = firstQueryValue(route.query.course).trim()
   const classroomProfile = getClassroomProfileFromQuery()
+  const learningContext = getLearningContextFromQuery()
   if (topic) {
     store.params = {
       ...store.params,
       topic,
-      notes: buildClassroomPptNotes(classroomProfile, store.params.notes),
+      notes: buildClassroomPptNotes(classroomProfile, store.params.notes, learningContext),
       deep_research: false,
       visual_critic: false,
     }
@@ -333,6 +334,21 @@ function getClassroomProfileFromQuery(): ClassroomLearnerProfile {
     goal: firstQueryValue(route.query.goal).trim() || studentProfile.value.goal,
     style: firstQueryValue(route.query.style).trim() || studentProfile.value.style,
     difficulty: firstQueryValue(route.query.difficulty).trim() || studentProfile.value.difficulty,
+  }
+}
+
+function splitQueryValues(value: unknown) {
+  return firstQueryValue(value)
+    .split('||')
+    .map((item: string) => item.trim())
+    .filter((item: string) => Boolean(item))
+}
+
+function getLearningContextFromQuery(): ClassroomLearningContext {
+  return {
+    weakPoints: splitQueryValues(route.query.weak_points),
+    strongPoints: splitQueryValues(route.query.strong_points),
+    nextRecommendation: firstQueryValue(route.query.next_recommendation).trim(),
   }
 }
 

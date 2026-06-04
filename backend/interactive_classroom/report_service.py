@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
+def _compact_text_key(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
 def _collect_scene_knowledge(classroom: dict[str, Any]) -> list[str]:
     points: list[str] = []
     seen: set[str] = set()
@@ -25,13 +29,20 @@ def _find_scene_ids_for_points(classroom: dict[str, Any], point_names: list[str]
     if not point_names:
         return []
 
-    point_set = set(point_names)
+    point_keys = [_compact_text_key(point) for point in point_names]
     scene_ids: list[str] = []
     for scene in classroom.get("scenes", []):
         if scene.get("type") != "slide":
             continue
-        scene_points = set(scene.get("knowledge_points", []))
-        if point_set.intersection(scene_points):
+        content = scene.get("content", {})
+        text_parts = [
+            scene.get("title", ""),
+            *scene.get("knowledge_points", []),
+            *content.get("extracted_text", []),
+            content.get("markdown", ""),
+        ]
+        scene_key = _compact_text_key(" ".join(str(part) for part in text_parts if part))
+        if any(point_key and point_key in scene_key for point_key in point_keys):
             scene_id = scene.get("id")
             if scene_id:
                 scene_ids.append(scene_id)
@@ -43,6 +54,7 @@ def _build_recommended_tasks(
     status: str,
     weak_points: list[str],
     strong_points: list[str],
+    point_scene_ids: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     if status == "not_started":
         return [
@@ -61,6 +73,10 @@ def _build_recommended_tasks(
     if weak_points:
         focus_points = weak_points[:3]
         target_scene_ids = _find_scene_ids_for_points(classroom, focus_points)
+        for point in focus_points:
+            for scene_id in (point_scene_ids or {}).get(point, []):
+                if scene_id not in target_scene_ids:
+                    target_scene_ids.append(scene_id)
         return [
             {
                 "id": "task_review_weak_points",
@@ -113,15 +129,24 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
     scenes = answers_record.get("scenes", {})
     quiz_scene_count = sum(1 for scene in classroom.get("scenes", []) if scene.get("type") == "quiz")
     answered_quiz_count = len(scenes)
+    answered_scene_ids = list(scenes.keys())
 
     total_questions = 0
     correct_questions = 0
     earned_points = 0
     total_points = 0
     knowledge_summary: dict[str, dict[str, int]] = {}
+    quiz_scene_map = {
+        scene.get("id"): scene
+        for scene in classroom.get("scenes", [])
+        if scene.get("type") == "quiz"
+    }
+    point_scene_ids: dict[str, list[str]] = {}
 
-    for answer_payload in scenes.values():
+    for scene_id, answer_payload in scenes.items():
         evaluation = answer_payload.get("evaluation", {})
+        quiz_scene = quiz_scene_map.get(scene_id, {})
+        covered_scene_ids = quiz_scene.get("content", {}).get("covered_scene_ids", [])
         for result in evaluation.get("results", []):
             point_name = result.get("knowledge_point") or "综合理解"
             points = int(result.get("points", 1) or 1)
@@ -142,6 +167,11 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
             if is_correct:
                 row["correct"] += 1
                 row["earned_points"] += points
+            else:
+                rows = point_scene_ids.setdefault(point_name, [])
+                for covered_scene_id in covered_scene_ids:
+                    if covered_scene_id and covered_scene_id not in rows:
+                        rows.append(covered_scene_id)
 
     for row in knowledge_summary.values():
         row["mastery"] = round((row["correct"] / row["total"]) * 100) if row["total"] else 0
@@ -165,6 +195,7 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
         status,
         weak_points,
         strong_points,
+        point_scene_ids,
     )
 
     return {
@@ -179,6 +210,7 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
         "total_points": total_points,
         "quiz_scene_count": quiz_scene_count,
         "answered_quiz_count": answered_quiz_count,
+        "answered_scene_ids": answered_scene_ids,
         "learned_points": _collect_scene_knowledge(classroom),
         "knowledge_summary": knowledge_summary,
         "weak_points": weak_points,

@@ -125,6 +125,7 @@ export interface ClassroomReport {
   total_points: number
   quiz_scene_count: number
   answered_quiz_count: number
+  answered_scene_ids: string[]
   learned_points: string[]
   knowledge_summary: Record<string, {
     correct: number

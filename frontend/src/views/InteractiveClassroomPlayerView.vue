@@ -182,7 +182,7 @@
                       <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
                     </div>
                   </div>
-                  <div class="task-action">{{ task.action_label }}</div>
+                  <button class="task-action" :disabled="!canRunTask(task)" @click="runTask(task)">{{ taskButtonLabel(task) }}</button>
                 </article>
               </div>
             </section>
@@ -280,11 +280,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { CheckCircle, ChevronLeft, ChevronRight, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
+  type ClassroomRecommendedTask,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   submitInteractiveClassroomAnswer,
@@ -295,8 +296,10 @@ import {
   type InteractiveClassroomScene,
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
+import { resolveReportTaskAction } from '@/utils/classroomReportTask'
 
 const route = useRoute()
+const router = useRouter()
 const message = useMessage()
 
 const classroom = ref<InteractiveClassroomPayload | null>(null)
@@ -438,6 +441,12 @@ const quizSceneIds = computed(() =>
 const answeredQuizCount = computed(() => {
   const localCount = quizSceneIds.value.filter((sceneId) => Boolean(quizResultsByScene.value[sceneId])).length
   return Math.max(localCount, report.value?.answered_quiz_count || 0)
+})
+
+const answeredSceneIds = computed(() => {
+  const localIds = Object.keys(quizResultsByScene.value)
+  const persistedIds = report.value?.answered_scene_ids || []
+  return Array.from(new Set([...persistedIds, ...localIds]))
 })
 
 const isClassroomComplete = computed(() => {
@@ -746,6 +755,45 @@ function taskPriorityLabel(priority: string) {
   if (priority === 'high') return '优先'
   if (priority === 'medium') return '建议'
   return '拓展'
+}
+
+function getTaskAction(task: ClassroomRecommendedTask) {
+  return resolveReportTaskAction(task, {
+    orderedScenes: orderedScenes.value.map((scene) => ({ id: scene.id, type: scene.type })),
+    answeredSceneIds: answeredSceneIds.value,
+    topic: classroom.value?.topic || '',
+    course: classroom.value?.course || classroom.value?.topic || '',
+    studentProfile: classroom.value?.student_profile || {},
+    report: report.value,
+  })
+}
+
+function canRunTask(task: ClassroomRecommendedTask) {
+  return getTaskAction(task).kind !== 'none'
+}
+
+function taskButtonLabel(task: ClassroomRecommendedTask) {
+  return canRunTask(task) ? task.action_label : `${task.action_label}（待开放）`
+}
+
+function runTask(task: ClassroomRecommendedTask) {
+  const action = getTaskAction(task)
+  if (action.kind === 'scene') {
+    const targetIndex = orderedScenes.value.findIndex((scene) => scene.id === action.sceneId)
+    if (targetIndex >= 0) {
+      selectScene(targetIndex)
+      return
+    }
+    message.warning('目标课堂场景不存在')
+    return
+  }
+
+  if (action.kind === 'ppt-studio') {
+    router.push({ name: 'ppt-studio', query: action.query })
+    return
+  }
+
+  message.info('该学习任务的自动执行链路还未接入')
 }
 </script>
 
