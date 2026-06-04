@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import json
@@ -10,7 +11,11 @@ from uuid import uuid4
 
 from .schema import ClassroomAction, ClassroomScene, InteractiveClassroom
 from .storage import ClassroomStorage
-from .tts_service import ClassroomTTSService
+from .tts_service import (
+    DEFAULT_TTS_MAX_CONCURRENCY,
+    ClassroomTTSService,
+    synthesize_actions_parallel_with_progress,
+)
 
 
 class ClassroomGenerationCancelled(Exception):
@@ -980,7 +985,7 @@ class InteractiveClassroomGenerator:
         audio_dir = self.storage.audio_dir(user_id, classroom_id)
         tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
 
-        # 阶段 4：合成音频
+        # 阶段 4：合成音频（并发）
         speech_actions: list[tuple[ClassroomScene, ClassroomAction]] = []
         for scene in classroom.scenes:
             for action in scene.actions:
@@ -993,20 +998,50 @@ class InteractiveClassroomGenerator:
             scene_index=0,
             scene_total=len(speech_actions),
         )
-        for idx, (_scene, action) in enumerate(speech_actions, start=1):
-            _raise_if_cancelled(cancel_check)
-            try:
-                filename = tts.synthesize_action(action.id, action.text, audio_dir)
-                if filename:
-                    action.audio_url = f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
-            except Exception:
-                action.audio_url = ""
-            _emit_progress(
-                progress_callback,
-                stage="synthesize_tts",
-                stage_index=3,
-                scene_index=idx,
-                scene_total=len(speech_actions),
+
+        if speech_actions:
+            # 把 (scene, action) 拍平为 (action_id, text) 给并行函数
+            # 保留 scene 引用以便 on_action_done 回写 audio_url
+            action_by_id: dict[str, ClassroomAction] = {
+                a.id: a for _, a in speech_actions
+            }
+            tts_input: list[tuple[str, str]] = [
+                (a.id, a.text) for _, a in speech_actions
+            ]
+
+            def _on_tts_done(
+                done_idx: int,
+                total: int,
+                action_id: str,
+                filename: str | None,
+                error: Exception | None,
+            ) -> None:
+                # 写回 audio_url（成功才有 filename）
+                action = action_by_id.get(action_id)
+                if action is not None and filename:
+                    action.audio_url = (
+                        f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
+                    )
+                # 推 progress（按完成顺序，不一定是输入顺序）
+                _emit_progress(
+                    progress_callback,
+                    stage="synthesize_tts",
+                    stage_index=3,
+                    scene_index=done_idx,
+                    scene_total=total,
+                )
+
+            # ClassroomGenerationCancelled 由并行函数内部透传，asyncio.run 会重新抛
+            # 其它异常会冒泡到 run_generation_job 的 except 分支标记 error
+            asyncio.run(
+                synthesize_actions_parallel_with_progress(
+                    service=tts,
+                    actions=tts_input,
+                    output_dir=audio_dir,
+                    max_concurrency=DEFAULT_TTS_MAX_CONCURRENCY,
+                    cancel_check=cancel_check,
+                    on_action_done=_on_tts_done,
+                )
             )
 
         _raise_if_cancelled(cancel_check)
