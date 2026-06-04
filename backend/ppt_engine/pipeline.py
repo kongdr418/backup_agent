@@ -79,6 +79,7 @@ class PPTPipeline:
         deep_research: bool = False,
         visual_critic: bool = False,
         template_id: str | None = None,
+        notes: str | None = None,
     ) -> AsyncIterator[PipelineEvent]:
         """Generate a PPT from a course topic.
 
@@ -161,6 +162,7 @@ class PPTPipeline:
             else:
                 manuscript = await plan_content(
                     topic, llm, model,
+                    instruction=(notes or ""),  # 备注透传；None/空 → ""
                     language=language,
                     num_slides=num_slides,
                     detail_level=detail_level,

@@ -72,8 +72,12 @@ async def plan_content(
 
     user_parts = [f"## 课程主题\n\n{topic}"]
 
-    if instruction:
-        user_parts.append(f"\n## 额外要求\n\n{instruction}")
+    if instruction and instruction.strip():
+        user_parts.append(
+            f"## 额外要求\n\n{instruction.strip()}\n\n"
+            "（请在不违背课程主题和已有参数（页数 / 语言 / 风格 / 详细程度）的前提下，"
+            "尽量满足上述额外要求）"
+        )
 
     if num_slides:
         user_parts.append(

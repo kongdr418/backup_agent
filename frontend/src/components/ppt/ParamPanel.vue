@@ -15,6 +15,26 @@
         />
       </section>
 
+      <!-- 备注 / 附加要求 -->
+      <section class="param-section">
+        <label class="param-label">
+          备注 / 附加要求
+          <span class="text-gray-400 text-xs font-normal">（可选）</span>
+        </label>
+        <n-input
+          v-model:value="local.notes"
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 5 }"
+          placeholder="例如：面向高中生，例子用游戏类比；重点强调对比；尽量避免数学公式"
+          :disabled="disabled"
+          :maxlength="2000"
+          show-count
+        />
+        <p class="advanced-hint" style="margin-top: 6px;">
+          仅作为补充上下文喂给 LLM，不会覆盖页数 / 语言 / 风格等参数
+        </p>
+      </section>
+
       <!-- Style -->
       <section class="param-section">
         <label class="param-label">设计风格</label>

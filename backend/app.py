@@ -1952,6 +1952,7 @@ def ppt_svg_generate():
     deep_research = data.get('deep_research', False)
     visual_critic = data.get('visual_critic', False)
     template_id = data.get('template_id')
+    notes = (data.get('notes') or '').strip() or None
     user_id = get_request_user_id()
 
     if not topic:
@@ -1976,6 +1977,7 @@ def ppt_svg_generate():
             deep_research=deep_research,
             visual_critic=visual_critic,
             template_id=template_id,
+            notes=notes,
         ))
 
         try:
