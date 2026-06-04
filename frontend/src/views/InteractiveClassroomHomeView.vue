@@ -1,85 +1,133 @@
 <template>
   <div class="classroom-home">
-    <div class="panel">
-      <h1 class="title">交互式课堂</h1>
-      <p class="desc">先生成一节可播放、可答题、可反馈的真实课堂。</p>
+    <section class="top-panel">
+      <header class="hero-row">
+        <div class="hero-copy">
+          <div class="hero-icon">
+            <GraduationCap class="hero-icon-svg" />
+          </div>
+          <div>
+            <h1 class="title">交互式课堂</h1>
+            <p class="desc">生成一节可播放、可答题、可反馈的真实课堂。</p>
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="art-panel art-left"></div>
+          <div class="art-player">
+            <PlayCircle class="art-play" />
+          </div>
+          <div class="art-panel art-right"></div>
+          <span class="art-dot dot-one"></span>
+          <span class="art-dot dot-two"></span>
+        </div>
+      </header>
 
-      <div class="form-grid">
-        <input v-model.trim="topic" class="field" placeholder="输入主题，例如：Python 循环语句" />
-        <input v-model.trim="course" class="field" placeholder="课程名（可选）" />
-      </div>
+      <div class="create-card">
+        <div class="create-main">
+          <h2 class="section-title">创建新课堂</h2>
 
-      <div class="profile-grid">
-        <div class="profile-field">
-          <span>学习基础</span>
-          <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" />
-        </div>
-        <div class="profile-field">
-          <span>学习目标</span>
-          <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" />
-        </div>
-        <div class="profile-field">
-          <span>讲解偏好</span>
-          <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" />
-        </div>
-        <div class="profile-field">
-          <span>题目难度</span>
-          <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" />
-        </div>
-      </div>
+          <div class="form-grid">
+            <label class="line-field wide">
+              <span>输入主题</span>
+              <input v-model.trim="topic" class="field" placeholder="例如：Python 循环语句" />
+            </label>
+            <label class="line-field">
+              <span>课程标题</span>
+              <input v-model.trim="course" class="field" placeholder="Python 程序设计" />
+            </label>
+          </div>
 
-      <button class="primary-btn" :disabled="loading" @click="goPptStudio">
-        去 PPT 工作台生成课件
-      </button>
+          <div class="profile-grid">
+            <div class="profile-card">
+              <div class="profile-icon forest">
+                <BookOpen class="profile-icon-svg" />
+              </div>
+              <div class="profile-body">
+                <span class="profile-label">学习基础</span>
+                <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" class="profile-select" />
+              </div>
+            </div>
+            <div class="profile-card">
+              <div class="profile-icon forest">
+                <Target class="profile-icon-svg" />
+              </div>
+              <div class="profile-body">
+                <span class="profile-label">学习目标</span>
+                <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" class="profile-select" />
+              </div>
+            </div>
+            <div class="profile-card">
+              <div class="profile-icon purple">
+                <MessageSquare class="profile-icon-svg" />
+              </div>
+              <div class="profile-body">
+                <span class="profile-label">讲解偏好</span>
+                <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" class="profile-select" />
+              </div>
+            </div>
+            <div class="profile-card">
+              <div class="profile-icon amber">
+                <BarChart3 class="profile-icon-svg" />
+              </div>
+              <div class="profile-body">
+                <span class="profile-label">题目难度</span>
+                <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" class="profile-select" />
+              </div>
+            </div>
+          </div>
 
-      <div v-if="pptCoursewareOptions.length" class="reuse-panel">
-        <div class="reuse-copy">
-          <div class="reuse-title">已有课件转课堂</div>
-          <div class="reuse-desc">如果文件库里已有 PPT Studio 课件，可以直接选择并生成课堂。</div>
-        </div>
-        <div class="reuse-actions">
-          <n-select
-            v-model:value="selectedPptJobId"
-            :options="pptSelectOptions"
-            size="small"
-            class="reuse-select"
-          />
-          <button class="secondary-btn" :disabled="loading || !selectedPptJobId" @click="onGenerate">
-            <span v-if="loading" class="btn-spinner dark" aria-hidden="true"></span>
-            {{ loading ? '生成中' : '生成课堂' }}
+          <button class="primary-btn" :disabled="loading" @click="goPptStudio">
+            <Sparkles class="btn-icon" />
+            <span>去 PPT 工作台生成课件</span>
+            <ArrowRight class="btn-icon" />
           </button>
         </div>
+
+        <aside class="reuse-panel">
+          <div class="reuse-copy">
+            <div class="reuse-title">已有课件转课堂</div>
+            <div class="reuse-desc">如果文件库里已有 PPT Studio 课件，可以直接选择并生成课堂。</div>
+          </div>
+          <div class="reuse-actions">
+            <n-select
+              v-model:value="selectedPptJobId"
+              :options="pptSelectOptions"
+              size="small"
+              class="reuse-select"
+            />
+            <button class="secondary-btn" :disabled="loading || !selectedPptJobId" @click="onGenerate">
+              <span v-if="loading" class="btn-spinner dark" aria-hidden="true"></span>
+              <span v-else class="folder-chip"><FolderOpen class="btn-icon" /></span>
+              {{ loading ? '生成中' : '生成课堂' }}
+            </button>
+          </div>
+        </aside>
       </div>
 
       <div v-if="loading" class="generation-progress" role="status" aria-live="polite">
         <div class="progress-head">
           <div>
-            <div class="progress-title">{{ activeProgressStep.title }}</div>
-            <div class="progress-desc">{{ activeProgressStep.desc }}</div>
+            <div class="progress-title">课堂生成中</div>
+            <div class="progress-desc">正在生成课堂内容、语音和学习记录，完成后会自动进入播放器。</div>
           </div>
           <div class="progress-time">{{ elapsedSeconds }}s</div>
         </div>
         <div class="progress-track">
           <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
         </div>
-        <div class="step-list">
-          <div
-            v-for="(step, index) in progressSteps"
-            :key="step.title"
-            class="step-item"
-            :class="{ done: index < activeProgressIndex, active: index === activeProgressIndex }"
-          >
-            <span class="step-dot"></span>
-            <span>{{ step.title }}</span>
-          </div>
-        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="panel">
+    <section class="history-panel">
       <div class="list-head">
-        <h2>历史课堂</h2>
-        <button class="ghost-btn" :disabled="loadingList" @click="loadList">刷新</button>
+        <div class="list-title-wrap">
+          <Clock3 class="list-icon" />
+          <h2>历史课堂</h2>
+        </div>
+        <button class="ghost-btn" :disabled="loadingList" @click="loadList">
+          <RefreshCw class="mini-icon" :class="{ spinning: loadingList }" />
+          刷新
+        </button>
       </div>
 
       <div v-if="classrooms.length === 0" class="empty">暂无课堂记录</div>
@@ -89,19 +137,51 @@
           :key="item.id"
           class="list-item"
         >
+          <button class="thumb-btn" :title="`打开 ${item.title}`" @click="openClassroom(item.id)">
+            <span class="thumb-screen"></span>
+            <PlayCircle class="thumb-play" />
+            <span class="thumb-card small-one"></span>
+            <span class="thumb-card small-two"></span>
+          </button>
           <button class="item-main" @click="openClassroom(item.id)">
             <div class="item-title">{{ item.title }}</div>
             <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
+            <div class="detail-row">
+              <span>
+                <CalendarDays class="detail-icon" />
+                创建于 {{ formatCreatedAt(item.created_at) }}
+              </span>
+              <span>
+                <UserRound class="detail-icon" />
+                创建者：当前用户
+              </span>
+              <span>
+                <BookOpen class="detail-icon" />
+                学习时长：约 {{ estimatedMinutes(item.scene_count) }} 分钟
+              </span>
+            </div>
           </button>
           <div class="item-actions">
-            <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">学习报告</button>
-            <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">重新生成</button>
-            <button class="mini-btn" @click="renameClassroom(item)">重命名</button>
-            <button class="mini-btn danger" @click="deleteClassroom(item)">删除</button>
+            <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">
+              <BookOpen class="mini-icon" />
+              学习报告
+            </button>
+            <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">
+              <RotateCcw class="mini-icon" />
+              重新生成
+            </button>
+            <button class="mini-btn" @click="renameClassroom(item)">
+              <Pencil class="mini-icon" />
+              重命名
+            </button>
+            <button class="mini-btn danger" @click="deleteClassroom(item)">
+              <Trash2 class="mini-icon" />
+              删除
+            </button>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
   </div>
 </template>
@@ -112,6 +192,24 @@ import { useRouter } from 'vue-router'
 import { NSelect } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { useMessage } from 'naive-ui'
+import {
+  ArrowRight,
+  BarChart3,
+  BookOpen,
+  CalendarDays,
+  Clock3,
+  FolderOpen,
+  GraduationCap,
+  MessageSquare,
+  Pencil,
+  PlayCircle,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Target,
+  Trash2,
+  UserRound,
+} from 'lucide-vue-next'
 import {
   deleteInteractiveClassroom,
   generateInteractiveClassroom,
@@ -171,32 +269,15 @@ const files = ref<GeneratedFile[]>([])
 const elapsedSeconds = ref(0)
 const progressTimer = ref<number | null>(null)
 
-const progressSteps = [
-  { title: '解析输入', desc: '读取主题、课程和可复用 PPT 信息。' },
-  { title: '组织课堂场景', desc: '生成讲解页、测验页和课堂播放顺序。' },
-  { title: '生成讲解与测验', desc: '提取页面要点，生成讲解词和随堂题。' },
-  { title: '合成 TTS 音频', desc: '调用当前 TTS provider，为讲解和反馈准备音频。' },
-  { title: '保存课堂数据', desc: '写入课堂 JSON、音频路径和学习记录目录。' },
-]
-
-const activeProgressIndex = computed(() => {
-  if (!loading.value) return 0
-  if (elapsedSeconds.value < 2) return 0
-  if (elapsedSeconds.value < 5) return 1
-  if (elapsedSeconds.value < 10) return 2
-  if (elapsedSeconds.value < 20) return 3
-  return 4
-})
-
-const activeProgressStep = computed(() => progressSteps[activeProgressIndex.value])
 const pptCoursewareOptions = computed(() =>
   files.value.filter((file) => Boolean(getPptJobId(file))),
 )
 const progressPercent = computed(() => {
   if (!loading.value) return 0
-  const base = [12, 32, 54, 76, 88][activeProgressIndex.value] || 12
-  const drift = Math.min(8, Math.floor(elapsedSeconds.value / 6))
-  return Math.min(92, base + drift)
+  const elapsed = elapsedSeconds.value
+  if (elapsed < 3) return 18 + elapsed * 8
+  if (elapsed < 20) return 42 + Math.floor((elapsed - 3) * 1.8)
+  return Math.min(88, 72 + Math.floor((elapsed - 20) / 8))
 })
 
 function startProgressTimer() {
@@ -294,6 +375,24 @@ function openClassroom(classroomId: string) {
   router.push(`/interactive-classroom/${classroomId}`)
 }
 
+function formatCreatedAt(value: string) {
+  if (!value) return '未知时间'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+function estimatedMinutes(sceneCount: number) {
+  return Math.max(8, Math.round((sceneCount || 0) * 0.7))
+}
+
 async function regenerateClassroom(item: InteractiveClassroomListItem) {
   loading.value = true
   startProgressTimer()
@@ -383,86 +482,391 @@ onBeforeUnmount(() => {
 .classroom-home {
   height: 100%;
   overflow: auto;
-  padding: 20px;
+  padding: 24px 32px;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
+  gap: 20px;
+  background: var(--bg-base);
 }
 
-.panel {
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 12px;
-  background: rgb(var(--bg-surface-rgb));
-  padding: 16px;
+.top-panel,
+.history-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.top-panel {
+  padding: 28px 30px;
+}
+
+.hero-row {
+  min-height: 118px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.hero-copy {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.hero-icon {
+  width: 74px;
+  height: 74px;
+  border-radius: 17px;
+  display: grid;
+  place-items: center;
+  background: var(--forest-pale);
+  color: var(--forest);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), var(--shadow-sm);
+}
+
+.hero-icon-svg {
+  width: 38px;
+  height: 38px;
+  stroke-width: 1.7;
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-family: var(--font-display);
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink-primary);
 }
 
 .desc {
-  margin: 8px 0 0;
-  color: rgb(var(--ink-3-rgb));
-  font-size: 13px;
+  margin: 10px 0 0;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.hero-art {
+  position: relative;
+  width: min(310px, 30vw);
+  height: 112px;
+  margin-right: 10px;
+  opacity: 0.92;
+}
+
+.art-player,
+.art-panel,
+.art-dot {
+  position: absolute;
+  border: 1px solid rgba(28, 25, 23, 0.05);
+  background: var(--bg-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+.art-player {
+  left: 112px;
+  top: 8px;
+  width: 82px;
+  height: 76px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--forest);
+  background: var(--forest-pale);
+}
+
+.art-play {
+  width: 40px;
+  height: 40px;
+  fill: rgba(45, 80, 22, 0.08);
+}
+
+.art-panel {
+  border-radius: 12px;
+  opacity: 0.68;
+}
+
+.art-left {
+  left: 34px;
+  top: 18px;
+  width: 86px;
+  height: 62px;
+}
+
+.art-left::before,
+.art-left::after,
+.art-right::before,
+.art-right::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(107, 124, 94, 0.18);
+}
+
+.art-left::before {
+  top: 22px;
+  width: 30px;
+}
+
+.art-left::after {
+  top: 38px;
+  width: 48px;
+}
+
+.art-right {
+  right: 18px;
+  top: 35px;
+  width: 78px;
+  height: 66px;
+}
+
+.art-right::before {
+  top: 20px;
+  width: 34px;
+}
+
+.art-right::after {
+  top: 36px;
+  width: 46px;
+}
+
+.art-dot {
+  border-radius: 999px;
+  background: rgba(201, 150, 60, 0.18);
+}
+
+.dot-one {
+  right: 0;
+  top: 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.dot-two {
+  left: 104px;
+  bottom: 10px;
+  width: 18px;
+  height: 18px;
+}
+
+.create-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 28px 28px 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 32px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.create-main {
+  min-width: 0;
+}
+
+.section-title {
+  margin: 0 0 24px;
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0;
+  color: var(--ink-primary);
 }
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-  margin-top: 14px;
+  grid-template-columns: minmax(280px, 1.45fr) minmax(220px, 0.95fr);
+  column-gap: 28px;
+  row-gap: 16px;
+  align-items: center;
 }
 
-.field {
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-base-rgb));
-  padding: 0 12px;
-  font-size: 14px;
-}
-
-.field.compact {
-  height: 36px;
-  font-size: 13px;
-}
-
-.profile-grid {
-  margin-top: 12px;
+.line-field {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
   gap: 10px;
-}
-
-.profile-field {
-  display: grid;
-  gap: 6px;
   min-width: 0;
 }
 
-.profile-field span {
-  color: rgb(var(--ink-3-rgb));
+.line-field span {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.field {
+  width: 100%;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-surface);
+  color: var(--ink-primary);
+  padding: 0 16px;
+  font-size: 14px;
+  outline: none;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.field::placeholder {
+  color: var(--ink-tertiary);
+}
+
+.field:focus {
+  border-color: rgba(45, 80, 22, 0.45);
+  box-shadow: 0 0 0 3px rgba(45, 80, 22, 0.08);
+}
+
+.profile-grid {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-card {
+  height: 70px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+}
+
+.profile-icon.forest {
+  background: rgba(232, 240, 226, 0.78);
+  color: var(--forest);
+}
+
+.profile-icon.purple {
+  background: rgba(240, 232, 245, 0.7);
+  color: var(--nav-ppt);
+}
+
+.profile-icon.amber {
+  background: rgba(251, 244, 230, 0.82);
+  color: var(--amber);
+}
+
+.profile-icon-svg {
+  width: 21px;
+  height: 21px;
+}
+
+.profile-body {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 18px 24px;
+  align-items: center;
+  row-gap: 1px;
+}
+
+.profile-label {
+  display: block;
+  margin-bottom: 0;
+  color: var(--ink-tertiary);
   font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.profile-select :deep(.n-base-selection) {
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.profile-select :deep(.n-base-selection-label) {
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+}
+
+.profile-select :deep(.n-base-selection-input),
+.profile-select :deep(.n-base-selection-placeholder) {
+  height: 24px;
+  line-height: 24px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-primary);
+  padding: 0;
+}
+
+.profile-select :deep(.n-base-selection__border),
+.profile-select :deep(.n-base-selection__state-border) {
+  display: none;
+}
+
+.profile-select :deep(.n-base-suffix) {
+  right: -26px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--ink-tertiary);
 }
 
 .primary-btn {
-  margin-top: 12px;
-  height: 40px;
+  margin-top: 30px;
+  min-width: 278px;
+  height: 56px;
   border: 0;
-  border-radius: 8px;
-  padding: 0 14px;
-  background: rgb(var(--ink-1-rgb));
-  color: rgb(var(--bg-surface-rgb));
+  border-radius: var(--radius-sm);
+  padding: 0 22px;
+  background: var(--forest);
+  color: #fff;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 10px 18px -12px rgba(45, 80, 22, 0.62);
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.primary-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--forest-light);
+  box-shadow: 0 12px 24px -14px rgba(45, 80, 22, 0.68);
 }
 
 .primary-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-icon,
+.mini-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
 }
 
 .btn-spinner {
@@ -476,26 +880,31 @@ onBeforeUnmount(() => {
 
 .btn-spinner.dark {
   border-color: rgba(15, 23, 42, 0.18);
-  border-top-color: rgb(var(--ink-1-rgb));
+  border-top-color: var(--forest);
 }
 
 .secondary-btn {
-  height: 40px;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 8px;
-  padding: 0 14px;
-  background: rgb(var(--bg-surface-rgb));
-  color: rgb(var(--ink-1-rgb));
+  width: 100%;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--sage);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   white-space: nowrap;
+  font-weight: 700;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
 
 .secondary-btn:hover:not(:disabled) {
-  border-color: rgb(15 118 110 / 0.35);
-  color: #0f766e;
+  border-color: rgba(45, 80, 22, 0.28);
+  color: var(--forest);
+  background: rgba(232, 240, 226, 0.34);
 }
 
 .secondary-btn:disabled {
@@ -504,46 +913,74 @@ onBeforeUnmount(() => {
 }
 
 .reuse-panel {
-  margin-top: 14px;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 10px;
-  background: rgb(var(--bg-base-rgb));
-  padding: 12px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
-  gap: 14px;
-  align-items: center;
+  min-height: 210px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--bg-subtle);
+  box-shadow: none;
 }
 
 .reuse-title {
-  color: rgb(var(--ink-1-rgb));
-  font-size: 13px;
+  color: var(--ink-primary);
+  font-size: 20px;
   font-weight: 700;
 }
 
 .reuse-desc {
-  margin-top: 4px;
-  color: rgb(var(--ink-3-rgb));
-  font-size: 12px;
+  margin-top: 12px;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 1.75;
 }
 
 .reuse-actions {
+  margin-top: 24px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .reuse-select {
-  min-width: 0;
-  flex: 1;
+  width: 100%;
+}
+
+.reuse-select :deep(.n-base-selection) {
+  min-height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.reuse-select :deep(.n-base-selection-label) {
+  height: 48px;
+  padding: 0 14px;
+}
+
+.reuse-select :deep(.n-base-selection-input),
+.reuse-select :deep(.n-base-selection-placeholder) {
+  height: 48px;
+  line-height: 48px;
+  font-size: 14px;
+  color: var(--ink-secondary);
+}
+
+.folder-chip {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
 }
 
 .generation-progress {
-  margin-top: 14px;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 10px;
-  background: rgb(var(--bg-base-rgb));
-  padding: 12px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 16px;
 }
 
 .progress-head {
@@ -556,20 +993,20 @@ onBeforeUnmount(() => {
 .progress-title {
   font-size: 14px;
   font-weight: 700;
-  color: rgb(var(--ink-1-rgb));
+  color: var(--ink-primary);
 }
 
 .progress-desc {
   margin-top: 4px;
   font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
+  color: var(--ink-tertiary);
 }
 
 .progress-time {
   min-width: 42px;
   text-align: right;
   font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -577,101 +1014,144 @@ onBeforeUnmount(() => {
   margin-top: 12px;
   height: 6px;
   border-radius: 999px;
-  background: rgb(var(--line-rgb));
+  background: var(--line);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: #10b981;
+  background: var(--forest);
   transition: width 0.3s ease;
 }
 
-.step-list {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.step-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.step-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  border: 1px solid rgb(var(--line-rgb));
-  background: rgb(var(--bg-surface-rgb));
-}
-
-.step-item.done,
-.step-item.active {
-  color: rgb(var(--ink-1-rgb));
-}
-
-.step-item.done .step-dot {
-  border-color: #10b981;
-  background: #10b981;
-}
-
-.step-item.active .step-dot {
-  border-color: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+.history-panel {
+  padding: 26px 30px 30px;
 }
 
 .list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.list-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.list-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--forest);
 }
 
 .list-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-family: var(--font-body);
+  font-size: 20px;
+  letter-spacing: 0;
+  color: var(--ink-primary);
 }
 
 .ghost-btn {
-  height: 32px;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 8px;
-  background: transparent;
-  padding: 0 10px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  padding: 0 14px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .empty {
-  margin-top: 10px;
-  color: rgb(var(--ink-3-rgb));
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  padding: 34px 16px;
+  color: var(--ink-tertiary);
   font-size: 13px;
+  text-align: center;
 }
 
 .list {
-  margin-top: 10px;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 13px;
 }
 
 .list-item {
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 8px;
-  background: rgb(var(--bg-base-rgb));
-  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 22px 22px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 26px;
+  box-shadow: var(--shadow-sm);
+}
+
+.thumb-btn {
+  position: relative;
+  width: 198px;
+  height: 92px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--bg-subtle), var(--amber-pale));
+  color: var(--forest);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.thumb-screen,
+.thumb-card {
+  position: absolute;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.thumb-screen {
+  left: 46px;
+  top: 18px;
+  width: 46px;
+  height: 34px;
+}
+
+.thumb-card.small-one {
+  left: 24px;
+  bottom: 14px;
+  width: 34px;
+  height: 28px;
+  background: rgba(107, 124, 94, 0.16);
+}
+
+.thumb-card.small-two {
+  right: 28px;
+  bottom: 18px;
+  width: 48px;
+  height: 34px;
+  background: rgba(201, 150, 60, 0.16);
+}
+
+.thumb-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  color: var(--forest);
+  fill: rgba(255, 255, 255, 0.72);
+  filter: drop-shadow(0 6px 10px rgba(45, 80, 22, 0.18));
 }
 
 .item-main {
@@ -680,56 +1160,94 @@ onBeforeUnmount(() => {
   text-align: left;
   border: 0;
   background: transparent;
-  padding: 2px 4px;
+  padding: 0;
   cursor: pointer;
 }
 
 .item-main:hover .item-title {
-  color: #0f766e;
+  color: var(--forest);
 }
 
 .item-title {
-  font-size: 14px;
-  color: rgb(var(--ink-1-rgb));
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink-primary);
+  line-height: 1.35;
 }
 
 .item-meta {
-  margin-top: 4px;
+  margin-top: 7px;
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}
+
+.detail-row {
+  margin-top: 15px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  color: var(--ink-secondary);
   font-size: 12px;
-  color: rgb(var(--ink-3-rgb));
+}
+
+.detail-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.detail-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--ink-tertiary);
 }
 
 .item-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
 .mini-btn {
-  height: 30px;
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 7px;
-  background: rgb(var(--bg-surface-rgb));
-  color: rgb(var(--ink-2-rgb));
-  padding: 0 9px;
-  font-size: 12px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
 
 .mini-btn:hover:not(:disabled) {
-  border-color: rgb(15 118 110 / 0.35);
-  color: #0f766e;
+  border-color: rgba(45, 80, 22, 0.32);
+  color: var(--forest);
+  background: rgba(232, 240, 226, 0.32);
 }
 
 .mini-btn.danger:hover:not(:disabled) {
-  border-color: rgb(220 38 38 / 0.35);
-  color: #dc2626;
+  border-color: rgba(184, 74, 43, 0.35);
+  color: var(--terra);
+  background: rgba(245, 232, 226, 0.56);
 }
 
 .mini-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -738,19 +1256,34 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 720px) {
-  .profile-grid,
-  .step-list {
+@media (max-width: 1240px) {
+  .create-card {
     grid-template-columns: 1fr;
   }
 
   .reuse-panel {
-    grid-template-columns: 1fr;
+    min-height: 0;
   }
 
-  .reuse-actions {
+  .item-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 980px) {
+  .hero-art {
+    display: none;
+  }
+
+  .form-grid,
+  .profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .line-field {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   .list-item {
@@ -758,9 +1291,89 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
+  .thumb-btn {
+    width: 100%;
+    max-width: 260px;
+  }
+
   .item-actions {
-    justify-content: flex-start;
+    flex-direction: row;
     flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .classroom-home {
+    padding: 14px;
+  }
+
+  .top-panel,
+  .history-panel {
+    border-radius: 16px;
+    padding: 18px;
+  }
+
+  .hero-copy {
+    align-items: flex-start;
+  }
+
+  .hero-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+  }
+
+  .hero-icon-svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .title {
+    font-size: 26px;
+  }
+
+  .desc {
+    font-size: 13px;
+  }
+
+  .create-card {
+    padding: 18px;
+    border-radius: 14px;
+  }
+
+  .form-grid,
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .primary-btn {
+    width: 100%;
+    min-width: 0;
+    font-size: 14px;
+  }
+
+  .list-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ghost-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .list-item {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .item-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mini-btn {
+    justify-content: center;
   }
 }
 </style>
