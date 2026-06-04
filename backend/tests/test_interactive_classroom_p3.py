@@ -193,6 +193,43 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
         self.assertTrue(quiz_scene.content["questions"])
 
+    def test_preserves_html_tag_literals_in_llm_quiz_options(self) -> None:
+        class HtmlTagQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
+                return """
+                {
+                  "modules": [
+                    {
+                      "title": "HTML 标签",
+                      "questions": [
+                        {
+                          "num": "1",
+                          "type": "单选题",
+                          "text": "以下哪个标签通常用于定义段落？",
+                          "options": ["A. <p>", "B. <h1>", "C. <a>", "D. <img>"],
+                          "answer": "A",
+                          "analysis": "<p> 用于定义段落，<h1> 用于标题。",
+                          "knowledge_point": "HTML 标签"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=HtmlTagQuizGenerator(),
+        )
+
+        quiz_scene = generator._build_quiz_scene(1, 1, "HTML 基础", [_slide(1, "HTML 标签", ["段落标签"])])  # noqa: SLF001
+        question = quiz_scene.content["questions"][0]
+
+        self.assertEqual("<p>", question["options"][0]["label"])
+        self.assertEqual("<h1>", question["options"][1]["label"])
+        self.assertIn("<p>", question["analysis"])
+
     def test_report_aggregates_multiple_quiz_scene_answers_independently(self) -> None:
         scenes = [
             _slide(1, "导入", ["学习目标"]),
@@ -243,9 +280,15 @@ class InteractiveClassroomP3Test(unittest.TestCase):
 
         self.assertEqual(report["quiz_scene_count"], 2)
         self.assertEqual(report["answered_quiz_count"], 2)
+        self.assertEqual([quiz_scenes[0].id, quiz_scenes[1].id], report["answered_scene_ids"])
         self.assertGreater(report["total"], 0)
         self.assertLess(report["score"], 100)
         self.assertTrue(report["weak_points"])
+        self.assertEqual("review_weak_points", report["recommended_tasks"][0]["type"])
+        self.assertEqual(report["weak_points"][:3], report["recommended_tasks"][0]["knowledge_points"])
+        self.assertIn("scene_slide_003", report["recommended_tasks"][0]["target_scene_ids"])
+        self.assertEqual("practice_weak_points", report["recommended_tasks"][1]["type"])
+        self.assertEqual("high", report["recommended_tasks"][0]["priority"])
 
     def test_generate_stops_when_cancel_check_is_set_before_save(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

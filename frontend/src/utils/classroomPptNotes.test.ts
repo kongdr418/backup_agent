@@ -48,3 +48,25 @@ test('omits empty learner profile fields', () => {
   assert.doesNotMatch(notes, /讲解偏好/)
   assert.doesNotMatch(notes, /题目难度/)
 })
+
+test('includes next-lesson learning context when provided', () => {
+  const notes = buildClassroomPptNotes(
+    {
+      basis: '有基础',
+      goal: '项目实战',
+      style: '步骤推导',
+      difficulty: '中等',
+    },
+    '',
+    {
+      weakPoints: ['依赖注入', '自动配置'],
+      strongPoints: ['项目结构'],
+      nextRecommendation: '下一节重点补足依赖注入，并进入配置实战。',
+    },
+  )
+
+  assert.match(notes, /智慧课堂学习路径上下文/)
+  assert.match(notes, /薄弱点：依赖注入、自动配置/)
+  assert.match(notes, /已掌握：项目结构/)
+  assert.match(notes, /下一节重点补足依赖注入/)
+})
