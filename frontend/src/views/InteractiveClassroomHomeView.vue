@@ -33,7 +33,7 @@
             </label>
             <label class="line-field">
               <span>课程标题</span>
-              <input v-model.trim="course" class="field" placeholder="Python 程序设计" />
+              <input v-model.trim="course" class="field" placeholder="例如：Python 程序设计" />
             </label>
           </div>
 

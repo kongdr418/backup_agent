@@ -104,7 +104,11 @@ export function useInteractiveClassroomStream() {
       const stageFraction = 1 / st
       within = (sceneIndex.value / sceneTotal.value) * stageFraction * 100
     }
-    progressPercent.value = Math.max(0, Math.min(99, Math.round(base + within)))
+    // 单调递增保护：事件乱序/补发/公式受 stageTotal 变化影响时，
+    // 进度条只能前进不能倒退。用 Math.max 锁住历史最高值。
+    const next = Math.max(0, Math.min(99, Math.round(base + within)))
+    if (next < progressPercent.value) return
+    progressPercent.value = next
     if (status.value === 'done') progressPercent.value = 100
   }
 

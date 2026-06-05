@@ -655,7 +655,10 @@ function goNext() {
 
 function toggleAutoPlay() {
   autoPlayEnabled.value = !autoPlayEnabled.value
-  if (!autoPlayEnabled.value) {
+  if (autoPlayEnabled.value) {
+    // 开启自动播放时立即尝试播放当前音频（quiz 场景反馈也能播）
+    audioRef.value?.play().catch(() => {})
+  } else {
     audioRef.value?.pause()
   }
 }
@@ -759,12 +762,23 @@ function resetQuiz() {
 
 function applyFeedbackAction(action?: InteractiveClassroomAction) {
   if (!action || !classroom.value || !currentScene.value) return
-  const scene = classroom.value.scenes.find((item) => item.id === currentScene.value?.id)
-  if (!scene) return
-  scene.actions = [
-    ...(scene.actions || []).filter((item) => item.type !== 'quiz_feedback'),
-    action,
-  ]
+  const sceneId = currentScene.value.id
+  // 必须替换 classroom 对象而不是深层次 mutate（classroom 是 ref，
+  // 对嵌套属性赋值不触发响应式，会导致 currentAudioUrl 不会重算，
+  // audio 元素继续显示原 speech URL 而非新反馈音频）
+  classroom.value = {
+    ...classroom.value,
+    scenes: classroom.value.scenes.map((scene) => {
+      if (scene.id !== sceneId) return scene
+      return {
+        ...scene,
+        actions: [
+          ...(scene.actions || []).filter((item) => item.type !== 'quiz_feedback'),
+          action,
+        ],
+      }
+    }),
+  }
 }
 
 async function submitQuiz() {
@@ -881,20 +895,23 @@ watch(
   async () => {
     clearAdvanceTimer()
     if (!autoPlayEnabled.value) return
-    // 测验场景：无论是否已提交答案，均不自动跳转，由用户手动控制翻页
-    if (currentScene.value?.type === 'quiz') return
+
+    const isQuiz = currentScene.value?.type === 'quiz'
 
     if (!currentAudioUrl.value) {
+      // 无音频：只有非 quiz 场景才自动跳转
+      if (isQuiz) return
       if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
         window.setTimeout(() => {
           showReportAfterClassroomEnd().catch(() => undefined)
-        }, currentScene.value?.type === 'quiz' ? 1200 : 3500)
+        }, 3500)
         return
       }
-      scheduleAutoAdvance(currentScene.value?.type === 'quiz' ? 1800 : 5000)
+      scheduleAutoAdvance(5000)
       return
     }
 
+    // 有音频：尝试播放（包括 quiz 场景的反馈音频）
     await nextTick()
     try {
       await audioRef.value?.play()
