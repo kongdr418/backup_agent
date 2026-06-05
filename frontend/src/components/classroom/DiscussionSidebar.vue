@@ -350,7 +350,8 @@ defineExpose({ submitDraft })
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  padding: 0 16px 16px;
+  padding: 12px 16px;
+  align-items: center;
 }
 
 .quick-btn {
