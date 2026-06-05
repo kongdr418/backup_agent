@@ -99,10 +99,88 @@ def _scene_primary_text(scene: dict[str, Any]) -> str:
     return ""
 
 
+# --- 多页场景下的"按预算分页"上下文机制 ---
+# 旧版 `text[:6000]` 是按整字符串截断，对多页课堂会把"最新（最关键）"几页砍掉。
+# 这里改成"按总页数分配每页预算"，current page 永远走 build_focus_scene_context 保留全量。
+# 阈值策略：小课堂（≤6）保留全量；其它一律 level 0（只要当前页，不再发大纲/全量 context）
+PAGE_LEVEL_THRESHOLDS: tuple[int, int] = (6, 6)
+
+
+def _per_scene_budget(total_pages: int) -> int:
+    """根据总页数返回每个已播放 scene 的字符预算。
+
+    ≤ 6 页: 1000 字符/页（接近旧版，保留细节）
+    > 6 页: 该函数当前不再被 build_discussion_context 之外使用，保留作 fallback
+    """
+    if total_pages <= PAGE_LEVEL_THRESHOLDS[0]:
+        return 1000
+    return 400
+
+
+def _compact_scene_text(scene: dict[str, Any], max_chars: int = 350) -> str:
+    """单页紧凑版文本 — 按字段截断，控制总长度。
+
+    借鉴 generators/generator.py:581-603 的 _build_slide_summaries 模式：
+    标题/知识点/页面文本/题目/讲解分别按预算截断，避免 _scene_text_lines 全文输出。
+    """
+    lines: list[str] = []
+    title = (scene.get("title") or "").strip()
+    if title:
+        lines.append(f"场景标题：{title}")
+
+    knowledge_points = scene.get("knowledge_points") or []
+    if knowledge_points:
+        kp_text = "、".join(
+            str(point).strip() for point in knowledge_points[:6] if str(point).strip()
+        )
+        if kp_text:
+            lines.append("知识点：" + kp_text)
+
+    content = scene.get("content") or {}
+    extracted_text = _normalize_text(content.get("extracted_text"))
+    if extracted_text:
+        lines.append("页面文本：" + "；".join(extracted_text[:6]))
+
+    markdown = _normalize_text(content.get("markdown"))
+    if markdown:
+        lines.append("页面摘要：" + " ".join(markdown[:1])[:160])
+
+    questions = content.get("questions") or []
+    for idx, question in enumerate(questions, start=1):
+        question_title = (question.get("question") or "").strip()
+        if question_title:
+            lines.append(f"题目{idx}：{question_title[:80]}")
+        options = question.get("options") or []
+        option_labels = [
+            str(opt.get("label") or "").strip()
+            for opt in options
+            if str(opt.get("label") or "").strip()
+        ]
+        if option_labels:
+            lines.append(f"选项{idx}：" + " / ".join(option_labels[:4]))
+
+    actions = scene.get("actions") or []
+    for action in actions:
+        action_type = action.get("type")
+        if action_type not in {"speech", "quiz_feedback"}:
+            continue
+        text = (action.get("text") or "").strip()
+        if text:
+            lines.append(f"讲解：{text[:200]}")
+
+    text = "\n".join(line for line in lines if line.strip())
+    return text[:max_chars]
+
+
 def build_discussion_context(classroom: dict[str, Any], played_scene_ids: list[str]) -> str:
     scenes = classroom.get("scenes") or []
     played_set = {scene_id for scene_id in played_scene_ids if scene_id}
     selected = [scene for scene in scenes if scene.get("id") in played_set] if played_set else scenes
+
+    # 用总页数（非 played 数）算预算，保证体验一致：
+    # 学生已经看到 30/30 时不会因为之前跳着访问而"变长"或"变短"。
+    total_pages = len(scenes)
+    budget = _per_scene_budget(total_pages)
 
     lines = [
         f"课堂主题：{(classroom.get('topic') or '').strip()}",
@@ -110,10 +188,73 @@ def build_discussion_context(classroom: dict[str, Any], played_scene_ids: list[s
     ]
     for scene in selected:
         lines.append(f"--- 场景 {scene.get('order') or ''} / {scene.get('type') or 'unknown'} ---")
-        lines.extend(_scene_text_lines(scene))
+        block = _compact_scene_text(scene, max_chars=budget)
+        if block:
+            lines.append(block)
+    return "\n".join(line for line in lines if line.strip())
 
-    text = "\n".join(line for line in lines if line.strip())
-    return text[:6000]
+
+def build_compact_outline(
+    classroom: dict[str, Any],
+    current_scene_id: str = "",
+    window: int = 2,
+    summary_chars: int = 60,
+) -> str:
+    """紧凑版课堂大纲 — 多页时只列 current 附近 + 头尾，限制总长度。
+
+    - 总页数 ≤ 15：列出全部页，每页 `summary_chars` 字符讲稿摘要
+    - 总页数 > 15：仅列出 第 1 页 / 最后 1 页 / 当前页 ± window，并在表头说明
+    """
+    scenes = sorted(classroom.get("scenes") or [], key=lambda item: item.get("order") or 0)
+    total = len(scenes)
+    if total == 0:
+        return ""
+
+    current_order = 0
+    if current_scene_id:
+        for scene in scenes:
+            if scene.get("id") == current_scene_id:
+                current_order = scene.get("order") or 0
+                break
+
+    if total <= PAGE_LEVEL_THRESHOLDS[1]:
+        # 中小课堂：全部展示
+        header = f"整堂课共 {total} 页（紧凑大纲，每页摘要）："
+        visible = scenes
+    else:
+        # 多页：current ± window + 头尾
+        visible_orders: set[int] = {1, total, current_order}
+        for delta in range(1, window + 1):
+            visible_orders.add(max(1, current_order - delta))
+            visible_orders.add(min(total, current_order + delta))
+        visible_orders = {o for o in visible_orders if 1 <= o <= total}
+        header = (
+            f"整堂课共 {total} 页（仅显示第 1 页、最后 1 页、当前页 ± {window} 页，"
+            "中间页省略；如需查看中间页内容，请优先基于当前页回答）："
+        )
+        visible = [scene for scene in scenes if (scene.get("order") or 0) in visible_orders]
+
+    lines: list[str] = [header]
+    for scene in visible:
+        order = scene.get("order") or 0
+        scene_type = scene.get("type") or "unknown"
+        title = (scene.get("title") or "").strip() or "未命名页面"
+        summary = _scene_primary_text(scene)
+        if len(summary) > summary_chars:
+            summary = summary[:summary_chars] + "..."
+        line = f"第{order}页｜{scene_type}｜{title}"
+        if summary:
+            line += f"｜讲稿：{summary}"
+        lines.append(line)
+    return "\n".join(lines)[:1500]
+
+
+def _classify_context_level(trigger: str, total_pages: int) -> int:
+    """上下文等级 — 当前所有场景一律 level 0（只发当前页）。
+
+    保留函数签名供未来按 trigger/页数再分级时使用；现版本无副作用。
+    """
+    return 0
 
 
 def build_focus_scene_context(classroom: dict[str, Any], current_scene_id: str = "") -> str:
@@ -170,10 +311,16 @@ def build_discussion_messages(
     quick_action: str = "",
     current_scene_id: str = "",
 ) -> list[dict[str, str]]:
-    context = build_discussion_context(classroom, played_scene_ids)
+    scenes = classroom.get("scenes") or []
+    total_pages = len(scenes)  # noqa: F841 — 当前未使用，保留供未来扩展
+
+    # 全部场景一律 level 0：只发 current_position + focus_context
+    # 不发大纲、不发全量 played context，保证 LLM 输入极简，响应快
     focus_context = build_focus_scene_context(classroom, current_scene_id)
-    course_outline = build_course_outline_context(classroom)
     current_position = build_current_position_context(classroom, current_scene_id)
+    context = ""
+    outline = ""
+
     trigger_text = {
         "manual": "学生主动提问",
         "wrong_answer": "学生答错题后追问",
@@ -198,9 +345,8 @@ def build_discussion_messages(
         f"{f'{current_position}\\n' if current_position else ''}"
         f"{f'快捷动作：{quick_action}\\n' if quick_action else ''}"
         f"{f'请优先围绕当前页面内容回答：\\n{focus_context}\\n' if focus_context else ''}"
-        f"整堂课页码与讲稿摘要：\n{course_outline}\n"
-        f"以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：\n"
-        f"{context}\n"
+        f"{f'整堂课页码与讲稿摘要：\\n{outline}\\n' if outline else ''}"
+        f"{f'以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：\\n{context}\\n' if context else ''}"
         "回答约束：\n"
         "1. 如果学生提到“这页”“这一页”“当前这部分”，一律解释当前页，不要让学生再澄清。\n"
         "2. 先用 1 句概括当前页核心内容，再进行解释或举例。\n"
@@ -296,7 +442,8 @@ def generate_discussion_reply(
             content_llm_call(
                 messages=messages,
                 temperature=0.6,
-                max_tokens=600,
+                # 中文 2000 token ≈ 1500 字符，答错题解释 + 总结类回答有充裕空间不再被截断
+                max_tokens=2000,
                 model=llm_config.get("content_model", ""),
                 api_key=llm_config.get("content_api_key", ""),
                 base_url=llm_config.get("content_base_url", ""),

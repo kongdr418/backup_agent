@@ -116,7 +116,7 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         self.assertIn("while 循环执行前会先判断什么", text)
         self.assertNotIn("for 循环", text)
 
-    def test_build_discussion_messages_include_course_outline_and_current_page(self) -> None:
+    def test_build_discussion_messages_keep_current_page_only(self) -> None:
         from interactive_classroom.discussion_service import build_discussion_messages
 
         messages = build_discussion_messages(
@@ -128,12 +128,20 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         )
 
         prompt = messages[1]["content"]
+        # current_position + focus_context 必须在
         self.assertIn("当前位于第 2 / 3 页", prompt)
         self.assertIn("当前页面标题：随堂测验", prompt)
-        self.assertIn("整堂课页码与讲稿摘要", prompt)
-        self.assertIn("第1页｜slide｜while 循环", prompt)
-        self.assertIn("第2页｜quiz｜随堂测验", prompt)
-        self.assertIn("先理解 while 的判断顺序", prompt)
+        # 大纲不再发（任何场景都只发当前页）
+        self.assertNotIn("整堂课页码与讲稿摘要", prompt)
+        self.assertNotIn("第1页｜slide｜while 循环", prompt)
+        self.assertNotIn("第2页｜quiz｜随堂测验", prompt)
+        # 全量 played context 也不发
+        self.assertNotIn("以下是本堂课已经播放过的课堂文本上下文", prompt)
+        # current page 焦点内容仍在（scene_quiz_001 的题面 + 解析）
+        self.assertIn("while 循环执行前会先判断什么", prompt)
+        self.assertIn("while 会先判断循环条件", prompt)
+        # scene_slide_001 的内容不应出现（不是 current page）
+        self.assertNotIn("先理解 while 的判断顺序", prompt)
 
     def test_build_discussion_messages_include_page_grounding_constraints(self) -> None:
         from interactive_classroom.discussion_service import build_discussion_messages
@@ -148,8 +156,8 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
 
         system_prompt = messages[0]["content"]
         user_prompt = messages[1]["content"]
-        self.assertIn("默认就是在问当前页，不要先反问他哪里不会", system_prompt)
-        self.assertIn("第一句先点明当前页在讲什么", system_prompt)
+        self.assertIn("默认就是在问当前页，直接讲解，不要先反问", system_prompt)
+        self.assertIn("第一句点明当前页在讲什么", system_prompt)
         self.assertIn("一律解释当前页，不要让学生再澄清", user_prompt)
         self.assertIn("不要输出“你是想问概念还是顺序吗”这种脱离页面的泛化追问", user_prompt)
 
@@ -235,6 +243,198 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
 
         self.assertIn("浏览器", reply)
         self.assertNotIn("while", reply)
+
+    # --- 多页上下文分级优化测试 ---
+
+    def _large_classroom_payload(self, total: int = 30) -> dict:
+        """构造一个有 total 页的课堂，每页含足量文本以触发分级。"""
+        scenes = []
+        for i in range(1, total + 1):
+            speech = f"第{i}页讲稿：这是第{i}页的核心讲解内容，"
+            speech += "它涉及到多个关键概念" + ("。后续是大量展开内容。" * 6)
+            scenes.append({
+                "id": f"scene_slide_{i:03d}",
+                "type": "slide",
+                "title": f"第{i}页标题：核心概念 {i}",
+                "order": i,
+                "knowledge_points": [f"知识点{i}a", f"知识点{i}b", f"知识点{i}c"],
+                "content": {
+                    "extracted_text": [f"文本{i}-{j}" for j in range(1, 7)],
+                    "markdown": f"这是第{i}页的 markdown 摘要，内容很丰富。" * 4,
+                },
+                "actions": [
+                    {
+                        "id": f"speech_{i:03d}",
+                        "type": "speech",
+                        "agent_id": "teacher",
+                        "text": speech,
+                        "audio_url": "",
+                    }
+                ],
+            })
+        return {
+            "id": "classroom_large",
+            "user_id": "user_1",
+            "title": "大型课堂测试",
+            "topic": "大型课堂",
+            "course": "性能测试",
+            "status": "ready",
+            "created_at": "2026-06-05T10:00:00",
+            "updated_at": "2026-06-05T10:00:00",
+            "tts": {},
+            "student_profile": {},
+            "source": {},
+            "agents": [],
+            "knowledge_points": [],
+            "scenes": scenes,
+        }
+
+    def test_classify_context_level_for_various_triggers_and_page_counts(self) -> None:
+        from interactive_classroom.discussion_service import _classify_context_level
+
+        # 当前所有场景一律 level 0
+        self.assertEqual(_classify_context_level("manual", 1), 0)
+        self.assertEqual(_classify_context_level("manual", 6), 0)
+        self.assertEqual(_classify_context_level("manual", 100), 0)
+        self.assertEqual(_classify_context_level("wrong_answer", 30), 0)
+        self.assertEqual(_classify_context_level("key_scene", 50), 0)
+        self.assertEqual(_classify_context_level("long_dwell", 100), 0)
+
+    def test_per_scene_budget_scales_with_page_count(self) -> None:
+        from interactive_classroom.discussion_service import _per_scene_budget
+
+        # ≤ 6 页：1000 字符/页
+        self.assertEqual(_per_scene_budget(1), 1000)
+        self.assertEqual(_per_scene_budget(6), 1000)
+        # > 6 页：fallback budget（仅 build_discussion_context 在 level=2 之外不再调用，保留作 fallback）
+        self.assertEqual(_per_scene_budget(7), 400)
+        self.assertEqual(_per_scene_budget(50), 400)
+
+    def test_compact_outline_lists_all_pages_for_small_classroom(self) -> None:
+        from interactive_classroom.discussion_service import build_compact_outline
+
+        classroom = self._large_classroom_payload(total=5)
+        text = build_compact_outline(classroom, current_scene_id="scene_slide_003")
+        # 5 页 ≤ 6：所有页都出现
+        for i in range(1, 6):
+            self.assertIn(f"第{i}页", text)
+
+    def test_compact_outline_uses_window_for_large_classroom(self) -> None:
+        from interactive_classroom.discussion_service import build_compact_outline
+
+        classroom = self._large_classroom_payload(total=30)
+        text = build_compact_outline(classroom, current_scene_id="scene_slide_010", window=2)
+
+        # 必须出现：第 1、最后 1、当前 ± 2 = 第 8/9/10/11/12 页
+        for required_page in (1, 8, 9, 10, 11, 12, 30):
+            self.assertIn(f"第{required_page}页", text)
+
+        # 不能出现：远端页（如第 15、20、25）
+        for omitted_page in (15, 20, 25):
+            self.assertNotIn(f"第{omitted_page}页", text)
+
+        # 表头必须说明"中间页省略"
+        self.assertIn("中间页省略", text)
+
+    def test_discussion_messages_large_classroom_manual_keeps_size_under_budget(self) -> None:
+        from interactive_classroom.discussion_service import build_discussion_messages
+
+        classroom = self._large_classroom_payload(total=30)
+        messages = build_discussion_messages(
+            classroom=classroom,
+            played_scene_ids=[f"scene_slide_{i:03d}" for i in range(1, 31)],
+            conversation=[{"role": "user", "content": "你好"}],
+            trigger="manual",
+            current_scene_id="scene_slide_010",
+        )
+
+        user_prompt = messages[1]["content"]
+        # 30 页 + manual 走 level 0：没有大纲、没有全量 context
+        # prompt 必须明显比旧版（12000+ 字符）小
+        self.assertLess(len(user_prompt), 2500, f"prompt 仍过大：{len(user_prompt)} 字符")
+        # current page 焦点必须保留（这是命脉）
+        self.assertIn("第10页标题：核心概念 10", user_prompt)
+        # current page 的核心讲解（被 _compact_scene_text 保留在 focus_context 中）必须出现
+        self.assertIn("第10页讲稿", user_prompt)
+        # 远端页（如第 15 页）不应该以整页形式出现
+        self.assertNotIn("第15页讲稿", user_prompt)
+        self.assertNotIn("第20页讲稿", user_prompt)
+
+    def test_discussion_messages_wrong_answer_skips_outline_and_context(self) -> None:
+        from interactive_classroom.discussion_service import build_discussion_messages
+
+        classroom = self._large_classroom_payload(total=10)
+        messages = build_discussion_messages(
+            classroom=classroom,
+            played_scene_ids=[f"scene_slide_{i:03d}" for i in range(1, 11)],
+            conversation=[{"role": "user", "content": "那正确答案是什么？"}],
+            trigger="wrong_answer",
+            current_scene_id="scene_slide_005",
+        )
+
+        user_prompt = messages[1]["content"]
+        # wrong_answer 永远 level 0：无 outline、无全量 context
+        self.assertNotIn("整堂课页码与讲稿摘要", user_prompt)
+        self.assertNotIn("以下是本堂课已经播放过的课堂文本上下文", user_prompt)
+        # current page 仍然在
+        self.assertIn("第5页标题：核心概念 5", user_prompt)
+        # 触发方式提示在
+        self.assertIn("学生答错题后追问", user_prompt)
+
+    def test_discussion_messages_small_classroom_keeps_current_page_only(self) -> None:
+        from interactive_classroom.discussion_service import build_discussion_messages
+
+        # 3 页 → 仍 level 0：只发当前页
+        classroom = self._large_classroom_payload(total=3)
+        messages = build_discussion_messages(
+            classroom=classroom,
+            played_scene_ids=[f"scene_slide_{i:03d}" for i in range(1, 4)],
+            conversation=[{"role": "user", "content": "这页什么意思？"}],
+            trigger="manual",
+            current_scene_id="scene_slide_002",
+        )
+
+        user_prompt = messages[1]["content"]
+        # 小课堂也不发大纲/全量 context
+        self.assertNotIn("整堂课页码与讲稿摘要", user_prompt)
+        self.assertNotIn("以下是本堂课已经播放过的课堂文本上下文", user_prompt)
+        # current page 焦点保留
+        self.assertIn("第2页标题：核心概念 2", user_prompt)
+        # 远端页不应出现
+        self.assertNotIn("第1页标题：核心概念 1", user_prompt)
+        self.assertNotIn("第3页标题：核心概念 3", user_prompt)
+
+    def test_discussion_messages_medium_classroom_keeps_current_page_only(self) -> None:
+        from interactive_classroom.discussion_service import build_discussion_messages
+
+        # 10 页 → level 0：只要当前页，没有 outline、没有全量 context
+        classroom = self._large_classroom_payload(total=10)
+        messages = build_discussion_messages(
+            classroom=classroom,
+            played_scene_ids=[f"scene_slide_{i:03d}" for i in range(1, 11)],
+            conversation=[{"role": "user", "content": "帮我举几个例子"}],
+            trigger="manual",
+            current_scene_id="scene_slide_005",
+        )
+
+        user_prompt = messages[1]["content"]
+        # 不应出现大纲或全量 context（10 页 > 6 → 砍掉）
+        self.assertNotIn("整堂课页码与讲稿摘要", user_prompt)
+        self.assertNotIn("以下是本堂课已经播放过的课堂文本上下文", user_prompt)
+        # current page 焦点保留
+        self.assertIn("第5页标题：核心概念 5", user_prompt)
+        # 远端页不应出现
+        self.assertNotIn("第10页标题", user_prompt)
+
+    def test_compact_scene_text_respects_budget(self) -> None:
+        from interactive_classroom.discussion_service import _compact_scene_text
+
+        scene = self._large_classroom_payload(total=1)["scenes"][0]
+        block = _compact_scene_text(scene, max_chars=200)
+        # 必须被截到预算内
+        self.assertLessEqual(len(block), 200)
+        # 关键字段仍在
+        self.assertIn("第1页标题：核心概念 1", block)
 
 
 if __name__ == "__main__":
