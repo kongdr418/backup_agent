@@ -237,12 +237,20 @@ export async function submitInteractiveClassroomAnswer(
   classroomId: string,
   sceneId: string,
   answers: Record<string, string[]>,
+  ttsConfig?: {
+    tts_provider?: string
+    tts_model?: string
+    tts_voice?: string
+    tts_api_key?: string
+    tts_base_url?: string
+  },
 ) {
   const res = await client.post<QuizSubmitResult>(
     `/api/interactive-classroom/${encodeURIComponent(classroomId)}/answer`,
     {
       scene_id: sceneId,
       answers,
+      ...(ttsConfig ?? {}),
     },
   )
   return res.data

@@ -311,10 +311,12 @@ import {
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
+import { useSettingStore } from '@/stores/settingStore'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const settingStore = useSettingStore()
 
 const classroom = ref<InteractiveClassroomPayload | null>(null)
 const currentIndex = ref(0)
@@ -705,6 +707,13 @@ async function submitQuiz() {
       classroom.value.id,
       currentScene.value.id,
       currentAnswers.value,
+      {
+        tts_provider: settingStore.settings.tts_provider,
+        tts_model: settingStore.settings.tts_model,
+        tts_voice: settingStore.settings.tts_voice,
+        tts_api_key: settingStore.getEffectiveTTSApiKey(),
+        tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+      },
     )
     quizResultsByScene.value = {
       ...quizResultsByScene.value,
