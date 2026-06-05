@@ -270,6 +270,14 @@
         </div>
       </footer>
     </main>
+
+    <DiscussionSidebar
+      :messages="discussionMessages"
+      :submitting="discussionSubmitting"
+      :auto-advance-paused="discussionActive"
+      @submit="handleDiscussionSubmit"
+      @quick-action="handleDiscussionQuickAction"
+    />
   </div>
 
   <div v-else class="loading">加载课堂中...</div>
@@ -282,7 +290,9 @@ import { useMessage } from 'naive-ui'
 import { CheckCircle, ChevronLeft, ChevronRight, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
+  discussInteractiveClassroom,
   type ClassroomRecommendedTask,
+  type ClassroomDiscussionMessage,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   submitInteractiveClassroomAnswer,
@@ -294,6 +304,12 @@ import {
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
+import {
+  loadPersistedDiscussionMessages,
+  savePersistedDiscussionMessages,
+} from '@/utils/classroomDiscussionState'
+import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
 
 const route = useRoute()
@@ -309,6 +325,8 @@ const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
 const reportAutoShown = ref(false)
 const autoPlayEnabled = ref(true)
+const discussionMessages = ref<ClassroomDiscussionMessage[]>([])
+const discussionSubmitting = ref(false)
 const isAudioPlaying = ref(false)
 const currentAudioTime = ref(0)
 const audioDuration = ref(0)
@@ -386,6 +404,10 @@ const reportScene = computed<InteractiveClassroomScene>(() => ({
 const orderedScenes = computed(() => [...baseScenes.value, reportScene.value])
 
 const currentScene = computed(() => orderedScenes.value[currentIndex.value] || null)
+const playedSceneIds = computed(() => {
+  const sceneCount = Math.min(currentIndex.value + 1, baseScenes.value.length)
+  return baseScenes.value.slice(0, sceneCount).map((scene) => scene.id)
+})
 
 const sceneSvg = computed(() => {
   const content = currentScene.value?.content || {}
@@ -462,6 +484,8 @@ const canOpenReportScene = computed(() => {
   return answeredQuizCount.value === quizSceneIds.value.length
 })
 
+const discussionActive = computed(() => discussionSubmitting.value || discussionMessages.value.length > 0)
+
 const lastContentSceneIndex = computed(() => Math.max(0, baseScenes.value.length - 1))
 
 const sceneKindLabel = computed(() => {
@@ -471,6 +495,7 @@ const sceneKindLabel = computed(() => {
 })
 
 const playbackStatusText = computed(() => {
+  if (discussionActive.value) return '讨论中，等待手动翻页'
   if (!autoPlayEnabled.value) return '手动播放'
   if (currentScene.value?.type === 'quiz') return currentQuizResult.value ? '反馈后自动继续' : '测验暂停'
   if (currentIndex.value >= orderedScenes.value.length - 1) return '最后一页'
@@ -541,6 +566,7 @@ function clearAdvanceTimer() {
 }
 
 function shouldAutoAdvance() {
+  if (discussionActive.value) return false
   if (currentScene.value?.type === 'report') return false
   // 测验场景：答题结束后不再自动跳转，让用户自行查看解析后手动翻页
   if (currentScene.value?.type === 'quiz') return false
@@ -549,6 +575,21 @@ function shouldAutoAdvance() {
     autoPlayEnabled.value
       && currentIndex.value < lastContentSceneIndex.value,
   )
+}
+
+function syncDiscussionPersistence() {
+  if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
+  savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
+}
+
+function restoreDiscussionForCurrentScene() {
+  if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') {
+    discussionMessages.value = []
+    discussionSubmitting.value = false
+    return
+  }
+  discussionMessages.value = loadPersistedDiscussionMessages(classroom.value.id, currentScene.value.id) || []
+  discussionSubmitting.value = false
 }
 
 function scheduleAutoAdvance(delay = 900) {
@@ -589,6 +630,7 @@ function toggleAutoPlay() {
 }
 
 function handleAudioEnded() {
+  if (discussionActive.value) return
   // 测验场景：音频播放完后不自动跳转，让用户自行查看解析
   if (currentScene.value?.type === 'quiz') return
   if (currentIndex.value === lastContentSceneIndex.value && isClassroomComplete.value && canOpenReportScene.value) {
@@ -596,6 +638,42 @@ function handleAudioEnded() {
     return
   }
   scheduleAutoAdvance()
+}
+
+async function requestDiscussion(trigger: string, payload: { content?: string; quickAction?: string }) {
+  if (!classroom.value) return
+  const nextMessages = [...discussionMessages.value]
+  if (payload.content) {
+    nextMessages.push({ role: 'user', content: payload.content })
+  } else if (payload.quickAction) {
+    nextMessages.push({ role: 'user', content: payload.quickAction })
+  }
+
+  discussionSubmitting.value = true
+  discussionMessages.value = nextMessages
+  try {
+    const result = await discussInteractiveClassroom(classroom.value.id, {
+      played_scene_ids: playedSceneIds.value,
+      current_scene_id: currentScene.value?.id,
+      messages: nextMessages,
+      trigger,
+      quick_action: payload.quickAction,
+    })
+    discussionMessages.value = [...nextMessages, result.assistant_message]
+  } catch (err) {
+    discussionMessages.value = [...discussionMessages.value]
+    message.error(err instanceof Error ? err.message : '讨论发起失败')
+  } finally {
+    discussionSubmitting.value = false
+  }
+}
+
+async function handleDiscussionSubmit(content: string) {
+  await requestDiscussion('manual', { content })
+}
+
+async function handleDiscussionQuickAction(action: string) {
+  await requestDiscussion('manual', { quickAction: action })
 }
 
 function resetQuiz() {
@@ -680,6 +758,9 @@ async function loadClassroom() {
   if (!classroomId) return
   try {
     classroom.value = await getInteractiveClassroom(classroomId)
+    const restored = buildPlayerAnswerState(classroom.value)
+    answersByScene.value = restored.answersByScene
+    quizResultsByScene.value = restored.quizResultsByScene
     await loadReport(true)
     if (route.query.scene === 'report') {
       await showReport()
@@ -698,6 +779,22 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearAdvanceTimer()
 })
+
+watch(
+  () => [classroom.value?.id, currentScene.value?.id],
+  () => {
+    restoreDiscussionForCurrentScene()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [classroom.value?.id, currentScene.value?.id, discussionMessages.value],
+  () => {
+    syncDiscussionPersistence()
+  },
+  { deep: true },
+)
 
 watch(
   () => [currentScene.value?.id, currentAudioUrl.value, autoPlayEnabled.value, currentQuizResult.value?.score],
@@ -805,7 +902,7 @@ function runTask(task: ClassroomRecommendedTask) {
 .player {
   height: 100%;
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 260px minmax(0, 1fr) 360px;
   min-height: 0;
   background: rgb(var(--bg-base-rgb));
 }
@@ -900,6 +997,7 @@ function runTask(task: ClassroomRecommendedTask) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .stage-header {
@@ -1684,10 +1782,16 @@ function runTask(task: ClassroomRecommendedTask) {
   padding: 24px;
 }
 
+@media (max-width: 1480px) {
+  .player {
+    grid-template-columns: 220px minmax(0, 1fr) 320px;
+  }
+}
+
 @media (max-width: 767px) {
   .player {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
   }
 
   .scene-list {

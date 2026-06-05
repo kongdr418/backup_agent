@@ -73,6 +73,12 @@ export interface InteractiveClassroomPayload {
   student_profile?: StudentProfile
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
+  answers_record?: {
+    scenes?: Record<string, {
+      answers?: Record<string, string[]>
+      evaluation?: Omit<QuizSubmitResult, 'success' | 'feedback_action'>
+    }>
+  }
 }
 
 export interface InteractiveClassroomGenerationStatus {
@@ -139,6 +145,18 @@ export interface ClassroomReport {
   strong_points: string[]
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
+}
+
+export interface ClassroomDiscussionMessage {
+  role: 'assistant' | 'user'
+  content: string
+  trigger?: string
+}
+
+export interface ClassroomDiscussionResponse {
+  success: boolean
+  assistant_message: ClassroomDiscussionMessage
+  auto_advance_paused: boolean
 }
 
 export async function generateInteractiveClassroom(body: InteractiveClassroomGenerateRequest) {
@@ -235,6 +253,23 @@ export async function getInteractiveClassroomReport(classroomId: string) {
     `/api/interactive-classroom/${encodeURIComponent(classroomId)}/report`,
   )
   return res.data.report
+}
+
+export async function discussInteractiveClassroom(
+  classroomId: string,
+  body: {
+    played_scene_ids: string[]
+    current_scene_id?: string
+    messages: ClassroomDiscussionMessage[]
+    trigger?: string
+    quick_action?: string
+  },
+) {
+  const res = await client.post<ClassroomDiscussionResponse>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/discuss`,
+    body,
+  )
+  return res.data
 }
 
 // ---------- SSE 流式生成进度 ----------
