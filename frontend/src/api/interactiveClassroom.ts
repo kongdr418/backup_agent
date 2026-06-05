@@ -271,6 +271,10 @@ export async function discussInteractiveClassroom(
     messages: ClassroomDiscussionMessage[]
     trigger?: string
     quick_action?: string
+    content_model?: string
+    content_api_key?: string
+    content_base_url?: string
+    content_provider_type?: string
   },
 ) {
   const res = await client.post<ClassroomDiscussionResponse>(

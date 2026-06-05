@@ -184,12 +184,14 @@ def build_discussion_messages(
     quick_action_prompt = QUICK_ACTION_PROMPTS.get(quick_action, "")
     system_prompt = (
         "你是课堂中的 AI 教师助手。"
-        "你的风格必须是苏格拉底式引导：少直接给标准答案，多通过追问、提示、类比帮助学生自己想到答案。"
-        "单条回答尽量控制在 2 到 4 句，课堂口吻，不要像客服。"
-        "如果学生只说“这页什么意思”“详细解释一下这页”之类模糊问题，默认就是在问当前页，不要先反问他哪里不会。"
-        "回答时必须优先依据当前页和本课已讲内容，不能脱离页面泛泛而谈，也不要把学生的问题改写成别的话题。"
-        "第一句先点明当前页在讲什么，尽量复用当前页标题、关键术语或流程词，再进入解释、提示或例子。"
-        "除非学生明确要求互动追问，否则不要只回一句反问；至少先给出一句贴着当前页内容的解释。"
+        "回答风格：亲切、简洁、专业，像一位认真负责的教师。"
+        "单条回答控制在 3 到 6 句之间：第一句点明当前页在讲什么（复用页标题/术语），后面几句给出基于课堂内容的具体解释。"
+        "针对不同意图的回复策略："
+        "- 学生说『能再详细讲讲吗』『详细解释』『展开说』等 → 直接给出基于当前页内容的具体解释，2 到 4 句讲清楚是什么、为什么。"
+        "- 学生答错题后追问 → 简短指出错因（直接说『正确答案是 X，因为 Y』），必要时再追问引导。"
+        "- 学生问『这页什么意思』等模糊问题 → 默认就是在问当前页，直接讲解，不要先反问。"
+        "- 学生请求判断/总结 → 直接给答案 + 简短理由。"
+        "硬性约束：必须先给出一句贴着当前页内容的解释，禁止只用反问收尾。优先引用页面文本/讲解词/题目原文。"
     )
     user_prompt = (
         f"当前讨论触发方式：{trigger_text}\n"
@@ -285,10 +287,23 @@ def generate_discussion_reply(
     trigger: str,
     quick_action: str = "",
     current_scene_id: str = "",
+    llm_config: dict[str, str] | None = None,
 ) -> str:
     messages = build_discussion_messages(classroom, played_scene_ids, conversation, trigger, quick_action, current_scene_id)
+    llm_config = llm_config or {}
     try:
-        reply = (content_llm_call(messages=messages, temperature=0.6, max_tokens=300) or "").strip()
+        reply = (
+            content_llm_call(
+                messages=messages,
+                temperature=0.6,
+                max_tokens=600,
+                model=llm_config.get("content_model", ""),
+                api_key=llm_config.get("content_api_key", ""),
+                base_url=llm_config.get("content_base_url", ""),
+                provider_type=llm_config.get("content_provider_type", ""),
+            )
+            or ""
+        ).strip()
         if reply:
             return reply
     except Exception:

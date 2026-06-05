@@ -3149,6 +3149,13 @@ def interactive_classroom_discuss(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
+    llm_config = {
+        'content_model': (data.get('content_model') or '').strip(),
+        'content_api_key': data.get('content_api_key') or '',
+        'content_base_url': (data.get('content_base_url') or '').strip(),
+        'content_provider_type': (data.get('content_provider_type') or '').strip(),
+    }
+
     reply = generate_discussion_reply(
         classroom=classroom,
         played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
@@ -3156,6 +3163,7 @@ def interactive_classroom_discuss(classroom_id):
         trigger=trigger,
         quick_action=quick_action,
         current_scene_id=current_scene_id,
+        llm_config=llm_config,
     )
     return jsonify({
         'success': True,

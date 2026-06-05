@@ -63,6 +63,14 @@
                 {{ resultByQuestion[q.id].correct ? '回答正确' : '还需要巩固' }}
               </div>
               <div class="analysis-copy">{{ resultByQuestion[q.id].analysis || '暂无解析' }}</div>
+              <button
+                type="button"
+                class="analysis-to-discussion"
+                @click="sendQuestionToDiscussion(q)"
+              >
+                <MessageSquare class="analysis-to-discussion-icon" />
+                传至讨论
+              </button>
             </div>
           </div>
 
@@ -272,6 +280,7 @@
     </main>
 
     <DiscussionSidebar
+      ref="discussionRef"
       :messages="discussionMessages"
       :submitting="discussionSubmitting"
       :auto-advance-paused="discussionActive"
@@ -287,7 +296,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { CheckCircle, ChevronLeft, ChevronRight, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
+import { CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
   discussInteractiveClassroom,
@@ -322,6 +331,7 @@ const classroom = ref<InteractiveClassroomPayload | null>(null)
 const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
+const discussionRef = ref<InstanceType<typeof DiscussionSidebar> | null>(null)
 const submitting = ref(false)
 const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
@@ -579,6 +589,24 @@ function shouldAutoAdvance() {
   )
 }
 
+function sendQuestionToDiscussion(q: InteractiveClassroomQuestion) {
+  if (!discussionRef.value) return
+  const result = quizResultsByScene.value[currentScene.value?.id ?? '']?.results.find(
+    (r) => r.question_id === q.id,
+  )
+  const analysis = result?.analysis || q.analysis || '（暂无解析）'
+  const yourAnswer = result?.your_answer?.join('、') || '（未作答）'
+  const correctAnswer = result?.correct_answer?.join('、') || q.answer?.join('、') || '（未知）'
+  const text = [
+    `题目：${q.question}`,
+    `我的答案：${yourAnswer}`,
+    `正确答案：${correctAnswer}`,
+    `解析：${analysis}`,
+    `能再详细讲讲吗？`,
+  ].join('\n')
+  discussionRef.value.submitDraft(text)
+}
+
 function syncDiscussionPersistence() {
   if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
   savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
@@ -660,6 +688,10 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
       messages: nextMessages,
       trigger,
       quick_action: payload.quickAction,
+      content_model: settingStore.settings.content_model,
+      content_api_key: settingStore.getEffectiveContentApiKey(),
+      content_base_url: settingStore.getEffectiveContentBaseUrl(),
+      content_provider_type: settingStore.getContentProviderType(),
     })
     discussionMessages.value = [...nextMessages, result.assistant_message]
   } catch (err) {
@@ -1241,6 +1273,33 @@ function runTask(task: ClassroomRecommendedTask) {
   font-size: 13px;
   line-height: 1.6;
   color: rgb(var(--ink-3-rgb));
+}
+
+.analysis-to-discussion {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.analysis-to-discussion:hover {
+  border-color: rgb(var(--nav-classroom-rgb, 15 118 110) / 0.4);
+  color: #0f766e;
+  background: var(--nav-classroom-bg, rgb(var(--bg-base-rgb)));
+}
+
+.analysis-to-discussion-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .quiz-actions {

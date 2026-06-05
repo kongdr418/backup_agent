@@ -21,7 +21,7 @@
         :class="message.role"
       >
         <div class="message-role">{{ message.role === 'assistant' ? 'AI 教师' : '我' }}</div>
-        <div class="message-content">{{ message.content }}</div>
+        <div class="message-content" v-html="renderMarkdown(message.content)" />
       </article>
 
       <article v-if="submitting" class="message-card assistant pending">
@@ -68,6 +68,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import type { ClassroomDiscussionMessage } from '@/api/interactiveClassroom'
 import { shouldSubmitDiscussionOnEnter } from '@/utils/discussionInput'
 
@@ -84,6 +86,14 @@ const emit = defineEmits<{
 
 const draft = ref('')
 const quickActions = ['换个例子', '再提示一点', '总结一下']
+
+marked.setOptions({ gfm: true, breaks: true })
+
+function renderMarkdown(content: string): string {
+  if (!content) return ''
+  const html = marked.parse(content, { async: false }) as string
+  return DOMPurify.sanitize(html)
+}
 
 function submit() {
   const content = draft.value.trim()
@@ -103,6 +113,14 @@ function onTextareaKeydown(event: KeyboardEvent) {
   event.preventDefault()
   submit()
 }
+
+function submitDraft(text: string) {
+  const content = text.trim()
+  if (!content || props.submitting) return
+  emit('submit', content)
+}
+
+defineExpose({ submitDraft })
 </script>
 
 <style scoped>
@@ -110,6 +128,8 @@ function onTextareaKeydown(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   border-left: 1px solid rgb(var(--line-rgb));
   background: rgb(var(--bg-surface-rgb));
 }
@@ -203,6 +223,74 @@ function onTextareaKeydown(event: KeyboardEvent) {
   word-break: break-word;
   color: rgb(var(--ink-1-rgb));
   font-size: 14px;
+}
+
+.message-content :deep(p) {
+  margin: 0 0 6px;
+}
+
+.message-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-content :deep(strong) {
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.message-content :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+
+.message-content :deep(pre) {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgb(var(--bg-subtle-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.message-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+.message-content :deep(ul),
+.message-content :deep(ol) {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.message-content :deep(li) {
+  margin: 2px 0;
+}
+
+.message-content :deep(h1),
+.message-content :deep(h2),
+.message-content :deep(h3) {
+  font-family: var(--font-display);
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.message-content :deep(blockquote) {
+  margin: 6px 0;
+  padding: 6px 12px;
+  border-left: 3px solid rgb(var(--line-strong-rgb));
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-base-rgb));
+  border-radius: 0 6px 6px 0;
 }
 
 .thinking-row {
