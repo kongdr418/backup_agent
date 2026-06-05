@@ -865,8 +865,11 @@ watch(
   { immediate: true },
 )
 
+// 直接 watch ref 本身（比 `() => [a, b, ref.value]` 数组源 + deep 更可靠）
+// — 流式期间 discussionMessages.value 每次 chunk 重新赋值，
+// 函数式数组源 + deep 在 Vue 3 中对内部 ref 重新赋值的追踪有概率丢失事件
 watch(
-  () => [classroom.value?.id, currentScene.value?.id, discussionMessages.value],
+  discussionMessages,
   () => {
     syncDiscussionPersistence()
   },

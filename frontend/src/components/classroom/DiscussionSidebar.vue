@@ -96,7 +96,10 @@ marked.setOptions({ gfm: true, breaks: true })
 
 function renderMarkdown(content: string): string {
   if (!content) return ''
-  const html = marked.parse(content, { async: false }) as string
+  // 把连续多个 \n 折叠成单个 \n，marked 的 breaks:true 会把单 \n 渲染成 <br>
+  // — 让 AI 教师整段回复只有一个 <p>，段内换行用 <br>
+  const normalized = content.replace(/\n{2,}/g, '\n')
+  const html = marked.parse(normalized, { async: false }) as string
   // marked 输出末尾会带 \n，配合 message-content 的 white-space: pre-wrap
   // 会渲染成一空行，导致 div 高度比 p 多一行。trim 掉两端空白即可。
   return DOMPurify.sanitize(html.trim())
@@ -230,10 +233,11 @@ defineExpose({ submitDraft })
   word-break: break-word;
   color: rgb(var(--ink-1-rgb));
   font-size: 14px;
+  line-height: 1.4;
 }
 
 .message-content :deep(p) {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
 }
 
 .message-content :deep(p:last-child) {
@@ -275,12 +279,12 @@ defineExpose({ submitDraft })
 
 .message-content :deep(ul),
 .message-content :deep(ol) {
-  margin: 6px 0;
+  margin: 2px 0;
   padding-left: 22px;
 }
 
 .message-content :deep(li) {
-  margin: 2px 0;
+  margin: 0;
 }
 
 .message-content :deep(h1),
