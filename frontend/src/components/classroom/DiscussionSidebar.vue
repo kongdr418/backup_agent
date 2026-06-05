@@ -92,7 +92,9 @@ marked.setOptions({ gfm: true, breaks: true })
 function renderMarkdown(content: string): string {
   if (!content) return ''
   const html = marked.parse(content, { async: false }) as string
-  return DOMPurify.sanitize(html)
+  // marked 输出末尾会带 \n，配合 message-content 的 white-space: pre-wrap
+  // 会渲染成一空行，导致 div 高度比 p 多一行。trim 掉两端空白即可。
+  return DOMPurify.sanitize(html.trim())
 }
 
 function submit() {
