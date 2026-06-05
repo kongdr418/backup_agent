@@ -24,7 +24,7 @@
         <div class="message-content" v-html="renderMarkdown(message.content)" />
       </article>
 
-      <article v-if="submitting" class="message-card assistant pending">
+      <article v-if="submitting && !hasStreamingAssistant" class="message-card assistant pending">
         <div class="message-role">AI 教师</div>
         <div class="thinking-row">
           <span class="thinking-label">正在思考</span>
@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { ClassroomDiscussionMessage } from '@/api/interactiveClassroom'
@@ -86,6 +86,11 @@ const emit = defineEmits<{
 
 const draft = ref('')
 const quickActions = ['换个例子', '再提示一点', '总结一下']
+
+// 当 messages 末尾是 assistant 时，隐藏"正在思考"指示器，避免双气泡
+const hasStreamingAssistant = computed(
+  () => props.messages[props.messages.length - 1]?.role === 'assistant',
+)
 
 marked.setOptions({ gfm: true, breaks: true })
 

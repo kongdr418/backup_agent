@@ -16,7 +16,7 @@ from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene
 from interactive_classroom.report_service import build_classroom_report
-from interactive_classroom.discussion_service import generate_discussion_reply
+from interactive_classroom.discussion_service import generate_discussion_reply, generate_discussion_reply_stream
 from interactive_classroom.tts_service import ClassroomTTSService
 import json
 import os
@@ -3174,6 +3174,69 @@ def interactive_classroom_discuss(classroom_id):
         },
         'auto_advance_paused': True,
     })
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/discuss/stream', methods=['POST'])
+def interactive_classroom_discuss_stream(classroom_id):
+    """流式讨论接口（SSE），事件格式参考 /api/chat/stream：
+    data: {"chunk": "..."}\\n\\n ... data: {"done": true}\\n\\n
+    """
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    data = request.json or {}
+    played_scene_ids = data.get('played_scene_ids') or []
+    messages = data.get('messages') or []
+    trigger = (data.get('trigger') or 'manual').strip() or 'manual'
+    quick_action = (data.get('quick_action') or '').strip()
+    current_scene_id = (data.get('current_scene_id') or '').strip()
+
+    if not isinstance(played_scene_ids, list):
+        return jsonify({'success': False, 'error': 'played_scene_ids 非法'}), 400
+    if not isinstance(messages, list) or not messages:
+        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
+
+    normalized_messages = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        role = (item.get('role') or '').strip()
+        content = (item.get('content') or '').strip()
+        if role in {'user', 'assistant'} and content:
+            normalized_messages.append({'role': role, 'content': content})
+    if not normalized_messages:
+        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    llm_config = {
+        'content_model': (data.get('content_model') or '').strip(),
+        'content_api_key': data.get('content_api_key') or '',
+        'content_base_url': (data.get('content_base_url') or '').strip(),
+        'content_provider_type': (data.get('content_provider_type') or '').strip(),
+    }
+
+    def generate():
+        try:
+            for chunk in generate_discussion_reply_stream(
+                classroom=classroom,
+                played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
+                conversation=normalized_messages,
+                trigger=trigger,
+                quick_action=quick_action,
+                current_scene_id=current_scene_id,
+                llm_config=llm_config,
+            ):
+                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'auto_advance_paused': True}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
 
 
 @app.route('/api/interactive-classroom/<classroom_id>/audio/<filename>', methods=['GET'])

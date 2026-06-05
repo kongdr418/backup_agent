@@ -300,6 +300,7 @@ import { CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCirc
 import { getUserId } from '@/composables/useUserId'
 import {
   discussInteractiveClassroom,
+  discussInteractiveClassroomStream,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
   getInteractiveClassroom,
@@ -679,24 +680,59 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     nextMessages.push({ role: 'user', content: payload.quickAction })
   }
 
-  discussionSubmitting.value = true
+  const baseRequest = {
+    played_scene_ids: playedSceneIds.value,
+    current_scene_id: currentScene.value?.id,
+    messages: nextMessages,
+    trigger,
+    quick_action: payload.quickAction,
+    content_model: settingStore.settings.content_model,
+    content_api_key: settingStore.getEffectiveContentApiKey(),
+    content_base_url: settingStore.getEffectiveContentBaseUrl(),
+    content_provider_type: settingStore.getContentProviderType(),
+  }
+
+  // 不 upfront 推空 assistant — 让"正在思考"指示器独占显示，
+  // 等第一个 chunk 到达时再推 assistant 消息（带内容推，避免出现空泡）
   discussionMessages.value = nextMessages
+  discussionSubmitting.value = true
+
+  function pushOrReplaceAssistant(content: string) {
+    const updated = [...discussionMessages.value]
+    const last = updated[updated.length - 1]
+    if (last && last.role === 'assistant') {
+      updated[updated.length - 1] = { role: 'assistant', content, trigger }
+    } else {
+      updated.push({ role: 'assistant', content, trigger })
+    }
+    discussionMessages.value = updated
+  }
+
+  let accumulated = ''
   try {
-    const result = await discussInteractiveClassroom(classroom.value.id, {
-      played_scene_ids: playedSceneIds.value,
-      current_scene_id: currentScene.value?.id,
-      messages: nextMessages,
-      trigger,
-      quick_action: payload.quickAction,
-      content_model: settingStore.settings.content_model,
-      content_api_key: settingStore.getEffectiveContentApiKey(),
-      content_base_url: settingStore.getEffectiveContentBaseUrl(),
-      content_provider_type: settingStore.getContentProviderType(),
-    })
-    discussionMessages.value = [...nextMessages, result.assistant_message]
+    for await (const ev of discussInteractiveClassroomStream(classroom.value.id, baseRequest)) {
+      if (ev.error) throw new Error(ev.error)
+      if (ev.done) break
+      if (ev.chunk) {
+        accumulated += ev.chunk
+        pushOrReplaceAssistant(accumulated)
+      }
+    }
+    // 流结束但内容仍为空 → fallback 到非流式接口
+    if (!accumulated) {
+      const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
+      pushOrReplaceAssistant(result.assistant_message.content)
+    }
   } catch (err) {
-    discussionMessages.value = [...discussionMessages.value]
-    message.error(err instanceof Error ? err.message : '讨论发起失败')
+    // 异常时尝试降级到非流式接口
+    try {
+      const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
+      pushOrReplaceAssistant(result.assistant_message.content)
+    } catch (fallbackErr) {
+      message.error(fallbackErr instanceof Error ? fallbackErr.message : '讨论发起失败')
+      // 失败时回滚到 user 消息的状态
+      discussionMessages.value = [...nextMessages]
+    }
   } finally {
     discussionSubmitting.value = false
   }

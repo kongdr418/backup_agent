@@ -5,6 +5,8 @@
 """
 import os
 import json
+from collections.abc import Iterator
+
 import requests as req
 
 _content_model: str = 'deepseek-chat'
@@ -124,3 +126,100 @@ def _anthropic_call(base_url: str, api_key: str, model: str, messages: list,
         if block.get('type') == 'text':
             text += block.get('text', '')
     return text
+
+
+def content_llm_call_stream(
+    messages: list,
+    model: str = '',
+    temperature: float = 0.7,
+    max_tokens: int = 4000,
+    api_key: str = '',
+    base_url: str = '',
+    provider_type: str = '',
+) -> Iterator[str]:
+    """流式 LLM 调用，逐 chunk yield 文本片段（兼容 OpenAI / Anthropic 协议）。"""
+    from openai import OpenAI
+
+    cfg_model, cfg_api_key, cfg_base_url = get_content_llm_config()
+    model = model or cfg_model
+    api_key = api_key or cfg_api_key
+    base_url = base_url or cfg_base_url
+    ptype = provider_type or get_content_provider_type()
+
+    if ptype == 'anthropic':
+        yield from _anthropic_call_stream(
+            base_url, api_key, model, messages, temperature, max_tokens
+        )
+        return
+
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=120)
+    has_system = any(m.get('role') == 'system' for m in messages)
+    if not has_system:
+        messages = [{"role": "system", "content": "你是一个专业的AI教师助手。"}] + messages
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=60,
+        stream=True,
+    )
+    for chunk in response:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            yield delta.content
+
+
+def _anthropic_call_stream(
+    base_url: str, api_key: str, model: str, messages: list,
+    temperature: float, max_tokens: int,
+) -> Iterator[str]:
+    """Anthropic 兼容 API 流式调用。"""
+    system_content = ''
+    chat_messages = []
+    for m in messages:
+        if m.get('role') == 'system':
+            system_content = m.get('content', '')
+        else:
+            chat_messages.append(m)
+
+    payload = {
+        'model': model,
+        'max_tokens': max_tokens,
+        'messages': chat_messages,
+        'temperature': temperature,
+        'stream': True,
+    }
+    if system_content:
+        payload['system'] = system_content
+
+    with req.post(
+        f"{base_url}/v1/messages",
+        headers={
+            'x-api-key': api_key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+        },
+        json=payload,
+        timeout=120,
+        stream=True,
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line or not line.startswith(b'data: '):
+                continue
+            data = line[6:].decode('utf-8')
+            if data == '[DONE]':
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if event.get('type') == 'content_block_delta':
+                delta = event.get('delta', {})
+                if delta.get('type') == 'text_delta':
+                    text = delta.get('text', '')
+                    if text:
+                        yield text

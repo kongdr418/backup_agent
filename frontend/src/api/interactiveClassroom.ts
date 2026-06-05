@@ -1,5 +1,6 @@
 import client from './client'
 import { sseFetch } from './sse'
+import type { SseEvent } from '@/types'
 
 export interface InteractiveClassroomGenerateRequest {
   topic: string
@@ -282,6 +283,25 @@ export async function discussInteractiveClassroom(
     body,
   )
   return res.data
+}
+
+export type DiscussRequest = Parameters<typeof discussInteractiveClassroom>[1]
+
+/**
+ * 流式讨论 — 与对话页 chatStream 走同样的 sseFetch 工具，
+ * 事件格式 data: {"chunk": "..."} ... data: {"done": true}。
+ */
+export async function* discussInteractiveClassroomStream(
+  classroomId: string,
+  body: DiscussRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<SseEvent, void, void> {
+  yield* sseFetch({
+    url: `/api/interactive-classroom/${encodeURIComponent(classroomId)}/discuss/stream`,
+    method: 'POST',
+    body,
+    signal,
+  })
 }
 
 // ---------- SSE 流式生成进度 ----------

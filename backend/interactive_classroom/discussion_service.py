@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
-from generators.shared_config import content_llm_call
+from generators.shared_config import content_llm_call, content_llm_call_stream
 
 
 QUICK_ACTION_PROMPTS = {
@@ -456,3 +457,38 @@ def generate_discussion_reply(
     except Exception:
         pass
     return _fallback_reply(classroom, conversation, quick_action, current_scene_id)
+
+
+def generate_discussion_reply_stream(
+    classroom: dict[str, Any],
+    played_scene_ids: list[str],
+    conversation: list[dict[str, str]],
+    trigger: str,
+    quick_action: str = "",
+    current_scene_id: str = "",
+    llm_config: dict[str, str] | None = None,
+) -> Iterator[str]:
+    """流式生成讨论回复，逐 chunk yield 文本片段。
+
+    异常时一次性 yield 整个 fallback 文本（替换之前 partial）。
+    """
+    messages = build_discussion_messages(classroom, played_scene_ids, conversation, trigger, quick_action, current_scene_id)
+    llm_config = llm_config or {}
+    try:
+        yielded_any = False
+        for chunk in content_llm_call_stream(
+            messages=messages,
+            temperature=0.6,
+            max_tokens=2000,
+            model=llm_config.get("content_model", ""),
+            api_key=llm_config.get("content_api_key", ""),
+            base_url=llm_config.get("content_base_url", ""),
+            provider_type=llm_config.get("content_provider_type", ""),
+        ):
+            if chunk:
+                yielded_any = True
+                yield chunk
+        if not yielded_any:
+            yield _fallback_reply(classroom, conversation, quick_action, current_scene_id)
+    except Exception:
+        yield _fallback_reply(classroom, conversation, quick_action, current_scene_id)
