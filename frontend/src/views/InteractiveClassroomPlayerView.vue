@@ -1,6 +1,10 @@
 <template>
   <div v-if="classroom && currentScene" class="player">
     <aside class="scene-list">
+      <button class="back-btn" type="button" title="返回智慧课堂" @click="goBackToList">
+        <ArrowLeft class="back-icon" />
+        <span>返回智慧课堂</span>
+      </button>
       <div class="scene-list-head">
         <div class="scene-list-title">课堂场景</div>
         <div class="scene-list-meta">{{ currentIndex + 1 }} / {{ orderedScenes.length }}</div>
@@ -351,7 +355,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
   discussInteractiveClassroom,
@@ -875,6 +879,10 @@ function goNext() {
   if (currentIndex.value < orderedScenes.value.length - 1) selectScene(currentIndex.value + 1)
 }
 
+function goBackToList() {
+  router.push({ name: 'interactive-classroom-home' })
+}
+
 function toggleAutoPlay() {
   autoPlayEnabled.value = !autoPlayEnabled.value
   if (autoPlayEnabled.value) {
@@ -1282,6 +1290,33 @@ function runTask(task: ClassroomRecommendedTask) {
   align-items: center;
   justify-content: space-between;
   padding: 4px 2px 12px;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 6px;
+  margin: -4px 0 6px;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.back-btn:hover {
+  color: rgb(var(--ink-1-rgb));
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.back-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .scene-list-title {
