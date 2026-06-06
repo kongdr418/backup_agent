@@ -94,12 +94,42 @@ const hasStreamingAssistant = computed(
 
 marked.setOptions({ gfm: true, breaks: true })
 
+/**
+ * 闭合 LLM 流式回复里常见的未配对 markdown 标记。
+ *
+ * 背景：讨论回复走 `content_llm_call_stream` 逐 chunk 推，LLM 经常在
+ * 写到一半（开新 `**bold**` 段、或者写 `inline code`）时被 token 上限
+ * / 取消信号截断，留下一串未闭合的 `**` 或 `` ` ``。`marked` 配
+ * `gfm:true` 对奇数个不闭合的标记不会自动补救，会把 `**` 当字面量
+ * 渲染出来（在回复末尾出现光秃秃的星号）。
+ *
+ * 策略：按出现次数判奇偶，缺一个补一个（补在末尾）。这对绝大多数
+ * 教学场景回复够用——LLM 一般不会在中间开 bold/code 写到一半。
+ *
+ * 只处理 prompt 里明确鼓励的 `**` 与 `` ` ``（见 discussion_service.py
+ * system_prompt），避免误伤文本里其它字符。
+ */
+function closeUnclosedMarkdown(text: string): string {
+  if (!text) return text
+  let result = text
+  const doubleStar = (result.match(/\*\*/g) || []).length
+  if (doubleStar % 2 === 1) {
+    result += '**'
+  }
+  const backtick = (result.match(/`/g) || []).length
+  if (backtick % 2 === 1) {
+    result += '`'
+  }
+  return result
+}
+
 function renderMarkdown(content: string): string {
   if (!content) return ''
   // 把连续多个 \n 折叠成单个 \n，marked 的 breaks:true 会把单 \n 渲染成 <br>
   // — 让 AI 教师整段回复只有一个 <p>，段内换行用 <br>
   const normalized = content.replace(/\n{2,}/g, '\n')
-  const html = marked.parse(normalized, { async: false }) as string
+  const closed = closeUnclosedMarkdown(normalized)
+  const html = marked.parse(closed, { async: false }) as string
   // marked 输出末尾会带 \n，配合 message-content 的 white-space: pre-wrap
   // 会渲染成一空行，导致 div 高度比 p 多一行。trim 掉两端空白即可。
   return DOMPurify.sanitize(html.trim())

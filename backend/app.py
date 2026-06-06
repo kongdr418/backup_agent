@@ -6,6 +6,7 @@ Flask 后端服务
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import requests
@@ -14,7 +15,7 @@ from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
-from interactive_classroom.quiz_service import evaluate_quiz_scene
+from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report
 from interactive_classroom.discussion_service import generate_discussion_reply, generate_discussion_reply_stream
 from interactive_classroom.tts_service import ClassroomTTSService
@@ -3056,7 +3057,30 @@ def interactive_classroom_answer(classroom_id):
     if scene is None or scene.get('type') != 'quiz':
         return jsonify({'success': False, 'error': 'quiz scene 不存在'}), 404
 
-    eval_result = evaluate_quiz_scene(scene, answers)
+    # 是否含简答题？有则必须用异步评估器走 LLM 评分
+    has_short_answer = any(
+        str(q.get('type', '')) == 'short_answer'
+        for q in scene.get('content', {}).get('questions', [])
+    )
+    llm_config = {
+        'content_model': (data.get('content_model') or '').strip(),
+        'content_api_key': data.get('content_api_key') or '',
+        'content_base_url': (data.get('content_base_url') or '').strip(),
+        'content_provider_type': (data.get('content_provider_type') or '').strip(),
+    } if has_short_answer else None
+
+    if has_short_answer:
+        try:
+            eval_result = asyncio.run(
+                evaluate_quiz_scene_async(scene, answers, llm_config=llm_config)
+            )
+        except Exception as exc:
+            request_logger.exception(f'[INTERACTIVE-CLASSROOM] /answer LLM 评分失败: {exc}')
+            # 评分失败时降级到同步评估器（只评单选/多选，简答题跳过）
+            eval_result = evaluate_quiz_scene(scene, answers)
+    else:
+        eval_result = evaluate_quiz_scene(scene, answers)
+
     CLASSROOM_STORAGE.save_answers(
         user_id=user_id,
         classroom_id=classroom_id,

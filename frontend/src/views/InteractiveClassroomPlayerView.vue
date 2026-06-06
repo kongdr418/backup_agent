@@ -39,10 +39,27 @@
           <div v-for="(q, qIndex) in questions" :key="q.id" class="question-card">
             <div class="question-head">
               <span class="question-index">Q{{ qIndex + 1 }}</span>
-              <div class="q-title">{{ q.question }}</div>
+              <div class="q-title">
+                {{ q.question }}
+                <span v-if="q.type === 'short_answer'" class="question-type-tag">简答题</span>
+              </div>
             </div>
 
-            <div class="option-list">
+            <div v-if="q.type === 'short_answer'" class="short-answer-area">
+              <textarea
+                class="short-answer-input"
+                :rows="5"
+                :placeholder="currentQuizResult ? '已提交' : '请输入你的回答（提交后由 AI 评分）'"
+                :value="(currentAnswers[q.id] && currentAnswers[q.id][0]) || ''"
+                :disabled="!!currentQuizResult || submitting"
+                @input="onShortAnswerInput(q.id, $event)"
+              />
+              <div v-if="!currentQuizResult" class="short-answer-hint">
+                AI 会按准确性 / 完整性 / 表达 三个维度打分（0-100），80 分及以上视为掌握
+              </div>
+            </div>
+
+            <div v-else class="option-list">
               <button
                 v-for="opt in q.options"
                 :key="opt.value"
@@ -59,10 +76,28 @@
             </div>
 
             <div v-if="resultByQuestion[q.id]" class="analysis-box">
-              <div class="analysis-title">
-                {{ resultByQuestion[q.id].correct ? '回答正确' : '还需要巩固' }}
-              </div>
-              <div class="analysis-copy">{{ resultByQuestion[q.id].analysis || '暂无解析' }}</div>
+              <template v-if="q.type === 'short_answer'">
+                <div class="analysis-title analysis-row">
+                  <span>
+                    {{ resultByQuestion[q.id].correct ? '已掌握（≥80 分）' : '需要补强' }}
+                  </span>
+                  <span v-if="typeof resultByQuestion[q.id].score === 'number'" class="short-answer-score">
+                    {{ resultByQuestion[q.id].score }} / 100
+                  </span>
+                </div>
+                <div v-if="resultByQuestion[q.id].feedback" class="analysis-copy">
+                  <strong>AI 评语：</strong>{{ resultByQuestion[q.id].feedback }}
+                </div>
+                <div v-if="resultByQuestion[q.id].analysis" class="analysis-copy analysis-muted">
+                  参考要点：{{ resultByQuestion[q.id].analysis }}
+                </div>
+              </template>
+              <template v-else>
+                <div class="analysis-title">
+                  {{ resultByQuestion[q.id].correct ? '回答正确' : '还需要巩固' }}
+                </div>
+                <div class="analysis-copy">{{ resultByQuestion[q.id].analysis || '暂无解析' }}</div>
+              </template>
               <button
                 type="button"
                 class="analysis-to-discussion"
@@ -460,7 +495,14 @@ const currentQuizResult = computed(() => {
 
 const allAnswered = computed(() => {
   if (!questions.value.length) return false
-  return questions.value.every((q) => (currentAnswers.value[q.id] || []).length > 0)
+  return questions.value.every((q) => {
+    const ans = currentAnswers.value[q.id] || []
+    if (q.type === 'short_answer') {
+      const text = ans[0] || ''
+      return text.trim().length > 0
+    }
+    return ans.length > 0
+  })
 })
 
 const feedbackText = computed(() => currentQuizResult.value?.feedback_action?.text || '')
@@ -536,6 +578,17 @@ function setAnswer(questionId: string, value: string) {
   const question = questions.value.find((item) => item.id === questionId)
   const prevAnswers = answersByScene.value[sceneId] || {}
   const prevValues = prevAnswers[questionId] || []
+  // 简答题：value 就是用户输入的整段文本，覆盖式赋值
+  if (question?.type === 'short_answer') {
+    answersByScene.value = {
+      ...answersByScene.value,
+      [sceneId]: {
+        ...prevAnswers,
+        [questionId]: [value],
+      },
+    }
+    return
+  }
   const nextValues = question?.type === 'multiple'
     ? (
         prevValues.includes(value)
@@ -550,6 +603,11 @@ function setAnswer(questionId: string, value: string) {
       [questionId]: nextValues,
     },
   }
+}
+
+function onShortAnswerInput(questionId: string, event: Event) {
+  const value = (event.target as HTMLTextAreaElement).value
+  setAnswer(questionId, value)
 }
 
 function optionClass(questionId: string, value: string) {
@@ -795,6 +853,11 @@ async function submitQuiz() {
         tts_voice: settingStore.settings.tts_voice,
         tts_api_key: settingStore.getEffectiveTTSApiKey(),
         tts_base_url: settingStore.getEffectiveTTSBaseUrl(),
+        // P1-3: 简答题需要 content LLM 评分；后端只在含 short_answer 时才读
+        content_model: settingStore.settings.content_model,
+        content_api_key: settingStore.getEffectiveContentApiKey(),
+        content_base_url: settingStore.getEffectiveContentBaseUrl(),
+        content_provider_type: settingStore.getContentProviderType(),
       },
     )
     quizResultsByScene.value = {
@@ -1248,6 +1311,60 @@ function runTask(task: ClassroomRecommendedTask) {
   line-height: 1.6;
 }
 
+.question-type-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nav-ppt, #4338ca);
+  background: rgba(67, 56, 202, 0.08);
+  vertical-align: middle;
+}
+
+.short-answer-area {
+  display: grid;
+  gap: 6px;
+}
+
+.short-answer-input {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-base-rgb));
+  color: rgb(var(--ink-1-rgb));
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.7;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+}
+
+.short-answer-input::placeholder {
+  color: rgb(var(--ink-3-rgb));
+}
+
+.short-answer-input:focus {
+  border-color: rgba(67, 56, 202, 0.45);
+  box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.08);
+}
+
+.short-answer-input:disabled {
+  background: rgb(var(--bg-subtle-rgb));
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
+.short-answer-hint {
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+  line-height: 1.5;
+}
+
 .option-list {
   display: grid;
   gap: 8px;
@@ -1322,6 +1439,31 @@ function runTask(task: ClassroomRecommendedTask) {
   font-weight: 600;
   color: rgb(var(--ink-1-rgb));
   margin-bottom: 5px;
+}
+
+.analysis-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.short-answer-score {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(15 118 110);
+  background: rgba(15, 118, 110, 0.08);
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-muted {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12.5px;
 }
 
 .analysis-copy,

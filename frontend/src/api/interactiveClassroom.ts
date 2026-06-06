@@ -46,13 +46,16 @@ export interface InteractiveClassroomAction {
 
 export interface InteractiveClassroomQuestion {
   id: string
-  type: 'single' | 'multiple' | string
+  type: 'single' | 'multiple' | 'short_answer' | string
   question: string
   options: Array<{ label: string; value: string }>
   answer?: string[]
   analysis?: string
   points?: number
   knowledge_point?: string
+  // P1-3: 简答题专属字段
+  reference_answer?: string
+  rubric?: string[]
 }
 
 export interface InteractiveClassroomScene {
@@ -106,6 +109,13 @@ export interface QuizSubmitResult {
     your_answer: string[]
     correct_answer: string[]
     analysis?: string
+    // P1-3: 简答题专属
+    score?: number         // 0-100，仅 short_answer 有
+    feedback?: string      // LLM 评语，仅 short_answer 有
+    earned_points?: number // 简答题按 (score/100)*points 折算
+    covered_points?: string[] // LLM 评出的"学生答到的要点"
+    knowledge_point?: string
+    points?: number
   }>
   feedback_action?: InteractiveClassroomAction
 }
@@ -238,12 +248,17 @@ export async function submitInteractiveClassroomAnswer(
   classroomId: string,
   sceneId: string,
   answers: Record<string, string[]>,
-  ttsConfig?: {
+  config?: {
     tts_provider?: string
     tts_model?: string
     tts_voice?: string
     tts_api_key?: string
     tts_base_url?: string
+    // P1-3: 简答题 LLM 评分所需
+    content_model?: string
+    content_api_key?: string
+    content_base_url?: string
+    content_provider_type?: string
   },
 ) {
   const res = await client.post<QuizSubmitResult>(
@@ -251,7 +266,7 @@ export async function submitInteractiveClassroomAnswer(
     {
       scene_id: sceneId,
       answers,
-      ...(ttsConfig ?? {}),
+      ...(config ?? {}),
     },
   )
   return res.data

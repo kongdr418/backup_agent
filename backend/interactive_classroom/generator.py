@@ -608,6 +608,7 @@ class InteractiveClassroomGenerator:
         slide_summaries: list[dict[str, Any]],
         question_count: int,
         student_profile: dict[str, str] | None = None,
+        require_short_answer: bool = False,
     ) -> str:
         context_lines = []
         for idx, slide in enumerate(slide_summaries, start=1):
@@ -623,6 +624,24 @@ class InteractiveClassroomGenerator:
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
         profile_section = f"\n## 学生画像\n{profile_hint}\n" if profile_hint else ""
 
+        # 默认规则：每 4 道题里"可以有" 1 道简答（不强制）
+        # 强化规则（require_short_answer=True）：本场必须包含 1 道简答，剩余用单选/多选凑齐
+        if require_short_answer:
+            short_answer_rule = (
+                f"7. **本场强制要求 1 道简答题**：本题共 {question_count} 道，必须包含恰好 1 道简答题，"
+                f"剩余 {question_count - 1} 道做单选题。简答题要能让学生写 2-4 句作答，"
+                f"必须给 `reference_answer`（2-4 句参考答案）和 `rubric`（3 个以内评分维度）。"
+                f"**不要给简答题写 options/answer 字段。**"
+                f"如果某知识点不好出 4 选项单选，可以把单选改成「为什么…」「如何判断…"
+                f"」「对比 X 与 Y」等开放性判断题，再跟 1 道标准简答搭配。"
+            )
+        else:
+            short_answer_rule = (
+                "7. **本场不要求简答题**：不要主动出简答题。如果觉得该知识点确实需要 1 道简答才能测出深度，"
+                "才出 1 道（且必须给 `reference_answer` 和 `rubric`）。"
+                "**不要每场都加简答**——仅当单选/多选无法覆盖某个深度理解时再加。"
+            )
+
         return f"""请基于下面的课堂页面内容，为《{topic}》生成 {question_count} 道随堂测验题，并以 JSON 返回。
 
 ## 课堂页面内容
@@ -632,10 +651,12 @@ class InteractiveClassroomGenerator:
 ## 出题要求
 1. 题目必须直接来自上面的页面标题、关键点或页面文本，不能泛泛问主题定义。
 2. 单选题为主，可少量多选题；每题 4 个选项，干扰项要像真实学生会混淆的错误理解。
+   **多选题识别强约束**：如果题干含「以下哪些」「下列哪些」「哪些选项」「哪些是」「多选」等表述，**必须**把 `type` 设为「多选题」并给 `answer` 多个字母（如 "A,C"）。否则前端 UI 会按单选渲染，题干和交互对不上。
 3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面或关键点。
 4. 每题必须给出 knowledge_point，优先使用对应页面标题或关键点。
-5. 不要生成填空题、问答题、代码输出题。
+5. 不要生成填空题、代码输出题。
 6. 如果有学生画像，题目难度、选项干扰方式和解析语言要匹配画像。
+{short_answer_rule}
 
 ## JSON 格式
 直接返回 JSON，不要 Markdown 代码块，不要解释文字。
@@ -653,6 +674,15 @@ class InteractiveClassroomGenerator:
           "answer": "A",
           "analysis": "解析",
           "knowledge_point": "知识点"
+        }},
+        {{
+          "num": "2",
+          "type": "简答题",
+          "text": "题干",
+          "reference_answer": "2-4 句参考答案",
+          "rubric": ["维度1", "维度2", "维度3"],
+          "analysis": "答题要点提示",
+          "knowledge_point": "知识点"
         }}
       ]
     }}
@@ -665,6 +695,7 @@ class InteractiveClassroomGenerator:
         scenes: list[ClassroomScene],
         question_count: int,
         student_profile: dict[str, str] | None = None,
+        require_short_answer: bool = False,
     ) -> str:
         quiz_generator = self._get_quiz_generator()
         slide_summaries = self._build_slide_summaries(scenes)
@@ -675,14 +706,18 @@ class InteractiveClassroomGenerator:
                     slide_summaries=slide_summaries,
                     question_count=question_count,
                     student_profile=_normalize_student_profile(student_profile),
+                    require_short_answer=require_short_answer,
                 )
             except TypeError:
+                # 外部 quiz_generator 不支持新参数，回退到不带参数版本
                 return quiz_generator.generate_context_quiz_json(
                     topic=topic,
                     slide_summaries=slide_summaries,
                     question_count=question_count,
                 )
-        prompt = self._build_context_quiz_prompt(topic, slide_summaries, question_count, student_profile)
+        prompt = self._build_context_quiz_prompt(
+            topic, slide_summaries, question_count, student_profile, require_short_answer
+        )
         return quiz_generator._call_llm(prompt)  # noqa: SLF001
 
     def _clean_llm_json(self, value: str) -> str:
@@ -729,24 +764,9 @@ class InteractiveClassroomGenerator:
                 if len(questions) >= max_questions:
                     break
                 text = _clean_quiz_text(str(row.get("text") or row.get("question") or ""))
-                raw_options = row.get("options", [])
-                answers = self._normalize_llm_answers(row.get("answer", []))
-                if not text or not isinstance(raw_options, list) or len(raw_options) < 4 or not answers:
+                if not text:
                     continue
 
-                options: list[dict[str, str]] = []
-                used_values: set[str] = set()
-                for idx, option in enumerate(raw_options[:4]):
-                    value, label = self._parse_option(option, ["A", "B", "C", "D"][idx])
-                    if value in used_values or value not in {"A", "B", "C", "D"} or not label:
-                        continue
-                    used_values.add(value)
-                    options.append({"label": label, "value": value})
-                if len(options) != 4 or any(answer not in used_values for answer in answers):
-                    continue
-
-                qtype = str(row.get("type", "单选题"))
-                normalized_type = "multiple" if len(answers) > 1 or "多" in qtype else "single"
                 # 修复：原先不过滤 LLM 直给的 knowledge_point，导致 "page 15 关键点：xxx"
                 # 这种带 slide/page 占位符 + 关键点/要点 前缀的脏数据直接落到题目里，
                 # 进而污染 report.weak_points 标签。先清洗 LLM 提供的值；若清洗后仍
@@ -765,6 +785,70 @@ class InteractiveClassroomGenerator:
                 if not knowledge_point:
                     knowledge_point = topic
 
+                qtype_raw = str(row.get("type", "单选题"))
+                is_short_answer = "简答" in qtype_raw or qtype_raw.strip().lower() in {"short_answer", "essay", "open"}
+
+                if is_short_answer:
+                    # 简答题：不要 options/answer；需要 reference_answer / rubric
+                    reference_answer = _clean_quiz_text(
+                        str(row.get("reference_answer") or row.get("answer") or "")
+                    )
+                    rubric_raw = row.get("rubric", [])
+                    if isinstance(rubric_raw, list):
+                        rubric = [str(r).strip() for r in rubric_raw if str(r).strip()][:5]
+                    else:
+                        rubric = []
+                    if not reference_answer:
+                        # 没有参考答案就跳过这道，不让脏数据进课堂
+                        continue
+                    questions.append(
+                        {
+                            "id": f"{qid_prefix}{len(questions) + 1}",
+                            "type": "short_answer",
+                            "question": text,
+                            "options": [],
+                            "answer": [reference_answer],
+                            "analysis": _clean_quiz_text(
+                                str(row.get("analysis") or f"参考要点：{reference_answer}")
+                            ),
+                            "points": 1,
+                            "knowledge_point": knowledge_point,
+                            "reference_answer": reference_answer,
+                            "rubric": rubric,
+                        }
+                    )
+                    continue
+
+                # 单选 / 多选：必须有 4 个选项 + 合法 answer
+                raw_options = row.get("options", [])
+                answers = self._normalize_llm_answers(row.get("answer", []))
+                if not isinstance(raw_options, list) or len(raw_options) < 4 or not answers:
+                    continue
+
+                options: list[dict[str, str]] = []
+                used_values: set[str] = set()
+                for idx, option in enumerate(raw_options[:4]):
+                    value, label = self._parse_option(option, ["A", "B", "C", "D"][idx])
+                    if value in used_values or value not in {"A", "B", "C", "D"} or not label:
+                        continue
+                    used_values.add(value)
+                    options.append({"label": label, "value": value})
+                if len(options) != 4 or any(answer not in used_values for answer in answers):
+                    continue
+
+                # 多选题识别：双重保险
+                # 1) 答案有 2+ 个字母 → 多选（LLM 给的 answer 已经是列表/字符串含多字母）
+                # 2) LLM 的 type 字段含"多"（"多选题"等）
+                # 3) 题干文字含强信号（"以下哪些"/"下列哪些"/"哪些选项"/"哪些是"/"多选"）
+                #    → 即便 LLM 错误地标了"单选题"也强制升级成多选
+                is_multi_by_text = bool(
+                    re.search(r"(以下哪些|下列哪些|哪些选项|哪些是|多选)", text)
+                )
+                normalized_type = (
+                    "multiple"
+                    if len(answers) > 1 or "多" in qtype_raw or is_multi_by_text
+                    else "single"
+                )
                 questions.append(
                     {
                         "id": f"{qid_prefix}{len(questions) + 1}",
@@ -789,21 +873,60 @@ class InteractiveClassroomGenerator:
         qid_prefix: str,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        require_short_answer: bool = False,
     ) -> list[dict[str, Any]]:
         _raise_if_cancelled(cancel_check)
         if not self.llm_quiz_enabled:
             return []
         try:
-            raw_json = self._generate_context_quiz_json(topic, scenes, max_questions, student_profile)
+            raw_json = self._generate_context_quiz_json(
+                topic, scenes, max_questions, student_profile, require_short_answer
+            )
             _raise_if_cancelled(cancel_check)
-            return self._convert_llm_quiz_json(
+            questions = self._convert_llm_quiz_json(
                 raw_json=raw_json,
                 scenes=scenes,
                 max_questions=max_questions,
                 qid_prefix=qid_prefix,
             )
+            # 兜底：LLM 没出简答但要求了 → 把最后一道单选/多选降级为简答
+            # 这样即使 LLM 偶尔忽略 prompt，仍然能保证 ~50% 测验有简答
+            if (
+                require_short_answer
+                and questions
+                and not any(q.get("type") == "short_answer" for q in questions)
+            ):
+                questions = self._force_one_short_answer(questions)
+            return questions
         except Exception:
             return []
+
+    @staticmethod
+    def _force_one_short_answer(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把最后一道单选/多选降级为简答。
+
+        适用场景：要求 1 道简答但 LLM 没出。直接把最后一道的 options/answer
+        丢掉，type 改成 short_answer；用其 analysis 兜底作 reference_answer，
+        rubric 用默认三维度。题干是单选问题"X 是 Y 中的哪一类？"
+        这种封闭问法对简答来说不理想，但作为兜底可接受——
+        真正生产环境 LLM 99% 情况下会按 prompt 出题，落到这条分支的频率低。
+        """
+        if not questions:
+            return questions
+        # 已有简答就不强制（避免出现 2 道简答）
+        if any(q.get("type") == "short_answer" for q in questions):
+            return questions
+        idx = len(questions) - 1
+        target = dict(questions[idx])
+        analysis_text = str(target.get("analysis") or "").strip()
+        reference_answer = analysis_text or "请结合课堂内容作答。"
+        target["type"] = "short_answer"
+        target["options"] = []
+        target["answer"] = [reference_answer]
+        target["reference_answer"] = reference_answer
+        target["rubric"] = ["准确性", "完整性", "表达"]
+        questions[idx] = target
+        return questions
 
     def _build_quiz_scene(
         self,
@@ -815,6 +938,7 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
+        require_short_answer: bool = False,
     ) -> ClassroomScene:
         _raise_if_cancelled(cancel_check)
         qid_prefix = f"q{quiz_index}_"
@@ -825,6 +949,7 @@ class InteractiveClassroomGenerator:
             qid_prefix=qid_prefix,
             student_profile=student_profile,
             cancel_check=cancel_check,
+            require_short_answer=require_short_answer,
         )
         _raise_if_cancelled(cancel_check)
         quiz_source = "llm_json" if questions else "slide_text"
@@ -1016,7 +1141,10 @@ class InteractiveClassroomGenerator:
             return scenes
 
         # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
-        quiz_count_estimate = max(0, len([s for s in slide_scenes if _is_quiz_source_scene(s)]) // 2)
+        # 密度：每 3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final 测验
+        # 实际 mid 数 = max(0, (N-1)//3)，加 1 个 final
+        _n = len([s for s in slide_scenes if _is_quiz_source_scene(s)])
+        quiz_count_estimate = max(0, (_n - 1) // 3) + 1
 
         result: list[ClassroomScene] = []
         quiz_index = 1
@@ -1045,10 +1173,14 @@ class InteractiveClassroomGenerator:
             pending_slides.append(scene)
 
             is_last = quiz_source_index == total_quiz_source_slides
-            enough_for_mid_quiz = len(pending_slides) >= 2 and not is_last
+            # 密度调整：3 张讲解 → 1 个 mid 测验（之前是 2 张）
+            enough_for_mid_quiz = len(pending_slides) >= 3 and not is_last
             enough_for_final_quiz = is_last and pending_slides
 
             if enough_for_mid_quiz or enough_for_final_quiz:
+                # P1-3 调优：每 3 个测验页出 1 道简答题（quiz_index 3/6/9/...）
+                # 配合"默认不强制"prompt，理论 ~33% 测验含简答。
+                require_short_answer = (quiz_index % 3 == 0)
                 quiz_scene = self._build_quiz_scene(
                     quiz_index=quiz_index,
                     order=0,
@@ -1058,6 +1190,7 @@ class InteractiveClassroomGenerator:
                     student_profile=student_profile,
                     cancel_check=cancel_check,
                     progress_callback=progress_callback,
+                    require_short_answer=require_short_answer,
                 )
                 result.append(quiz_scene)
                 _emit_progress(

@@ -25,6 +25,11 @@ class QuizQuestion:
     analysis: str
     points: int = 1
     knowledge_point: str = ""
+    # P1-3: 简答题扩展字段
+    # - reference_answer: 简答题参考答案（type="short_answer" 时使用）
+    # - rubric: 评分维度列表，可选；缺省用 ['准确性', '完整性', '表达']
+    reference_answer: str = ""
+    rubric: list[str] = field(default_factory=list)
 
 
 @dataclass

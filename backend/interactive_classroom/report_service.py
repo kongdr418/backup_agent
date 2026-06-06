@@ -151,12 +151,21 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
             point_name = result.get("knowledge_point") or "综合理解"
             points = int(result.get("points", 1) or 1)
             is_correct = bool(result.get("correct"))
+            # 简答题（short_answer）走 0-100 分数，earned_points 是小数；
+            # 单选/多选走 0/1 全额，earned_points 缺省按整 points 计。
+            raw_earned = result.get("earned_points")
+            if raw_earned is not None:
+                earned_for_this = float(raw_earned)
+            elif is_correct:
+                earned_for_this = float(points)
+            else:
+                earned_for_this = 0.0
 
             total_questions += 1
             total_points += points
+            earned_points += earned_for_this
             if is_correct:
                 correct_questions += 1
-                earned_points += points
 
             row = knowledge_summary.setdefault(
                 point_name,
@@ -164,9 +173,9 @@ def build_classroom_report(classroom: dict[str, Any], answers_record: dict[str, 
             )
             row["total"] += 1
             row["total_points"] += points
+            row["earned_points"] += earned_for_this
             if is_correct:
                 row["correct"] += 1
-                row["earned_points"] += points
             else:
                 rows = point_scene_ids.setdefault(point_name, [])
                 for covered_scene_id in covered_scene_ids:

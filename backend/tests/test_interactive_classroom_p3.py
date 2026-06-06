@@ -40,6 +40,8 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         )
 
     def test_inserts_multiple_quizzes_with_covered_slide_ids(self) -> None:
+        # 密度调整：3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final
+        # 5 张 slide → 2 个 quiz（mid 在 slide 1-3，final 在 slide 4-5）
         scenes = [
             _slide(1, "导入", ["学习目标"]),
             _slide(2, "概念 A", ["要点 A1"]),
@@ -51,10 +53,9 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
 
         quiz_scenes = [scene for scene in result if scene.type == "quiz"]
-        self.assertEqual(["scene_quiz_001", "scene_quiz_002", "scene_quiz_003"], [scene.id for scene in quiz_scenes])
-        self.assertEqual(["scene_slide_001", "scene_slide_002"], quiz_scenes[0].content["covered_scene_ids"])
-        self.assertEqual(["scene_slide_003", "scene_slide_004"], quiz_scenes[1].content["covered_scene_ids"])
-        self.assertEqual(["scene_slide_005"], quiz_scenes[2].content["covered_scene_ids"])
+        self.assertEqual(["scene_quiz_001", "scene_quiz_002"], [scene.id for scene in quiz_scenes])
+        self.assertEqual(["scene_slide_001", "scene_slide_002", "scene_slide_003"], quiz_scenes[0].content["covered_scene_ids"])
+        self.assertEqual(["scene_slide_004", "scene_slide_005"], quiz_scenes[1].content["covered_scene_ids"])
         self.assertTrue(all(scene.knowledge_points for scene in quiz_scenes))
         self.assertTrue(all(scene.content["questions"] for scene in quiz_scenes))
 
@@ -231,11 +232,15 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertIn("<p>", question["analysis"])
 
     def test_report_aggregates_multiple_quiz_scene_answers_independently(self) -> None:
+        # 密度调整后：3 张讲解 → 1 mid 测验 + 末尾 1 个 final
+        # 4 张 slide（全部 quiz source）→ 2 个 quiz
+        # 注意 slide 标题要避开 QUIZ_SOURCE_SKIP_KEYWORDS（"总结"/"复盘"等）
+        # 否则那张 slide 不计入 quiz_source 序列，新阈值下可能只产 1 个 quiz
         scenes = [
             _slide(1, "导入", ["学习目标"]),
             _slide(2, "概念 A", ["要点 A1"]),
             _slide(3, "概念 B", ["要点 B1"]),
-            _slide(4, "总结", ["复盘清单"]),
+            _slide(4, "应用演练", ["动手练习"]),
         ]
         result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
         quiz_scenes = [scene for scene in result if scene.type == "quiz"]
@@ -286,7 +291,9 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertTrue(report["weak_points"])
         self.assertEqual("review_weak_points", report["recommended_tasks"][0]["type"])
         self.assertEqual(report["weak_points"][:3], report["recommended_tasks"][0]["knowledge_points"])
-        self.assertIn("scene_slide_003", report["recommended_tasks"][0]["target_scene_ids"])
+        # 4 张 slide + 3 张 → 1 mid 阈值 → quiz 2（final）覆盖 slide_004
+        # 第一 quiz 全对（不计入 weak_points），所以 target_scene_ids 指向错答的 quiz 2
+        self.assertIn("scene_slide_004", report["recommended_tasks"][0]["target_scene_ids"])
         self.assertEqual("practice_weak_points", report["recommended_tasks"][1]["type"])
         self.assertEqual("high", report["recommended_tasks"][0]["priority"])
 
