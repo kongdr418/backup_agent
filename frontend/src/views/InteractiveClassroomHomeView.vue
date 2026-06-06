@@ -44,7 +44,7 @@
               </div>
               <div class="profile-body">
                 <span class="profile-label">学习基础</span>
-                <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" class="profile-select" />
+                <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" class="profile-select" :consistent-menu-width="false" />
               </div>
             </div>
             <div class="profile-card">
@@ -53,7 +53,7 @@
               </div>
               <div class="profile-body">
                 <span class="profile-label">学习目标</span>
-                <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" class="profile-select" />
+                <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" class="profile-select" :consistent-menu-width="false" />
               </div>
             </div>
             <div class="profile-card">
@@ -62,7 +62,7 @@
               </div>
               <div class="profile-body">
                 <span class="profile-label">讲解偏好</span>
-                <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" class="profile-select" />
+                <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" class="profile-select" :consistent-menu-width="false" />
               </div>
             </div>
             <div class="profile-card">
@@ -71,7 +71,7 @@
               </div>
               <div class="profile-body">
                 <span class="profile-label">题目难度</span>
-                <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" class="profile-select" />
+                <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" class="profile-select" :consistent-menu-width="false" />
               </div>
             </div>
           </div>
