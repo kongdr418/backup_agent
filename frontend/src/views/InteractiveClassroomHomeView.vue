@@ -291,7 +291,7 @@ const pptSelectOptions = computed<SelectOption[]>(() => [
 ])
 
 const topic = ref('')
-const course = ref('Python 程序设计')
+const course = ref('')
 const selectedPptJobId = ref('')
 const loading = ref(false)
 const loadingList = ref(false)
