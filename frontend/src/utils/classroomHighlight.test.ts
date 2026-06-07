@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   activeHighlightCue,
+  activeHighlightMode,
   fallbackHighlightTargetsFromSvgElement,
   normalizeHighlightCues,
   resolveHighlightTargetsFromSvgElement,
@@ -29,7 +30,28 @@ test('selects active cue from playback ratio', () => {
 
   assert.equal(activeHighlightCue(cues, 12, 30)?.target_id, 'hl_002')
   assert.equal(activeHighlightCue(cues, 2, 30)?.target_id, 'hl_001')
-  assert.equal(activeHighlightCue(cues, 31, 30)?.target_id, 'hl_002')
+  assert.equal(activeHighlightCue(cues, 31, 30), null)
+})
+
+test('does not activate a highlight immediately when a slide first enters', () => {
+  const cues = normalizeHighlightCues([
+    { target_id: 'hl_001', start_ratio: 0, end_ratio: 0.5, mode: 'spotlight' },
+  ])
+
+  assert.equal(activeHighlightCue(cues, 0, 30), null)
+  assert.equal(activeHighlightCue(cues, 0.15, 30), null)
+  assert.equal(activeHighlightCue(cues, 0.45, 30)?.target_id, 'hl_001')
+})
+
+test('downgrades spotlight to outline after a short intro window', () => {
+  const cues = normalizeHighlightCues([
+    { target_id: 'hl_001', start_ratio: 0, end_ratio: 0.6, mode: 'spotlight' },
+  ])
+  const cue = cues[0]
+
+  assert.equal(activeHighlightMode(cue, 0.5, 30), 'spotlight')
+  assert.equal(activeHighlightMode(cue, 2.2, 30), 'outline')
+  assert.equal(activeHighlightMode({ ...cue, mode: 'outline' }, 2.2, 30), 'outline')
 })
 
 test('extracts fallback highlight targets from visible svg text elements', () => {

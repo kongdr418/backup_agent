@@ -35,14 +35,16 @@
               class="highlight-layer"
               :style="highlightLayerStyle"
             >
-              <div
-                v-if="activeHighlight.cue.mode === 'spotlight'"
-                class="highlight-spotlight"
-                :style="highlightBoxStyle"
-              />
+              <Transition name="spotlight-mask">
+                <div
+                  v-if="activeHighlight.mode === 'spotlight'"
+                  class="highlight-spotlight"
+                  :style="highlightBoxStyle"
+                />
+              </Transition>
               <div
                 class="highlight-box"
-                :class="{ spotlight: activeHighlight.cue.mode === 'spotlight' }"
+                :class="{ spotlight: activeHighlight.mode === 'spotlight' }"
                 :style="highlightBoxStyle"
               />
             </div>
@@ -381,6 +383,7 @@ import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
 import {
   activeHighlightCue,
+  activeHighlightMode,
   fallbackHighlightTargetsFromSvgElement,
   normalizeHighlightCues,
   resolveHighlightTargetsFromSvgElement,
@@ -674,7 +677,11 @@ const activeHighlight = computed(() => {
   if (!cue) return null
   const target = sceneHighlightTargets.value.find((item) => item.id === cue.target_id)
   if (!target) return null
-  return { cue, target }
+  return {
+    cue,
+    target,
+    mode: activeHighlightMode(cue, currentAudioTime.value, audioDuration.value),
+  }
 })
 
 const highlightLayerStyle = computed<CSSProperties | null>(() => {
@@ -694,7 +701,7 @@ const highlightBoxStyle = computed<CSSProperties | null>(() => {
   const metrics = svgMetrics.value
   const scaleX = metrics.width / metrics.viewWidth
   const scaleY = metrics.height / metrics.viewHeight
-  const pad = activeHighlight.value.cue.mode === 'spotlight' ? 8 : 5
+  const pad = activeHighlight.value.mode === 'spotlight' ? 8 : 5
   const left = Math.max(0, target.bbox.x * scaleX - pad)
   const top = Math.max(0, target.bbox.y * scaleY - pad)
   const width = Math.min(metrics.width - left, target.bbox.width * scaleX + pad * 2)
@@ -1522,15 +1529,40 @@ function runTask(task: ClassroomRecommendedTask) {
   background: rgba(45, 80, 22, 0.08);
   box-shadow: 0 8px 22px rgba(45, 80, 22, 0.14);
   animation: highlight-breathe 1.9s ease-in-out infinite;
+  transition:
+    left 220ms var(--ease-out),
+    top 220ms var(--ease-out),
+    width 220ms var(--ease-out),
+    height 220ms var(--ease-out),
+    background-color 220ms ease-out,
+    box-shadow 240ms ease-out,
+    border-color 220ms ease-out;
 }
 
 .highlight-box.spotlight {
   background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 10px 28px rgba(45, 80, 22, 0.22);
+  animation: highlight-spotlight-enter 260ms ease-out;
 }
 
 .highlight-spotlight {
-  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.36);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.14);
+  animation: highlight-spotlight-fade 320ms ease-out;
+}
+
+.spotlight-mask-enter-active,
+.spotlight-mask-leave-active {
+  transition: opacity 240ms ease-out;
+}
+
+.spotlight-mask-enter-from,
+.spotlight-mask-leave-to {
+  opacity: 0;
+}
+
+.spotlight-mask-enter-to,
+.spotlight-mask-leave-from {
+  opacity: 1;
 }
 
 @keyframes highlight-breathe {
@@ -1541,6 +1573,26 @@ function runTask(task: ClassroomRecommendedTask) {
   50% {
     border-color: rgba(45, 80, 22, 1);
     box-shadow: 0 10px 24px rgba(45, 80, 22, 0.16), 0 0 0 5px rgba(45, 80, 22, 0.08);
+  }
+}
+
+@keyframes highlight-spotlight-enter {
+  0% {
+    transform: scale(0.985);
+    opacity: 0.78;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes highlight-spotlight-fade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
   }
 }
 
