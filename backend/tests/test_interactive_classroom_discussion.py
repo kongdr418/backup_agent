@@ -183,6 +183,92 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         self.assertIn("while", payload["assistant_message"]["content"])
         self.assertTrue(payload["auto_advance_paused"])
 
+    def test_multi_agent_discussion_generates_fixed_three_turns(self) -> None:
+        from interactive_classroom.discussion_service import generate_multi_agent_discussion_turns
+
+        with patch(
+            "interactive_classroom.discussion_service.content_llm_call",
+            side_effect=[
+                "while 循环会先判断条件，再决定是否执行循环体。",
+                "如果条件一开始就是 False，那循环体是不是一次都不会执行？",
+                "是的，条件一开始为 False 时，while 循环体不会执行。",
+            ],
+        ):
+            turns = generate_multi_agent_discussion_turns(
+                classroom=_classroom_payload(),
+                played_scene_ids=["scene_slide_001"],
+                conversation=[{"role": "user", "content": "这页是什么意思？"}],
+                trigger="manual",
+                current_scene_id="scene_slide_001",
+            )
+
+        self.assertEqual([turn["agent_id"] for turn in turns], ["teacher", "student_peer", "teacher"])
+        self.assertEqual([turn["agent_name"] for turn in turns], ["AI 教师", "AI 同学", "AI 教师"])
+        self.assertIn("判断条件", turns[0]["content"])
+        self.assertIn("False", turns[1]["content"])
+        self.assertIn("不会执行", turns[2]["content"])
+
+    def test_multi_agent_final_teacher_prompt_targets_student_peer_question(self) -> None:
+        from interactive_classroom.discussion_service import MULTI_AGENT_DISCUSSION_TURNS, build_multi_agent_turn_messages
+
+        messages = build_multi_agent_turn_messages(
+            classroom=_classroom_payload(),
+            played_scene_ids=["scene_slide_001"],
+            conversation=[{"role": "user", "content": "计算机视觉有什么用？"}],
+            trigger="manual",
+            turn=MULTI_AGENT_DISCUSSION_TURNS[2],
+            previous_turns=[
+                {
+                    "role": "assistant",
+                    "agent_id": "teacher",
+                    "agent_name": "AI 教师",
+                    "content": "计算机视觉可以帮助系统理解图像和视频。",
+                },
+                {
+                    "role": "assistant",
+                    "agent_id": "student_peer",
+                    "agent_name": "AI 同学",
+                    "content": "自动驾驶具体是怎么用到计算机视觉的呢？",
+                },
+            ],
+            current_scene_id="scene_slide_001",
+        )
+
+        final_instruction = messages[-1]["content"]
+        self.assertIn("请直接回答 AI 同学刚才的追问", final_instruction)
+        self.assertIn("自动驾驶具体是怎么用到计算机视觉的呢", final_instruction)
+        self.assertNotEqual(messages[-1]["content"], "计算机视觉有什么用？")
+
+    def test_discussion_stream_multi_agent_emits_agent_events(self) -> None:
+        with patch(
+            "interactive_classroom.discussion_service.content_llm_call_stream",
+            side_effect=[
+                iter(["教师回答"]),
+                iter(["同学追问"]),
+                iter(["教师收束"]),
+            ],
+        ):
+            resp = self.client.post(
+                "/api/interactive-classroom/classroom_discuss_001/discuss/stream",
+                json={
+                    "user_id": "user_1",
+                    "played_scene_ids": ["scene_slide_001"],
+                    "current_scene_id": "scene_slide_001",
+                    "messages": [{"role": "user", "content": "这页是什么意思？"}],
+                    "trigger": "manual",
+                    "multi_agent": True,
+                },
+            )
+            text = resp.get_data(as_text=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('"type": "agent_start"', text)
+        self.assertIn('"type": "agent_chunk"', text)
+        self.assertIn('"type": "agent_done"', text)
+        self.assertIn('"agent_id": "teacher"', text)
+        self.assertIn('"agent_id": "student_peer"', text)
+        self.assertIn('"chunk": "同学追问"', text)
+
     def test_discussion_route_rejects_missing_messages(self) -> None:
         resp = self.client.post(
             "/api/interactive-classroom/classroom_discuss_001/discuss",

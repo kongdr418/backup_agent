@@ -319,8 +319,10 @@
       :messages="discussionMessages"
       :submitting="discussionSubmitting"
       :auto-advance-paused="discussionActive"
+      :multi-agent-enabled="multiAgentDiscussionEnabled"
       @submit="handleDiscussionSubmit"
       @quick-action="handleDiscussionQuickAction"
+      @update:multi-agent-enabled="multiAgentDiscussionEnabled = $event"
     />
   </div>
 
@@ -353,6 +355,7 @@ import {
   loadPersistedDiscussionMessages,
   savePersistedDiscussionMessages,
 } from '@/utils/classroomDiscussionState'
+import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
@@ -375,6 +378,7 @@ const reportAutoShown = ref(false)
 const autoPlayEnabled = ref(true)
 const discussionMessages = ref<ClassroomDiscussionMessage[]>([])
 const discussionSubmitting = ref(false)
+const multiAgentDiscussionEnabled = ref(localStorage.getItem('ai_creator.classroom_discussion.multi_agent') === 'true')
 const isAudioPlaying = ref(false)
 const currentAudioTime = ref(0)
 const audioDuration = ref(0)
@@ -747,6 +751,7 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     messages: nextMessages,
     trigger,
     quick_action: payload.quickAction,
+    multi_agent: multiAgentDiscussionEnabled.value,
     content_model: settingStore.settings.content_model,
     content_api_key: settingStore.getEffectiveContentApiKey(),
     content_base_url: settingStore.getEffectiveContentBaseUrl(),
@@ -774,6 +779,15 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     for await (const ev of discussInteractiveClassroomStream(classroom.value.id, baseRequest)) {
       if (ev.error) throw new Error(ev.error)
       if (ev.done) break
+      if (ev.type === 'agent_start') {
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        continue
+      }
+      if (ev.type === 'agent_chunk' || ev.type === 'agent_done') {
+        accumulated += ev.chunk || ev.content || ''
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        continue
+      }
       if (ev.chunk) {
         accumulated += ev.chunk
         pushOrReplaceAssistant(accumulated)
@@ -782,13 +796,21 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     // 流结束但内容仍为空 → fallback 到非流式接口
     if (!accumulated) {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
-      pushOrReplaceAssistant(result.assistant_message.content)
+      if (result.assistant_messages?.length) {
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+      } else {
+        pushOrReplaceAssistant(result.assistant_message.content)
+      }
     }
   } catch (err) {
     // 异常时尝试降级到非流式接口
     try {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
-      pushOrReplaceAssistant(result.assistant_message.content)
+      if (result.assistant_messages?.length) {
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+      } else {
+        pushOrReplaceAssistant(result.assistant_message.content)
+      }
     } catch (fallbackErr) {
       message.error(fallbackErr instanceof Error ? fallbackErr.message : '讨论发起失败')
       // 失败时回滚到 user 消息的状态
@@ -951,6 +973,13 @@ watch(
     syncDiscussionPersistence()
   },
   { deep: true },
+)
+
+watch(
+  multiAgentDiscussionEnabled,
+  (enabled) => {
+    localStorage.setItem('ai_creator.classroom_discussion.multi_agent', String(enabled))
+  },
 )
 
 watch(

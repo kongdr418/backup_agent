@@ -12,6 +12,34 @@ QUICK_ACTION_PROMPTS = {
     "总结一下": "请用简洁课堂语言总结当前问题涉及的关键点，保持启发式语气。",
 }
 
+MULTI_AGENT_DISCUSSION_TURNS: tuple[dict[str, str], ...] = (
+    {
+        "agent_id": "teacher",
+        "agent_name": "AI 教师",
+        "role_prompt": (
+            "你现在以 AI 教师身份发言。先回答学生刚才的问题，必须贴着当前页内容解释。"
+            "保持 3 到 5 句，先讲清楚，再留一点思考空间。"
+        ),
+    },
+    {
+        "agent_id": "student_peer",
+        "agent_name": "AI 同学",
+        "role_prompt": (
+            "你现在以 AI 同学身份发言。你不是教师，不要总结授课。"
+            "请基于 AI 教师刚才的回答，提出一个真实学生可能会追问的具体问题。"
+            "控制在 1 到 2 句，语气自然，可以带一点困惑。"
+        ),
+    },
+    {
+        "agent_id": "teacher",
+        "agent_name": "AI 教师",
+        "role_prompt": (
+            "你再次以 AI 教师身份发言。请回应 AI 同学刚才的追问，"
+            "把问题收束回当前页知识点，控制在 2 到 4 句。"
+        ),
+    },
+)
+
 
 def _normalize_text(value: Any) -> list[str]:
     if isinstance(value, str):
@@ -373,6 +401,74 @@ def build_discussion_messages(
     return messages
 
 
+def _format_agent_turns_for_prompt(turns: list[dict[str, str]]) -> str:
+    if not turns:
+        return "本轮还没有其他 AI 角色发言。"
+    lines = []
+    for turn in turns:
+        agent_name = (turn.get("agent_name") or "AI 角色").strip()
+        content = (turn.get("content") or "").strip()
+        if content:
+            lines.append(f"- {agent_name}：{content}")
+    return "\n".join(lines) if lines else "本轮还没有其他 AI 角色发言。"
+
+
+def _last_turn_content(turns: list[dict[str, str]], agent_id: str) -> str:
+    for turn in reversed(turns):
+        if turn.get("agent_id") == agent_id and (turn.get("content") or "").strip():
+            return turn["content"].strip()
+    return ""
+
+
+def build_multi_agent_turn_messages(
+    classroom: dict[str, Any],
+    played_scene_ids: list[str],
+    conversation: list[dict[str, str]],
+    trigger: str,
+    turn: dict[str, str],
+    previous_turns: list[dict[str, str]],
+    quick_action: str = "",
+    current_scene_id: str = "",
+) -> list[dict[str, str]]:
+    messages = build_discussion_messages(
+        classroom,
+        played_scene_ids,
+        conversation,
+        trigger,
+        quick_action,
+        current_scene_id,
+    )
+    system_prompt = messages[0]["content"]
+    messages[0]["content"] = (
+        f"{system_prompt}"
+        "你正在参与一个固定三段式多 Agent 课堂讨论：AI 教师先回答，AI 同学追问，AI 教师再回应。"
+        "必须只输出当前轮次这一个角色的发言，不要代替其他角色说话，不要写角色名前缀。"
+        f"当前角色：{turn['agent_name']}（{turn['agent_id']}）。"
+        f"当前角色任务：{turn['role_prompt']}"
+    )
+    student_peer_question = _last_turn_content(previous_turns, "student_peer")
+    if turn["agent_id"] == "teacher" and student_peer_question:
+        final_instruction = (
+            "本轮已经发生的 AI 角色发言：\n"
+            f"{_format_agent_turns_for_prompt(previous_turns)}\n"
+            f"请直接回答 AI 同学刚才的追问：{student_peer_question}\n"
+            "回答时先回应这个具体问题，再用当前页知识点收束；不要重新泛泛介绍课程大纲。"
+        )
+    elif turn["agent_id"] == "student_peer":
+        final_instruction = (
+            "本轮已经发生的 AI 角色发言：\n"
+            f"{_format_agent_turns_for_prompt(previous_turns)}\n"
+            "请基于 AI 教师刚才的回答提出一个具体追问。追问必须贴近学生真实困惑，不能替教师总结。"
+        )
+    else:
+        final_instruction = (
+            "本轮还没有其他 AI 角色发言。"
+            "请先回答学生刚才提出的问题，回答要贴着当前页内容，不能只复述页面标题。"
+        )
+    messages.append({"role": "user", "content": final_instruction})
+    return messages
+
+
 def _fallback_reply(
     classroom: dict[str, Any],
     conversation: list[dict[str, str]],
@@ -432,6 +528,26 @@ def _fallback_reply(
     return "你先别急着找答案。先说说你觉得这一页里最关键的一步或概念是哪一个？"
 
 
+def _fallback_agent_reply(
+    classroom: dict[str, Any],
+    conversation: list[dict[str, str]],
+    turn: dict[str, str],
+    previous_turns: list[dict[str, str]],
+    quick_action: str = "",
+    current_scene_id: str = "",
+) -> str:
+    if turn["agent_id"] == "student_peer":
+        teacher_text = ""
+        for item in reversed(previous_turns):
+            if item.get("agent_id") == "teacher" and (item.get("content") or "").strip():
+                teacher_text = item["content"].strip()
+                break
+        if teacher_text:
+            return f"那我有个追问：{teacher_text[:28]}这部分，能不能再用当前页的例子说明一下？"
+        return "那我有个追问：如果按当前页的步骤来判断，最容易出错的是哪一步？"
+    return _fallback_reply(classroom, conversation, quick_action, current_scene_id)
+
+
 def generate_discussion_reply(
     classroom: dict[str, Any],
     played_scene_ids: list[str],
@@ -462,6 +578,58 @@ def generate_discussion_reply(
     except Exception:
         pass
     return _fallback_reply(classroom, conversation, quick_action, current_scene_id)
+
+
+def generate_multi_agent_discussion_turns(
+    classroom: dict[str, Any],
+    played_scene_ids: list[str],
+    conversation: list[dict[str, str]],
+    trigger: str,
+    quick_action: str = "",
+    current_scene_id: str = "",
+    llm_config: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    llm_config = llm_config or {}
+    turns: list[dict[str, str]] = []
+    for idx, turn in enumerate(MULTI_AGENT_DISCUSSION_TURNS, start=1):
+        messages = build_multi_agent_turn_messages(
+            classroom,
+            played_scene_ids,
+            conversation,
+            trigger,
+            turn,
+            turns,
+            quick_action,
+            current_scene_id,
+        )
+        try:
+            content = (
+                content_llm_call(
+                    messages=messages,
+                    temperature=0.65 if turn["agent_id"] == "student_peer" else 0.55,
+                    max_tokens=900 if turn["agent_id"] == "student_peer" else 1400,
+                    model=llm_config.get("content_model", ""),
+                    api_key=llm_config.get("content_api_key", ""),
+                    base_url=llm_config.get("content_base_url", ""),
+                    provider_type=llm_config.get("content_provider_type", ""),
+                )
+                or ""
+            ).strip()
+        except Exception:
+            content = ""
+        if not content:
+            content = _fallback_agent_reply(classroom, conversation, turn, turns, quick_action, current_scene_id)
+        turns.append(
+            {
+                "role": "assistant",
+                "agent_id": turn["agent_id"],
+                "agent_name": turn["agent_name"],
+                "message_id": f"discussion_{idx}_{turn['agent_id']}",
+                "content": content,
+                "trigger": trigger,
+            }
+        )
+    return turns
 
 
 def generate_discussion_reply_stream(
@@ -497,3 +665,93 @@ def generate_discussion_reply_stream(
             yield _fallback_reply(classroom, conversation, quick_action, current_scene_id)
     except Exception:
         yield _fallback_reply(classroom, conversation, quick_action, current_scene_id)
+
+
+def generate_multi_agent_discussion_reply_stream(
+    classroom: dict[str, Any],
+    played_scene_ids: list[str],
+    conversation: list[dict[str, str]],
+    trigger: str,
+    quick_action: str = "",
+    current_scene_id: str = "",
+    llm_config: dict[str, str] | None = None,
+) -> Iterator[dict[str, Any]]:
+    llm_config = llm_config or {}
+    previous_turns: list[dict[str, str]] = []
+    for idx, turn in enumerate(MULTI_AGENT_DISCUSSION_TURNS, start=1):
+        message_id = f"discussion_{idx}_{turn['agent_id']}"
+        yield {
+            "type": "agent_start",
+            "message_id": message_id,
+            "agent_id": turn["agent_id"],
+            "agent_name": turn["agent_name"],
+            "role": "assistant",
+            "trigger": trigger,
+        }
+        messages = build_multi_agent_turn_messages(
+            classroom,
+            played_scene_ids,
+            conversation,
+            trigger,
+            turn,
+            previous_turns,
+            quick_action,
+            current_scene_id,
+        )
+        content = ""
+        try:
+            for chunk in content_llm_call_stream(
+                messages=messages,
+                temperature=0.65 if turn["agent_id"] == "student_peer" else 0.55,
+                max_tokens=900 if turn["agent_id"] == "student_peer" else 1400,
+                model=llm_config.get("content_model", ""),
+                api_key=llm_config.get("content_api_key", ""),
+                base_url=llm_config.get("content_base_url", ""),
+                provider_type=llm_config.get("content_provider_type", ""),
+            ):
+                if not chunk:
+                    continue
+                content += chunk
+                yield {
+                    "type": "agent_chunk",
+                    "message_id": message_id,
+                    "agent_id": turn["agent_id"],
+                    "agent_name": turn["agent_name"],
+                    "role": "assistant",
+                    "chunk": chunk,
+                    "trigger": trigger,
+                }
+        except Exception:
+            content = ""
+
+        if not content.strip():
+            content = _fallback_agent_reply(classroom, conversation, turn, previous_turns, quick_action, current_scene_id)
+            yield {
+                "type": "agent_chunk",
+                "message_id": message_id,
+                "agent_id": turn["agent_id"],
+                "agent_name": turn["agent_name"],
+                "role": "assistant",
+                "chunk": content,
+                "trigger": trigger,
+            }
+
+        previous_turns.append(
+            {
+                "role": "assistant",
+                "agent_id": turn["agent_id"],
+                "agent_name": turn["agent_name"],
+                "message_id": message_id,
+                "content": content.strip(),
+                "trigger": trigger,
+            }
+        )
+        yield {
+            "type": "agent_done",
+            "message_id": message_id,
+            "agent_id": turn["agent_id"],
+            "agent_name": turn["agent_name"],
+            "role": "assistant",
+            "content": content.strip(),
+            "trigger": trigger,
+        }

@@ -17,7 +17,12 @@ from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report
-from interactive_classroom.discussion_service import generate_discussion_reply, generate_discussion_reply_stream
+from interactive_classroom.discussion_service import (
+    generate_discussion_reply,
+    generate_discussion_reply_stream,
+    generate_multi_agent_discussion_reply_stream,
+    generate_multi_agent_discussion_turns,
+)
 from interactive_classroom.tts_service import ClassroomTTSService
 import json
 import os
@@ -3152,6 +3157,7 @@ def interactive_classroom_discuss(classroom_id):
     trigger = (data.get('trigger') or 'manual').strip() or 'manual'
     quick_action = (data.get('quick_action') or '').strip()
     current_scene_id = (data.get('current_scene_id') or '').strip()
+    multi_agent = bool(data.get('multi_agent'))
 
     if not isinstance(played_scene_ids, list):
         return jsonify({'success': False, 'error': 'played_scene_ids 非法'}), 400
@@ -3179,6 +3185,27 @@ def interactive_classroom_discuss(classroom_id):
         'content_base_url': (data.get('content_base_url') or '').strip(),
         'content_provider_type': (data.get('content_provider_type') or '').strip(),
     }
+
+    if multi_agent:
+        turns = generate_multi_agent_discussion_turns(
+            classroom=classroom,
+            played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
+            conversation=normalized_messages,
+            trigger=trigger,
+            quick_action=quick_action,
+            current_scene_id=current_scene_id,
+            llm_config=llm_config,
+        )
+        return jsonify({
+            'success': True,
+            'assistant_message': turns[-1] if turns else {
+                'role': 'assistant',
+                'content': '',
+                'trigger': trigger,
+            },
+            'assistant_messages': turns,
+            'auto_advance_paused': True,
+        })
 
     reply = generate_discussion_reply(
         classroom=classroom,
@@ -3215,6 +3242,7 @@ def interactive_classroom_discuss_stream(classroom_id):
     trigger = (data.get('trigger') or 'manual').strip() or 'manual'
     quick_action = (data.get('quick_action') or '').strip()
     current_scene_id = (data.get('current_scene_id') or '').strip()
+    multi_agent = bool(data.get('multi_agent'))
 
     if not isinstance(played_scene_ids, list):
         return jsonify({'success': False, 'error': 'played_scene_ids 非法'}), 400
@@ -3245,16 +3273,28 @@ def interactive_classroom_discuss_stream(classroom_id):
 
     def generate():
         try:
-            for chunk in generate_discussion_reply_stream(
-                classroom=classroom,
-                played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
-                conversation=normalized_messages,
-                trigger=trigger,
-                quick_action=quick_action,
-                current_scene_id=current_scene_id,
-                llm_config=llm_config,
-            ):
-                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+            if multi_agent:
+                for event in generate_multi_agent_discussion_reply_stream(
+                    classroom=classroom,
+                    played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
+                    conversation=normalized_messages,
+                    trigger=trigger,
+                    quick_action=quick_action,
+                    current_scene_id=current_scene_id,
+                    llm_config=llm_config,
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            else:
+                for chunk in generate_discussion_reply_stream(
+                    classroom=classroom,
+                    played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
+                    conversation=normalized_messages,
+                    trigger=trigger,
+                    quick_action=quick_action,
+                    current_scene_id=current_scene_id,
+                    llm_config=llm_config,
+                ):
+                    yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True, 'auto_advance_paused': True}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"

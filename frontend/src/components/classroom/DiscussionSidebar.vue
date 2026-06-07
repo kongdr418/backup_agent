@@ -5,7 +5,9 @@
         <div class="sidebar-kicker">课堂讨论</div>
         <div class="sidebar-title">正在讨论本课内容</div>
       </div>
-      <span v-if="autoAdvancePaused" class="pause-badge">自动翻页已暂停</span>
+      <div class="header-actions">
+        <span v-if="autoAdvancePaused" class="pause-badge">自动翻页已暂停</span>
+      </div>
     </div>
 
     <div class="message-list">
@@ -18,14 +20,22 @@
         v-for="(message, index) in messages"
         :key="`${message.role}-${index}`"
         class="message-card"
-        :class="message.role"
+        :class="[message.role, message.agent_id || '', { pending: message.pending }]"
       >
-        <div class="message-role">{{ message.role === 'assistant' ? 'AI 教师' : '我' }}</div>
-        <div class="message-content" v-html="renderMarkdown(message.content)" />
+        <div class="message-role">{{ roleLabel(message) }}</div>
+        <div v-if="message.pending && !message.content" class="thinking-row">
+          <span class="thinking-label">正在思考</span>
+          <span class="thinking-dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
+        <div v-else class="message-content" v-html="renderMarkdown(message.content)" />
       </article>
 
       <article v-if="submitting && !hasStreamingAssistant" class="message-card assistant pending">
-        <div class="message-role">AI 教师</div>
+        <div class="message-role">{{ multiAgentEnabled ? '多 Agent 讨论' : 'AI 教师' }}</div>
         <div class="thinking-row">
           <span class="thinking-label">正在思考</span>
           <span class="thinking-dots" aria-hidden="true">
@@ -59,9 +69,23 @@
         placeholder="输入你的问题，比如：这页为什么要先判断条件？"
         @keydown="onTextareaKeydown"
       />
-      <button type="submit" class="submit-btn" :disabled="submitting || !draft.trim()">
-        {{ submitting ? '思考中...' : '发送问题' }}
-      </button>
+      <div class="input-actions">
+        <label class="agent-toggle">
+          <input
+            type="checkbox"
+            :checked="multiAgentEnabled"
+            :disabled="submitting"
+            @change="onMultiAgentChange"
+          />
+          <span class="agent-toggle-track" aria-hidden="true">
+            <span class="agent-toggle-thumb" />
+          </span>
+          <span>多 Agent</span>
+        </label>
+        <button type="submit" class="submit-btn" :disabled="submitting || !draft.trim()">
+          {{ submitting ? '思考中...' : '发送' }}
+        </button>
+      </div>
     </form>
   </aside>
 </template>
@@ -77,11 +101,13 @@ const props = defineProps<{
   messages: ClassroomDiscussionMessage[]
   submitting?: boolean
   autoAdvancePaused?: boolean
+  multiAgentEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
   submit: [content: string]
   'quick-action': [action: string]
+  'update:multi-agent-enabled': [enabled: boolean]
 }>()
 
 const draft = ref('')
@@ -135,6 +161,16 @@ function renderMarkdown(content: string): string {
   return DOMPurify.sanitize(html.trim())
 }
 
+function roleLabel(message: ClassroomDiscussionMessage): string {
+  if (message.role === 'user') return '我'
+  return message.agent_name || 'AI 教师'
+}
+
+function onMultiAgentChange(event: Event) {
+  const checked = (event.target as HTMLInputElement | null)?.checked ?? false
+  emit('update:multi-agent-enabled', checked)
+}
+
 function submit() {
   const content = draft.value.trim()
   if (!content || props.submitting) return
@@ -180,6 +216,85 @@ defineExpose({ submitDraft })
   gap: 12px;
   padding: 16px;
   border-bottom: 1px solid rgb(var(--line-rgb));
+}
+
+.header-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.agent-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.agent-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-toggle-track {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d8dee6;
+  transition: background 0.18s ease;
+}
+
+.agent-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
+  transition: transform 0.18s ease;
+}
+
+.agent-toggle:has(input:checked) {
+  border-color: rgba(15, 118, 110, 0.22);
+  background: rgba(240, 253, 250, 0.88);
+  color: #115e59;
+}
+
+.agent-toggle:has(input:checked) .agent-toggle-track {
+  background: #5daea6;
+}
+
+.agent-toggle:has(input:checked) .agent-toggle-thumb {
+  transform: translateX(12px);
+}
+
+.agent-toggle:has(input:focus-visible) {
+  outline: 2px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 2px;
+}
+
+.agent-toggle:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .sidebar-kicker {
@@ -241,6 +356,13 @@ defineExpose({ submitDraft })
 .message-card.assistant {
   background: rgb(var(--bg-base-rgb));
   border: 1px solid rgb(var(--line-rgb));
+  border-left: 4px solid #8aa3bf;
+}
+
+.message-card.student_peer {
+  background: rgb(var(--bg-base-rgb));
+  border: 1px solid rgb(var(--line-rgb));
+  border-left: 4px solid #9bb89c;
 }
 
 .message-card.pending {
@@ -248,7 +370,9 @@ defineExpose({ submitDraft })
 }
 
 .message-card.user {
-  background: rgba(15, 23, 42, 0.06);
+  background: #f8f4ee;
+  border: 1px solid #eadfce;
+  border-left: 4px solid #d9b26f;
 }
 
 .message-role {
@@ -421,12 +545,19 @@ defineExpose({ submitDraft })
   color: rgb(var(--ink-1-rgb));
 }
 
+.input-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .submit-btn {
-  align-self: flex-end;
   border: none;
   border-radius: 10px;
   background: rgb(var(--ink-1-rgb));
   color: white;
+  min-width: 76px;
   padding: 10px 16px;
   font-size: 13px;
   cursor: pointer;
