@@ -248,7 +248,23 @@
                 <div class="play-status">{{ playbackStatusText }}</div>
               </div>
             </div>
-            <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
+            <div ref="speechTextRef" class="speech-text">
+              <template v-if="currentSpeechParagraphs.length">
+                <span
+                  v-for="(paragraph, idx) in currentSpeechParagraphs"
+                  :key="`${idx}-${paragraph.start_ratio}`"
+                  :data-speech-segment-index="idx"
+                  class="speech-segment"
+                  :class="{
+                    active: idx === activeSpeechParagraphIdx,
+                    inactive: activeSpeechParagraphIdx >= 0 && idx !== activeSpeechParagraphIdx,
+                  }"
+                >
+                  {{ paragraph.text }}
+                </span>
+              </template>
+              <template v-else>{{ currentSpeechText || '当前场景暂无讲解词' }}</template>
+            </div>
           </div>
 
           <template v-if="currentAudioUrl">
@@ -381,6 +397,8 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
+import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
 import {
   activeHighlightCue,
   activeHighlightMode,
@@ -418,6 +436,7 @@ const audioDuration = ref(0)
 const audioVolume = ref(1)
 const audioPlaybackRate = ref(1)
 const playbackRateOptions = [0.75, 1, 1.25, 1.5, 2]
+const speechTextRef = ref<HTMLElement | null>(null)
 const svgStageRef = ref<HTMLElement | null>(null)
 const svgBoxRef = ref<HTMLElement | null>(null)
 const fallbackHighlightTargets = ref<HighlightTarget[]>([])
@@ -445,6 +464,29 @@ function onAudioVolumeChange() {
 
 function onAudioRateChange() {
   audioPlaybackRate.value = audioRef.value?.playbackRate || 1
+}
+
+function syncSpeechParagraphScroll() {
+  const container = speechTextRef.value
+  const activeIndex = activeSpeechParagraphIdx.value
+  if (!container || activeIndex < 0) return
+
+  const activeSegment = container.querySelector(`[data-speech-segment-index="${activeIndex}"]`) as HTMLElement | null
+  if (!activeSegment) return
+
+  const targetTop = computeSpeechAutoScrollTop({
+    currentScrollTop: container.scrollTop,
+    containerHeight: container.clientHeight,
+    contentHeight: container.scrollHeight,
+    segmentTop: activeSegment.offsetTop,
+    segmentHeight: activeSegment.offsetHeight,
+  })
+  if (targetTop === null) return
+
+  container.scrollTo({
+    top: targetTop,
+    behavior: 'smooth',
+  })
 }
 
 function toggleAudioPlay() {
@@ -609,6 +651,12 @@ const playbackStatusText = computed(() => {
 const currentSpeechText = computed(() => {
   return currentSpeechAction.value?.text || ''
 })
+
+const currentSpeechParagraphs = computed(() => buildSpeechParagraphs(currentSpeechText.value, sceneHighlightCues.value))
+
+const activeSpeechParagraphIdx = computed(() => (
+  activeSpeechParagraphIndex(currentSpeechParagraphs.value, currentAudioTime.value, audioDuration.value)
+))
 
 const currentAudioUrl = computed(() => {
   const audioUrl = currentSpeechAction.value?.audio_url || ''
@@ -1151,6 +1199,15 @@ watch(
     restoreDiscussionForCurrentScene()
   },
   { immediate: true },
+)
+
+watch(
+  () => [currentScene.value?.id, activeSpeechParagraphIdx.value],
+  async () => {
+    await nextTick()
+    syncSpeechParagraphScroll()
+  },
+  { flush: 'post' },
 )
 
 // 直接 watch ref 本身（比 `() => [a, b, ref.value]` 数组源 + deep 更可靠）
@@ -2224,6 +2281,33 @@ function runTask(task: ClassroomRecommendedTask) {
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: rgb(var(--line-rgb)) transparent;
+}
+
+.speech-segment {
+  display: block;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: rgb(var(--ink-2-rgb));
+  transition:
+    background-color 220ms ease-out,
+    color 220ms ease-out,
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+}
+
+.speech-segment:last-child {
+  margin-bottom: 0;
+}
+
+.speech-segment.active {
+  background: rgb(var(--nav-classroom-rgb, 15 118 110) / 0.12);
+  color: rgb(var(--ink-1-rgb));
+  transform: translateX(1px);
+}
+
+.speech-segment.inactive {
+  opacity: 0.72;
 }
 
 .speech-text::after {
