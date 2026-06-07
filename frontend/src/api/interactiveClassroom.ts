@@ -162,11 +162,16 @@ export interface ClassroomDiscussionMessage {
   role: 'assistant' | 'user'
   content: string
   trigger?: string
+  agent_id?: string
+  agent_name?: string
+  message_id?: string
+  pending?: boolean
 }
 
 export interface ClassroomDiscussionResponse {
   success: boolean
   assistant_message: ClassroomDiscussionMessage
+  assistant_messages?: ClassroomDiscussionMessage[]
   auto_advance_paused: boolean
 }
 
@@ -287,6 +292,7 @@ export async function discussInteractiveClassroom(
     messages: ClassroomDiscussionMessage[]
     trigger?: string
     quick_action?: string
+    multi_agent?: boolean
     content_model?: string
     content_api_key?: string
     content_base_url?: string

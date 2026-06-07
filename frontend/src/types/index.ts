@@ -40,6 +40,10 @@ export interface SseEvent {
   // Generic stream chunks (chat)
   chunk?: string
   done?: boolean
+  role?: string
+  agent_id?: string
+  agent_name?: string
+  message_id?: string
 
   // Backend "type" tagging
   type?: string

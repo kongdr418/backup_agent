@@ -9,10 +9,15 @@ function storageKey(classroomId: string, sceneId: string) {
 function isDiscussionMessage(value: unknown): value is ClassroomDiscussionMessage {
   if (!value || typeof value !== 'object') return false
   const row = value as Partial<ClassroomDiscussionMessage>
-  return (
-    (row.role === 'assistant' || row.role === 'user') &&
-    typeof row.content === 'string'
-  )
+  if ((row.role !== 'assistant' && row.role !== 'user') || typeof row.content !== 'string') {
+    return false
+  }
+  const stringFieldsValid = ['agent_id', 'agent_name', 'message_id', 'trigger'].every((key) => {
+    const value = row[key as keyof ClassroomDiscussionMessage]
+    return value === undefined || typeof value === 'string'
+  })
+  const pendingValid = row.pending === undefined || typeof row.pending === 'boolean'
+  return stringFieldsValid && pendingValid
 }
 
 export function savePersistedDiscussionMessages(
