@@ -24,7 +24,25 @@
     <main class="stage">
       <section class="scene-body">
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
-          <div v-if="sceneSvg" class="svg-box" v-html="sceneSvg" />
+          <div v-if="sceneSvg" ref="svgStageRef" class="svg-stage">
+            <div ref="svgBoxRef" class="svg-box" v-html="sceneSvg" />
+            <div
+              v-if="activeHighlight && highlightLayerStyle && highlightBoxStyle"
+              class="highlight-layer"
+              :style="highlightLayerStyle"
+            >
+              <div
+                v-if="activeHighlight.cue.mode === 'spotlight'"
+                class="highlight-spotlight"
+                :style="highlightBoxStyle"
+              />
+              <div
+                class="highlight-box"
+                :class="{ spotlight: activeHighlight.cue.mode === 'spotlight' }"
+                :style="highlightBoxStyle"
+              />
+            </div>
+          </div>
           <pre v-else class="md-box">{{ sceneMarkdown || '本页暂无内容' }}</pre>
         </div>
 
@@ -330,7 +348,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
@@ -357,6 +375,14 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import {
+  activeHighlightCue,
+  fallbackHighlightTargetsFromSvgElement,
+  normalizeHighlightCues,
+  resolveHighlightTargetsFromSvgElement,
+  type HighlightCue,
+  type HighlightTarget,
+} from '@/utils/classroomHighlight'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
 import { useSettingStore } from '@/stores/settingStore'
@@ -385,6 +411,18 @@ const audioDuration = ref(0)
 const audioVolume = ref(1)
 const audioPlaybackRate = ref(1)
 const playbackRateOptions = [0.75, 1, 1.25, 1.5, 2]
+const svgStageRef = ref<HTMLElement | null>(null)
+const svgBoxRef = ref<HTMLElement | null>(null)
+const fallbackHighlightTargets = ref<HighlightTarget[]>([])
+const measuredHighlightTargets = ref<HighlightTarget[]>([])
+const svgMetrics = ref<{
+  left: number
+  top: number
+  width: number
+  height: number
+  viewWidth: number
+  viewHeight: number
+} | null>(null)
 
 function onAudioLoaded() {
   audioDuration.value = audioRef.value?.duration || 0
@@ -562,19 +600,141 @@ const playbackStatusText = computed(() => {
 })
 
 const currentSpeechText = computed(() => {
-  const actions = currentScene.value?.actions || []
-  const speech = actions.find((a) => a.type === 'quiz_feedback') || actions.find((a) => a.type === 'speech')
-  return speech?.text || ''
+  return currentSpeechAction.value?.text || ''
 })
 
 const currentAudioUrl = computed(() => {
-  const actions = currentScene.value?.actions || []
-  const speech = actions.find((a) => a.type === 'quiz_feedback') || actions.find((a) => a.type === 'speech')
-  const audioUrl = speech?.audio_url || ''
+  const audioUrl = currentSpeechAction.value?.audio_url || ''
   if (!audioUrl) return ''
   const joiner = audioUrl.includes('?') ? '&' : '?'
   return `${audioUrl}${joiner}user_id=${encodeURIComponent(getUserId())}`
 })
+
+const currentSpeechAction = computed(() => {
+  const actions = currentScene.value?.actions || []
+  return actions.find((a) => a.type === 'quiz_feedback') || actions.find((a) => a.type === 'speech') || null
+})
+
+const rawSceneHighlightTargets = computed<HighlightTarget[]>(() => {
+  const rows = currentScene.value?.content?.highlight_targets
+  if (Array.isArray(rows) && rows.length) {
+    return rows
+      .map((row): HighlightTarget | null => {
+        if (!row || typeof row !== 'object') return null
+        const item = row as Record<string, any>
+        const box = item.bbox || {}
+        const target = {
+          id: String(item.id || ''),
+          text: String(item.text || ''),
+          kind: String(item.kind || 'text'),
+          bbox: {
+            x: Number(box.x),
+            y: Number(box.y),
+            width: Number(box.width),
+            height: Number(box.height),
+          },
+        }
+        if (!target.id || !Number.isFinite(target.bbox.x) || target.bbox.width <= 0 || target.bbox.height <= 0) return null
+        return target
+      })
+      .filter((row): row is HighlightTarget => Boolean(row))
+  }
+  return []
+})
+
+const sceneHighlightTargets = computed<HighlightTarget[]>(() => {
+  if (currentScene.value?.type !== 'slide') return []
+  if (measuredHighlightTargets.value.length) return measuredHighlightTargets.value
+  if (rawSceneHighlightTargets.value.length) return rawSceneHighlightTargets.value
+  return fallbackHighlightTargets.value
+})
+
+const sceneHighlightCues = computed<HighlightCue[]>(() => {
+  if (currentScene.value?.type !== 'slide') return []
+  const payloadCues = currentSpeechAction.value?.payload?.highlight_cues
+  const normalized = normalizeHighlightCues(payloadCues)
+  if (normalized.length) return normalized
+  if (!sceneHighlightTargets.value.length) return []
+  const total = sceneHighlightTargets.value.length
+  return sceneHighlightTargets.value.map((target, idx) => ({
+    target_id: target.id,
+    start_ratio: idx / total,
+    end_ratio: (idx + 1) / total,
+    mode: idx === 0 ? 'spotlight' : 'outline',
+    label: target.text,
+  }))
+})
+
+const activeHighlight = computed(() => {
+  const cue = activeHighlightCue(sceneHighlightCues.value, currentAudioTime.value, audioDuration.value)
+  if (!cue) return null
+  const target = sceneHighlightTargets.value.find((item) => item.id === cue.target_id)
+  if (!target) return null
+  return { cue, target }
+})
+
+const highlightLayerStyle = computed<CSSProperties | null>(() => {
+  const metrics = svgMetrics.value
+  if (!metrics) return null
+  return {
+    left: `${metrics.left}px`,
+    top: `${metrics.top}px`,
+    width: `${metrics.width}px`,
+    height: `${metrics.height}px`,
+  }
+})
+
+const highlightBoxStyle = computed<CSSProperties | null>(() => {
+  if (!activeHighlight.value || !svgMetrics.value) return null
+  const { target } = activeHighlight.value
+  const metrics = svgMetrics.value
+  const scaleX = metrics.width / metrics.viewWidth
+  const scaleY = metrics.height / metrics.viewHeight
+  const pad = activeHighlight.value.cue.mode === 'spotlight' ? 8 : 5
+  const left = Math.max(0, target.bbox.x * scaleX - pad)
+  const top = Math.max(0, target.bbox.y * scaleY - pad)
+  const width = Math.min(metrics.width - left, target.bbox.width * scaleX + pad * 2)
+  const height = Math.min(metrics.height - top, target.bbox.height * scaleY + pad * 2)
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${Math.max(12, width)}px`,
+    height: `${Math.max(12, height)}px`,
+  }
+})
+
+function refreshSvgHighlightMetrics() {
+  const stage = svgStageRef.value
+  const svg = svgBoxRef.value?.querySelector('svg') as SVGSVGElement | null
+  if (!stage || !svg) {
+    fallbackHighlightTargets.value = []
+    measuredHighlightTargets.value = []
+    svgMetrics.value = null
+    return
+  }
+
+  fallbackHighlightTargets.value = fallbackHighlightTargetsFromSvgElement(svg)
+  measuredHighlightTargets.value = resolveHighlightTargetsFromSvgElement(rawSceneHighlightTargets.value, svg)
+
+  const stageRect = stage.getBoundingClientRect()
+  const svgRect = svg.getBoundingClientRect()
+  const viewBox = svg.viewBox?.baseVal
+  const viewWidth = viewBox?.width || Number(svg.getAttribute('width')) || svgRect.width
+  const viewHeight = viewBox?.height || Number(svg.getAttribute('height')) || svgRect.height
+  if (!svgRect.width || !svgRect.height || !viewWidth || !viewHeight) {
+    svgMetrics.value = null
+    return
+  }
+
+  svgMetrics.value = {
+    left: svgRect.left - stageRect.left,
+    top: svgRect.top - stageRect.top,
+    width: svgRect.width,
+    height: svgRect.height,
+    viewWidth,
+    viewHeight,
+  }
+}
 
 function setAnswer(questionId: string, value: string) {
   const sceneId = currentScene.value?.id
@@ -950,11 +1110,25 @@ async function loadClassroom() {
 
 onMounted(() => {
   loadClassroom().catch(() => undefined)
+  window.addEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 onBeforeUnmount(() => {
   clearAdvanceTimer()
+  window.removeEventListener('resize', refreshSvgHighlightMetrics)
 })
+
+watch(
+  () => [currentScene.value?.id, sceneSvg.value],
+  async () => {
+    fallbackHighlightTargets.value = []
+    measuredHighlightTargets.value = []
+    svgMetrics.value = null
+    await nextTick()
+    refreshSvgHighlightMetrics()
+  },
+  { flush: 'post' },
+)
 
 watch(
   () => [classroom.value?.id, currentScene.value?.id],
@@ -1266,6 +1440,14 @@ function runTask(task: ClassroomRecommendedTask) {
   padding: 18px;
 }
 
+.svg-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+}
+
 .svg-box {
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 8px;
@@ -1274,15 +1456,57 @@ function runTask(task: ClassroomRecommendedTask) {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: min(100%, 920px);
   max-width: 100%;
+  box-sizing: border-box;
 }
 
 .svg-box :deep(svg) {
   display: block;
-  width: auto;
+  width: 100%;
   height: auto;
-  max-width: 900px;
+  max-width: 100%;
   max-height: 56vh;
+}
+
+.highlight-layer {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.highlight-box,
+.highlight-spotlight {
+  position: absolute;
+  border-radius: 7px;
+  transition: left 220ms var(--ease-out), top 220ms var(--ease-out), width 220ms var(--ease-out), height 220ms var(--ease-out);
+}
+
+.highlight-box {
+  border: 2px solid #2D5016;
+  background: rgba(45, 80, 22, 0.08);
+  box-shadow: 0 8px 22px rgba(45, 80, 22, 0.14);
+  animation: highlight-breathe 1.9s ease-in-out infinite;
+}
+
+.highlight-box.spotlight {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 10px 28px rgba(45, 80, 22, 0.22);
+}
+
+.highlight-spotlight {
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.36);
+}
+
+@keyframes highlight-breathe {
+  0%, 100% {
+    border-color: rgba(45, 80, 22, 0.75);
+    box-shadow: 0 6px 18px rgba(45, 80, 22, 0.10), 0 0 0 0 rgba(45, 80, 22, 0.14);
+  }
+  50% {
+    border-color: rgba(45, 80, 22, 1);
+    box-shadow: 0 10px 24px rgba(45, 80, 22, 0.16), 0 0 0 5px rgba(45, 80, 22, 0.08);
+  }
 }
 
 .md-box {
@@ -1596,18 +1820,18 @@ function runTask(task: ClassroomRecommendedTask) {
 }
 
 .narrator {
-  padding: 12px 18px 16px;
+  padding: 8px 18px 12px;
   background: transparent;
 }
 
 .narrator-card {
   background: rgb(var(--bg-surface-rgb));
   border: 1px solid rgb(var(--line-rgb));
-  border-radius: 14px;
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
@@ -1904,10 +2128,26 @@ function runTask(task: ClassroomRecommendedTask) {
 }
 
 .speech-text {
+  position: relative;
   color: rgb(var(--ink-2-rgb));
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.55;
   padding-left: 44px;
+  max-height: 62px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line-rgb)) transparent;
+}
+
+.speech-text::after {
+  content: "";
+  position: sticky;
+  display: block;
+  bottom: 0;
+  height: 16px;
+  margin-top: -16px;
+  background: linear-gradient(to bottom, transparent, rgb(var(--bg-surface-rgb)));
+  pointer-events: none;
 }
 
 .audio-bar {
@@ -1917,7 +2157,7 @@ function runTask(task: ClassroomRecommendedTask) {
   gap: 10px;
   margin-left: 44px;
   width: calc(100% - 44px);
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid rgb(var(--line-rgb));
 }
 

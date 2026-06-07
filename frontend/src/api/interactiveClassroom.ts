@@ -42,6 +42,27 @@ export interface InteractiveClassroomAction {
   agent_id: string
   text?: string
   audio_url?: string
+  payload?: Record<string, unknown>
+}
+
+export interface HighlightTarget {
+  id: string
+  text: string
+  kind?: string
+  bbox: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
+
+export interface HighlightCue {
+  target_id: string
+  start_ratio: number
+  end_ratio: number
+  mode?: 'outline' | 'spotlight' | string
+  label?: string
 }
 
 export interface InteractiveClassroomQuestion {
