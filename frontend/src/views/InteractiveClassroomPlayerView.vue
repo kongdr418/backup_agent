@@ -362,6 +362,7 @@
       :multi-agent-enabled="multiAgentDiscussionEnabled"
       @submit="handleDiscussionSubmit"
       @quick-action="handleDiscussionQuickAction"
+      @clear-history="confirmClearDiscussionHistory"
       @update:multi-agent-enabled="multiAgentDiscussionEnabled = $event"
     />
   </div>
@@ -372,7 +373,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
@@ -393,6 +394,7 @@ import {
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
 import { buildClassroomDiscussionLlmPayload } from '@/utils/classroomDiscussionLlmConfig'
 import {
+  clearPersistedDiscussionMessages,
   loadPersistedDiscussionMessages,
   savePersistedDiscussionMessages,
 } from '@/utils/classroomDiscussionState'
@@ -415,6 +417,7 @@ import { useSettingStore } from '@/stores/settingStore'
 
 const route = useRoute()
 const router = useRouter()
+const dialog = useDialog()
 const message = useMessage()
 const settingStore = useSettingStore()
 
@@ -893,6 +896,27 @@ function sendQuestionToDiscussion(q: InteractiveClassroomQuestion) {
 function syncDiscussionPersistence() {
   if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
   savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
+}
+
+function clearDiscussionHistory() {
+  if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
+  discussionMessages.value = []
+  discussionSubmitting.value = false
+  clearPersistedDiscussionMessages(classroom.value.id, currentScene.value.id)
+}
+
+function confirmClearDiscussionHistory() {
+  if (!discussionMessages.value.length) return
+  dialog.warning({
+    title: '清空互动讨论记录',
+    content: '只清除当前课堂当前场景的 AI 互动讨论记录，操作后无法恢复，是否继续？',
+    positiveText: '确认清空',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      clearDiscussionHistory()
+      message.success('已清空当前场景的讨论记录')
+    },
+  })
 }
 
 function restoreDiscussionForCurrentScene() {
