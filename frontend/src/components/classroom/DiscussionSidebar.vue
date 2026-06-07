@@ -18,7 +18,7 @@
 
       <article
         v-for="(message, index) in messages"
-        :key="`${message.role}-${index}`"
+        :key="message.message_id || `${message.role}-${index}-${message.content.slice(0, 24)}`"
         class="message-card"
         :class="[message.role, message.agent_id || '', { pending: message.pending }]"
       >

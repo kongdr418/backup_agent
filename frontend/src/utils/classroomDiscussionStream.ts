@@ -1,6 +1,45 @@
 import type { ClassroomDiscussionMessage } from '@/api/interactiveClassroom'
 import type { SseEvent } from '@/types'
 
+export function scopeDiscussionMessageId(requestId: string, messageId?: string) {
+  const scopedSuffix = (messageId || 'assistant').trim() || 'assistant'
+  return `${requestId}:${scopedSuffix}`
+}
+
+export function upsertDiscussionAssistantMessage(
+  messages: ClassroomDiscussionMessage[],
+  payload: {
+    message_id: string
+    content: string
+    trigger: string
+    agent_id?: string
+    agent_name?: string
+    pending?: boolean
+  },
+): ClassroomDiscussionMessage[] {
+  const updated = [...messages]
+  const existingIndex = updated.findIndex((item) => item.message_id === payload.message_id)
+  const nextMessage: ClassroomDiscussionMessage = {
+    role: 'assistant',
+    content: payload.content,
+    trigger: payload.trigger,
+    agent_id: payload.agent_id || 'teacher',
+    agent_name: payload.agent_name || 'AI 教师',
+    message_id: payload.message_id,
+    pending: Boolean(payload.pending),
+  }
+
+  if (existingIndex >= 0) {
+    updated[existingIndex] = {
+      ...updated[existingIndex],
+      ...nextMessage,
+    }
+  } else {
+    updated.push(nextMessage)
+  }
+  return updated
+}
+
 export function applyDiscussionAgentEvent(
   messages: ClassroomDiscussionMessage[],
   event: Pick<SseEvent, 'type' | 'message_id' | 'agent_id' | 'agent_name' | 'chunk' | 'content'>,
@@ -17,24 +56,12 @@ export function applyDiscussionAgentEvent(
       ? event.content ?? current?.content ?? ''
       : current?.content ?? ''
 
-  const nextMessage: ClassroomDiscussionMessage = {
-    role: 'assistant',
+  return upsertDiscussionAssistantMessage(updated, {
+    message_id: messageId,
     content: nextContent,
     trigger,
     agent_id: event.agent_id || current?.agent_id || 'teacher',
     agent_name: event.agent_name || current?.agent_name || 'AI 教师',
-    message_id: messageId,
     pending: event.type === 'agent_start',
-  }
-
-  if (event.type === 'agent_chunk' || event.type === 'agent_done') {
-    nextMessage.pending = false
-  }
-
-  if (existingIndex >= 0) {
-    updated[existingIndex] = nextMessage
-  } else {
-    updated.push(nextMessage)
-  }
-  return updated
+  })
 }

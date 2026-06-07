@@ -391,11 +391,12 @@ import {
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
+import { buildClassroomDiscussionLlmPayload } from '@/utils/classroomDiscussionLlmConfig'
 import {
   loadPersistedDiscussionMessages,
   savePersistedDiscussionMessages,
 } from '@/utils/classroomDiscussionState'
-import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
+import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
@@ -962,10 +963,13 @@ function handleAudioEnded() {
 async function requestDiscussion(trigger: string, payload: { content?: string; quickAction?: string }) {
   if (!classroom.value) return
   const nextMessages = [...discussionMessages.value]
+  const requestNonce = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const userMessageId = `discussion_user_${requestNonce}`
+  const singleAgentMessageId = `discussion_single_${requestNonce}`
   if (payload.content) {
-    nextMessages.push({ role: 'user', content: payload.content })
+    nextMessages.push({ role: 'user', content: payload.content, message_id: userMessageId })
   } else if (payload.quickAction) {
-    nextMessages.push({ role: 'user', content: payload.quickAction })
+    nextMessages.push({ role: 'user', content: payload.quickAction, message_id: userMessageId })
   }
 
   const baseRequest = {
@@ -975,10 +979,12 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     trigger,
     quick_action: payload.quickAction,
     multi_agent: multiAgentDiscussionEnabled.value,
-    content_model: settingStore.settings.content_model,
-    content_api_key: settingStore.getEffectiveContentApiKey(),
-    content_base_url: settingStore.getEffectiveContentBaseUrl(),
-    content_provider_type: settingStore.getContentProviderType(),
+    ...buildClassroomDiscussionLlmPayload({
+      settings: settingStore.settings,
+      getEffectiveApiKey: () => settingStore.getEffectiveApiKey(),
+      getEffectiveBaseUrl: () => settingStore.getEffectiveBaseUrl(),
+      getProviderType: () => settingStore.getProviderType(),
+    }),
   }
 
   // 不 upfront 推空 assistant — 让"正在思考"指示器独占显示，
@@ -986,15 +992,21 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
   discussionMessages.value = nextMessages
   discussionSubmitting.value = true
 
-  function pushOrReplaceAssistant(content: string) {
-    const updated = [...discussionMessages.value]
-    const last = updated[updated.length - 1]
-    if (last && last.role === 'assistant') {
-      updated[updated.length - 1] = { role: 'assistant', content, trigger }
-    } else {
-      updated.push({ role: 'assistant', content, trigger })
+  function scopeAssistantMessage(message: ClassroomDiscussionMessage): ClassroomDiscussionMessage {
+    return {
+      ...message,
+      message_id: scopeDiscussionMessageId(requestNonce, message.message_id),
     }
-    discussionMessages.value = updated
+  }
+
+  function pushOrReplaceAssistant(content: string) {
+    discussionMessages.value = upsertDiscussionAssistantMessage(discussionMessages.value, {
+      message_id: scopeDiscussionMessageId(requestNonce, singleAgentMessageId),
+      content,
+      trigger,
+      agent_id: 'teacher',
+      agent_name: 'AI 教师',
+    })
   }
 
   let accumulated = ''
@@ -1002,13 +1014,17 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     for await (const ev of discussInteractiveClassroomStream(classroom.value.id, baseRequest)) {
       if (ev.error) throw new Error(ev.error)
       if (ev.done) break
+      const scopedEvent = {
+        ...ev,
+        message_id: scopeDiscussionMessageId(requestNonce, ev.message_id),
+      }
       if (ev.type === 'agent_start') {
-        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, scopedEvent, trigger)
         continue
       }
       if (ev.type === 'agent_chunk' || ev.type === 'agent_done') {
         accumulated += ev.chunk || ev.content || ''
-        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, scopedEvent, trigger)
         continue
       }
       if (ev.chunk) {
@@ -1020,7 +1036,7 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     if (!accumulated) {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
       if (result.assistant_messages?.length) {
-        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages.map(scopeAssistantMessage)]
       } else {
         pushOrReplaceAssistant(result.assistant_message.content)
       }
@@ -1030,7 +1046,7 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     try {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
       if (result.assistant_messages?.length) {
-        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages.map(scopeAssistantMessage)]
       } else {
         pushOrReplaceAssistant(result.assistant_message.content)
       }
