@@ -221,6 +221,214 @@ def _brief(text: str, max_len: int = 220) -> str:
     return text[:max_len].rstrip("，。；、 ") + "。"
 
 
+def _speech_text_from_manuscript(text: str, max_len: int = 900) -> str:
+    """保留比摘要更完整的备注讲稿，供课堂 TTS 与底部讲稿使用。"""
+    cleaned = _clean_text(text)
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[:max_len].rstrip("，。；、 ") + "。"
+
+
+def _split_speech_segments(text: str, limit: int = 6) -> list[str]:
+    """把讲稿拆成可同步高亮的短段，保留句末标点便于前端展示。"""
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+
+    parts = re.findall(r"[^。！？!?；;]+[。！？!?；;]?", cleaned)
+    segments: list[str] = []
+    for part in parts:
+        segment = part.strip()
+        if len(segment) < 3:
+            continue
+        segments.append(segment)
+        if len(segments) >= limit:
+            break
+    return segments or [cleaned]
+
+
+def _parse_svg_number(attrs: str, name: str, default: float = 0) -> float:
+    match = re.search(rf'\b{name}\s*=\s*["\']\s*([-+]?\d+(?:\.\d+)?)', attrs, flags=re.I)
+    if not match:
+        return default
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return default
+
+
+def _svg_text_content(raw: str) -> str:
+    raw = re.sub(r"<[^>]+>", "", raw)
+    return _clean_text(raw)
+
+
+def _extract_svg_highlight_targets(svg: str, limit: int = 12) -> list[dict[str, Any]]:
+    """从 SVG 文本节点提取可高亮目标，并估算 bbox。
+
+    当前 PPT 引擎输出的 SVG 文本多数带 x/y/font-size。浏览器端会优先用
+    实际 DOM bbox 修正位置；这里的 bbox 让已保存课堂也具备可回放元数据。
+    """
+    targets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    pattern = re.compile(r"<text\b([^>]*)>(.*?)</text\s*>", flags=re.I | re.S)
+    for match in pattern.finditer(svg or ""):
+        attrs, body = match.groups()
+        text = _svg_text_content(body)
+        if len(text) < 2 or text in seen:
+            continue
+        if re.search(r"\b(slide|page)[_\-\s]*\d+\b", text, flags=re.I):
+            continue
+
+        font_size = _parse_svg_number(attrs, "font-size", 24)
+        x = _parse_svg_number(attrs, "x", 0)
+        baseline_y = _parse_svg_number(attrs, "y", 0)
+        width = max(font_size * 2.5, len(text) * font_size * 0.58)
+        height = max(font_size * 1.25, 24)
+        y = max(0, baseline_y - font_size)
+        seen.add(text)
+        targets.append(
+            {
+                "id": f"hl_{len(targets) + 1:03d}",
+                "text": text,
+                "kind": "text",
+                "bbox": {
+                    "x": round(x, 2),
+                    "y": round(y, 2),
+                    "width": round(width, 2),
+                    "height": round(height, 2),
+                },
+            }
+        )
+        if len(targets) >= limit:
+            break
+    return targets
+
+
+def _match_text_score(segment: str, target_text: str) -> int:
+    seg = re.sub(r"\W+", "", segment.lower())
+    target = re.sub(r"\W+", "", target_text.lower())
+    if not seg or not target:
+        return 0
+    if target in seg:
+        return len(target) * 3
+    if seg in target:
+        return len(seg) * 2
+    target_chars = {ch for ch in target if not ch.isspace()}
+    return sum(1 for ch in seg if ch in target_chars)
+
+
+def _highlight_mode_for_segment(segment: str, index: int) -> str:
+    if index == 0:
+        return "spotlight"
+    if re.search(r"(重点|核心|关键|注意|看这里)", segment):
+        return "spotlight"
+    return "outline"
+
+
+def _build_highlight_cues(
+    segments: list[str],
+    targets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not segments or not targets:
+        return []
+
+    cues: list[dict[str, Any]] = []
+    total = len(segments)
+    for idx, segment in enumerate(segments):
+        best = max(
+            targets,
+            key=lambda target: _match_text_score(segment, str(target.get("text") or "")),
+        )
+        if _match_text_score(segment, str(best.get("text") or "")) <= 0:
+            best = targets[0]
+
+        start = idx / total
+        end = (idx + 1) / total
+        cues.append(
+            {
+                "target_id": best["id"],
+                "start_ratio": round(start, 6),
+                "end_ratio": round(end, 6),
+                "mode": _highlight_mode_for_segment(segment, idx),
+                "label": segment,
+            }
+        )
+    return cues
+
+
+def _safe_segment_mode(value: Any, fallback: str = "outline") -> str:
+    return "spotlight" if str(value or "").strip() == "spotlight" else fallback
+
+
+def _compose_teaching_speech(segments: list[dict[str, Any]]) -> str:
+    return "\n".join(str(item.get("text") or "").strip() for item in segments if str(item.get("text") or "").strip())
+
+
+def _build_highlight_cues_from_teaching_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    usable = [item for item in segments if item.get("target_id") and str(item.get("text") or "").strip()]
+    if not usable:
+        return []
+    weights = [max(1, len(_clean_text(str(item.get("text") or "")))) for item in usable]
+    total_weight = sum(weights) or len(usable)
+    cues: list[dict[str, Any]] = []
+    cursor = 0.0
+    for idx, item in enumerate(usable):
+        start = cursor
+        cursor += weights[idx] / total_weight
+        end = 1.0 if idx == len(usable) - 1 else cursor
+        cues.append(
+            {
+                "target_id": str(item.get("target_id") or ""),
+                "start_ratio": round(start, 6),
+                "end_ratio": round(end, 6),
+                "mode": _safe_segment_mode(item.get("mode"), "outline"),
+                "label": str(item.get("text") or "").strip(),
+            }
+        )
+    return cues
+
+
+def _fallback_teaching_segments(
+    title: str,
+    manuscript_note: str,
+    targets: list[dict[str, Any]],
+    svg_texts: list[str],
+) -> list[dict[str, Any]]:
+    source_targets = targets[:5]
+    if not source_targets:
+        source_targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(svg_texts[:5])
+            if text
+        ]
+    if not source_targets:
+        source_targets = [{"id": "hl_001", "text": title or "本页主题"}]
+
+    note = _clean_text(manuscript_note)
+    result: list[dict[str, Any]] = []
+    for idx, target in enumerate(source_targets):
+        target_text = str(target.get("text") or title or "这一点").strip()
+        if idx == 0:
+            text = (
+                f"这一页我们先把视线放到“{target_text}”。"
+                f"{note or f'它是理解“{title}”这页内容的入口。'}"
+                f"听的时候先不要急着记结论，先想一想：它在这页中负责回答什么问题，"
+                f"又和后面的几个关键词有什么关系。"
+            )
+            mode = "spotlight"
+        else:
+            text = (
+                f"接着看“{target_text}”。"
+                f"这里不是孤立的信息点，而是对刚才主题的进一步展开。"
+                f"你可以把它和页面上的前一个重点连起来理解：先看它描述的对象，"
+                f"再看它暗示的过程或判断标准。这样回到题目时，就不只是记住一个词，"
+                f"而是知道它在真实任务中怎么发挥作用。"
+            )
+            mode = "outline"
+        result.append({"target_id": target["id"], "mode": mode, "text": text})
+    return result
+
+
 def _normalize_student_profile(profile: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(profile, dict):
         return {}
@@ -368,7 +576,7 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
     ) -> str:
         if manuscript_note:
-            return _brief(manuscript_note)
+            return _speech_text_from_manuscript(manuscript_note)
 
         key_points = [text for text in svg_texts if text != title][:4]
         if key_points:
@@ -376,6 +584,106 @@ class InteractiveClassroomGenerator:
             return f"这一页的主题是“{title}”。请重点关注：{joined}。我们先把这些关键点串起来理解。"
 
         return f"现在进入第 {idx} 页“{title}”。这一页主要帮助我们建立整体印象，先抓住标题和页面中的核心关系。"
+
+    def _build_teaching_segments_prompt(
+        self,
+        *,
+        page_index: int,
+        page_total: int,
+        title: str,
+        manuscript_note: str,
+        targets: list[dict[str, Any]],
+        student_profile: dict[str, str] | None = None,
+    ) -> str:
+        target_lines = []
+        for target in targets[:8]:
+            target_lines.append(f"- id: {target.get('id')}｜text: {target.get('text')}")
+        profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
+        position = "first" if page_index == 1 else ("last" if page_index == page_total else "middle")
+        return f"""你是智慧课堂的授课脚本设计师。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
+
+## 页面位置
+第 {page_index} / {page_total} 页，position={position}
+
+## 页面标题
+{title}
+
+## 原始 PPT 备注/讲稿
+{manuscript_note or "无"}
+
+## 可高亮目标
+{chr(10).join(target_lines) or "无"}
+
+## 学生画像
+{profile_hint or "无"}
+
+## 要求
+1. 直接返回 JSON，不要 Markdown 代码块。
+2. 输出 4 到 6 个 segments；如果可高亮目标少于 4 个，可以重复核心目标，但讲解内容不能重复。
+3. 每个 segment 必须从可高亮目标中选择 target_id。
+4. 每段 text 80 到 140 个中文字符，口语化，像老师在讲课，不要照抄 PPT。
+5. 讲稿必须和当前 target 的文字实际对应：讲“图像分类”就绑定“图像分类”，讲“目标检测”就绑定“目标检测”。
+6. 第一段或真正强调“重点/核心/关键”的段落 mode 用 "spotlight"，其他用 "outline"。
+7. 中间页不要寒暄；第一页可自然开场；最后一页可总结。
+
+## JSON 格式
+{{
+  "segments": [
+    {{"target_id": "hl_001", "mode": "spotlight", "text": "讲解内容"}},
+    {{"target_id": "hl_002", "mode": "outline", "text": "讲解内容"}}
+  ]
+}}"""
+
+    def _generate_teaching_segments(
+        self,
+        *,
+        page_index: int,
+        page_total: int,
+        title: str,
+        manuscript_note: str,
+        targets: list[dict[str, Any]],
+        svg_texts: list[str],
+        student_profile: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        valid_ids = {str(target.get("id")) for target in targets if target.get("id")}
+        if targets:
+            try:
+                quiz_generator = self._get_quiz_generator()
+                prompt = self._build_teaching_segments_prompt(
+                    page_index=page_index,
+                    page_total=page_total,
+                    title=title,
+                    manuscript_note=manuscript_note,
+                    targets=targets,
+                    student_profile=student_profile,
+                )
+                raw = quiz_generator._call_llm(prompt)  # noqa: SLF001
+                data = json.loads(self._clean_llm_json(raw))
+                rows = data.get("segments") if isinstance(data, dict) else None
+                segments: list[dict[str, Any]] = []
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        target_id = str(row.get("target_id") or "").strip()
+                        text = _clean_text(str(row.get("text") or ""))
+                        if target_id not in valid_ids or len(text) < 12:
+                            continue
+                        segments.append(
+                            {
+                                "target_id": target_id,
+                                "mode": _safe_segment_mode(row.get("mode"), "outline"),
+                                "text": text,
+                            }
+                        )
+                        if len(segments) >= 6:
+                            break
+                if len(segments) >= 2:
+                    return segments
+            except Exception:
+                pass
+
+        return _fallback_teaching_segments(title, manuscript_note, targets, svg_texts)
 
     def _build_slide_scenes_from_ppt_job(
         self,
@@ -422,7 +730,25 @@ class InteractiveClassroomGenerator:
             svg_texts = _extract_svg_texts(svg)
             manuscript_note = manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else ""
             title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
-            speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
+            highlight_targets = _extract_svg_highlight_targets(svg)
+            teaching_segments = self._generate_teaching_segments(
+                page_index=idx,
+                page_total=len(svg_files),
+                title=title,
+                manuscript_note=manuscript_note,
+                targets=highlight_targets,
+                svg_texts=svg_texts,
+                student_profile=student_profile,
+            )
+            speech_text = _compose_teaching_speech(teaching_segments)
+            if not speech_text:
+                speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
+                teaching_segments = [
+                    {"target_id": item["target_id"], "mode": item["mode"], "text": item["label"]}
+                    for item in _build_highlight_cues(_split_speech_segments(speech_text), highlight_targets)
+                ]
+            speech_segments = [str(item.get("text") or "").strip() for item in teaching_segments if str(item.get("text") or "").strip()]
+            highlight_cues = _build_highlight_cues_from_teaching_segments(teaching_segments)
 
             scene = ClassroomScene(
                 id=f"scene_slide_{idx:03d}",
@@ -436,12 +762,15 @@ class InteractiveClassroomGenerator:
                     "ppt_slide": {"job_id": ppt_job_id, "page": idx, "filename": fname},
                     "extracted_text": svg_texts,
                     "speech_source": "manuscript" if manuscript_note else "svg_text",
+                    "speech_segments": speech_segments,
+                    "highlight_targets": highlight_targets,
                 },
                 actions=[
                     ClassroomAction(
                         id=f"act_slide_{idx:03d}",
                         type="speech",
                         text=speech_text,
+                        payload={"highlight_cues": highlight_cues},
                     )
                 ],
             )
