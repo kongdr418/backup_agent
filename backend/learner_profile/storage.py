@@ -10,6 +10,7 @@ from typing import Any
 
 PROFILE_VERSION = 1
 _SAFE_USER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+PPT_LEARNING_STRATEGY_TITLE = "【学习者画像教学策略】"
 
 
 def _now_iso() -> str:
@@ -199,3 +200,30 @@ class LearnerProfileStorage:
             "style": style or "图解+案例",
             "difficulty": preferences.get("preferred_difficulty") or "基础",
         }
+
+    def build_ppt_learning_strategy(self, user_id: str) -> str:
+        profile = self.load_profile(user_id)
+        basic = profile.get("basic", {})
+        preferences = profile.get("preferences", {})
+        content_style = preferences.get("content_style", [])
+
+        stage = basic.get("learning_stage") or "未填写"
+        basis = basic.get("learning_basis") or "零基础"
+        background = basic.get("background") or "未填写"
+        goal = preferences.get("goal") or "考试通过"
+        styles = "、".join(content_style) or "图解、案例"
+        difficulty = preferences.get("preferred_difficulty") or "基础"
+        tutoring_style = preferences.get("tutoring_style") or "循序渐进"
+
+        return "\n".join([
+            PPT_LEARNING_STRATEGY_TITLE,
+            f"学习阶段：{stage}",
+            f"已有基础：{basis}",
+            f"学习背景：{background}",
+            f"学习目标：{goal}",
+            f"内容偏好：{styles}",
+            f"难度策略：{difficulty}",
+            f"辅导方式：{tutoring_style}",
+            "请据此调整知识起点、内容结构、案例类型、解释深度和课堂互动题难度。",
+            "不要把画像字段直接展示在幻灯片正文中，也不要将画像信息写入学生可见讲稿。",
+        ])

@@ -163,9 +163,8 @@ import {
   startInteractiveClassroomGeneration,
 } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
-import { useStudentProfile } from '@/composables/useStudentProfile'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
-import { buildClassroomPptNotes, type ClassroomLearnerProfile, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
+import { buildClassroomPptNotes, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
@@ -176,7 +175,6 @@ const store = usePptStore()
 const settingStore = useSettingStore()
 const router = useRouter()
 const route = useRoute()
-const { profile: studentProfile } = useStudentProfile()
 useRefreshGuard()
 
 const pptModelLabel = computed(() => {
@@ -312,13 +310,12 @@ function applyClassroomDraft() {
 
   const topic = firstQueryValue(route.query.topic).trim()
   const course = firstQueryValue(route.query.course).trim()
-  const classroomProfile = getClassroomProfileFromQuery()
   const learningContext = getLearningContextFromQuery()
   if (topic) {
     store.params = {
       ...store.params,
       topic,
-      notes: buildClassroomPptNotes(classroomProfile, store.params.notes, learningContext),
+      notes: buildClassroomPptNotes(store.params.notes, learningContext),
       deep_research: false,
       visual_critic: false,
     }
@@ -326,19 +323,6 @@ function applyClassroomDraft() {
   }
   if (course) {
     classroomCourse.value = course
-  }
-  studentProfile.value = {
-    ...studentProfile.value,
-    ...classroomProfile,
-  }
-}
-
-function getClassroomProfileFromQuery(): ClassroomLearnerProfile {
-  return {
-    basis: firstQueryValue(route.query.basis).trim() || studentProfile.value.basis,
-    goal: firstQueryValue(route.query.goal).trim() || studentProfile.value.goal,
-    style: firstQueryValue(route.query.style).trim() || studentProfile.value.style,
-    difficulty: firstQueryValue(route.query.difficulty).trim() || studentProfile.value.difficulty,
   }
 }
 
@@ -398,6 +382,9 @@ async function onGenerate() {
       model: settingStore.settings.ppt_model || store.params.model,
       api_key: settingStore.getEffectivePptApiKey() || store.params.api_key,
       base_url: settingStore.getEffectivePptBaseUrl() || store.params.base_url,
+      source: firstQueryValue(route.query.from) === 'interactive-classroom'
+        ? 'interactive-classroom' as const
+        : undefined,
     }
     await generate(paramsWithModel)
     if (store.gen.status === 'done') {
@@ -455,7 +442,6 @@ async function onCreateClassroom() {
       request_id: requestId,
       course: classroomCourse.value || topic,
       ppt_job_id: pptJobId || undefined,
-      student_profile: studentProfile.value,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
       tts_voice: settingStore.settings.tts_voice,

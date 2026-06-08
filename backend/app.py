@@ -2173,10 +2173,19 @@ def get_video_audio(filename):
 
 # ==================== SVG PPT 端点 ====================
 
+def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
+    notes = (data.get('notes') or '').strip()
+    source = (data.get('source') or '').strip()
+    if source == 'interactive-classroom':
+        learning_strategy = LEARNER_PROFILE_STORAGE.build_ppt_learning_strategy(user_id)
+        notes = '\n\n'.join(part for part in [notes, learning_strategy] if part)
+    return notes or None
+
+
 @app.route('/api/ppt-svg/generate', methods=['POST'])
 def ppt_svg_generate():
     """SVG PPT 流式生成接口（SSE）"""
-    data = request.json
+    data = request.json or {}
     topic = data.get('topic', '').strip()
     language = data.get('language', 'zh')
     num_slides = data.get('num_slides')
@@ -2195,8 +2204,8 @@ def ppt_svg_generate():
     deep_research = data.get('deep_research', False)
     visual_critic = data.get('visual_critic', False)
     template_id = data.get('template_id')
-    notes = (data.get('notes') or '').strip() or None
     user_id = get_request_user_id()
+    notes = _resolve_ppt_generation_notes(data, user_id)
 
     if not topic:
         return jsonify({'error': '课程主题不能为空'}), 400

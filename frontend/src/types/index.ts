@@ -234,6 +234,7 @@ export interface PptGenerateParams {
   visual_critic?: boolean
   template_id?: string
   notes?: string  // 用户附加要求（仅补充上下文，不覆盖参数；不持久化）
+  source?: 'interactive-classroom'
 }
 
 export type PptStage =
