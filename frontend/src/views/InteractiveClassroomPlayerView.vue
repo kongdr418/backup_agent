@@ -66,6 +66,7 @@
               <div class="q-title">
                 {{ q.question }}
                 <span v-if="q.type === 'short_answer'" class="question-type-tag">简答题</span>
+                <span v-else-if="q.type === 'multiple'" class="question-type-tag">多选题</span>
               </div>
             </div>
 
