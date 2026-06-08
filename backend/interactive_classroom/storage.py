@@ -5,7 +5,10 @@ import os
 import re
 import shutil
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from interactive_classroom.schema import LearningEvent
 
 
 def _now_iso() -> str:
@@ -141,3 +144,42 @@ class ClassroomStorage:
                 continue
         rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return rows
+
+    # ---- 学习事件 (P7) ----
+
+    def _events_path(self, user_id: str, classroom_id: str) -> str:
+        return os.path.join(self.classroom_dir(user_id, classroom_id), "learning_events.json")
+
+    def _load_events_file(self, user_id: str, classroom_id: str) -> dict[str, Any]:
+        path = self._events_path(user_id, classroom_id)
+        if not os.path.exists(path):
+            return {"events": []}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_events_file(self, user_id: str, classroom_id: str, data: dict[str, Any]) -> None:
+        path = self._events_path(user_id, classroom_id)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def save_event(self, user_id: str, classroom_id: str, event: "LearningEvent") -> None:
+        data = self._load_events_file(user_id, classroom_id)
+        data["events"].append(event.to_dict())
+        data["updated_at"] = _now_iso()
+        self._write_events_file(user_id, classroom_id, data)
+
+    def load_events(self, user_id: str, classroom_id: str) -> list[dict[str, Any]]:
+        data = self._load_events_file(user_id, classroom_id)
+        return data.get("events", [])
+
+    def find_event_by_dedupe_key(
+        self, user_id: str, classroom_id: str, dedupe_key: str
+    ) -> "LearningEvent | None":
+        if not dedupe_key:
+            return None
+        events = self.load_events(user_id, classroom_id)
+        for ev_data in events:
+            if ev_data.get("dedupe_key") == dedupe_key:
+                from interactive_classroom.schema import LearningEvent
+                return LearningEvent(**{k: v for k, v in ev_data.items() if k in LearningEvent.__dataclass_fields__})
+        return None

@@ -18,6 +18,15 @@ from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report
+from interactive_classroom.event_service import (
+    create_quiz_submitted_event,
+    create_short_answer_scored_event,
+    create_scene_reviewed_event,
+    create_recommended_task_opened_event,
+    create_recommended_task_completed_event,
+    create_classroom_completed_event,
+    record_event,
+)
 from interactive_classroom.discussion_service import (
     generate_discussion_reply,
     generate_discussion_reply_stream,
@@ -3144,6 +3153,40 @@ def interactive_classroom_answer(classroom_id):
         answers_payload={'answers': answers, 'evaluation': eval_result},
     )
 
+    # ---- P7: 记录学习事件 ----
+    course_id = classroom.get('course', '') or classroom.get('topic', '')
+    try:
+        # quiz_submitted 事件
+        quiz_event = create_quiz_submitted_event(
+            user_id=user_id,
+            classroom_id=classroom_id,
+            scene_id=scene_id,
+            course_id=course_id,
+            eval_result=eval_result,
+            answers=answers,
+        )
+        record_event(CLASSROOM_STORAGE, quiz_event)
+
+        # 每道简答题单独记录 short_answer_scored
+        for result in eval_result.get('results', []):
+            if result.get('score') is not None and result.get('feedback') is not None:
+                sa_event = create_short_answer_scored_event(
+                    user_id=user_id,
+                    classroom_id=classroom_id,
+                    scene_id=scene_id,
+                    course_id=course_id,
+                    question_id=result.get('question_id', ''),
+                    knowledge_point=result.get('knowledge_point', ''),
+                    grade={
+                        'score': result.get('score', 0),
+                        'feedback': result.get('feedback', ''),
+                        'covered_points': result.get('covered_points', []),
+                    },
+                )
+                record_event(CLASSROOM_STORAGE, sa_event)
+    except Exception:
+        request_logger.warning('[INTERACTIVE-CLASSROOM] 学习事件记录失败（不影响答题流程）', exc_info=True)
+
     feedback_action = {
         'id': f'feedback_{scene_id}',
         'type': 'quiz_feedback',
@@ -3191,9 +3234,99 @@ def interactive_classroom_report(classroom_id):
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
     answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
-    report = build_classroom_report(classroom, answers)
+    events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+    report = build_classroom_report(classroom, answers, events)
     CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
     return jsonify({'success': True, 'report': report})
+
+
+# ---- P7: 学习事件 API ----
+
+@app.route('/api/interactive-classroom/<classroom_id>/event', methods=['POST'])
+def interactive_classroom_record_event(classroom_id):
+    """记录单个学习事件（scene_reviewed / recommended_task_opened / classroom_completed 等）。"""
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    data = request.json or {}
+    event_type = (data.get('event_type') or '').strip()
+    scene_id = (data.get('scene_id') or '').strip()
+    if not event_type:
+        return jsonify({'success': False, 'error': 'event_type 不能为空'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    course_id = classroom.get('course', '') or classroom.get('topic', '')
+    extra = data.get('payload') or {}
+
+    try:
+        if event_type == 'scene_reviewed':
+            scene = next((s for s in classroom.get('scenes', []) if s.get('id') == scene_id), None)
+            event = create_scene_reviewed_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                scene_id=scene_id,
+                course_id=course_id,
+                knowledge_points=scene.get('knowledge_points', []) if scene else [],
+                review_count=int(extra.get('review_count', 1)),
+            )
+        elif event_type == 'recommended_task_opened':
+            event = create_recommended_task_opened_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                course_id=course_id,
+                task_id=extra.get('task_id', ''),
+                task_type=extra.get('task_type', ''),
+                knowledge_points=extra.get('knowledge_points', []),
+            )
+        elif event_type == 'recommended_task_completed':
+            event = create_recommended_task_completed_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                course_id=course_id,
+                task_id=extra.get('task_id', ''),
+                task_type=extra.get('task_type', ''),
+                knowledge_points=extra.get('knowledge_points', []),
+                result=extra.get('result', {}),
+            )
+        elif event_type == 'classroom_completed':
+            event = create_classroom_completed_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                course_id=course_id,
+                quiz_total=int(extra.get('quiz_total', 0)),
+                answered_total=int(extra.get('answered_total', 0)),
+            )
+        else:
+            return jsonify({'success': False, 'error': f'不支持的 event_type: {event_type}'}), 400
+
+        saved = record_event(CLASSROOM_STORAGE, event)
+        return jsonify({'success': True, 'event': saved.to_dict()})
+    except Exception as exc:
+        request_logger.exception(f'[INTERACTIVE-CLASSROOM] /event 记录失败: {exc}')
+        return jsonify({'success': False, 'error': '事件记录失败'}), 500
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/events', methods=['GET'])
+def interactive_classroom_list_events(classroom_id):
+    """列出课堂的所有学习事件，支持按 type 筛选。"""
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+    filter_type = (request.args.get('type') or '').strip()
+    if filter_type:
+        events = [e for e in events if e.get('type') == filter_type]
+
+    return jsonify({'success': True, 'events': events})
 
 
 @app.route('/api/interactive-classroom/<classroom_id>/discuss', methods=['POST'])

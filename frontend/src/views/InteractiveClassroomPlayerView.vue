@@ -401,6 +401,7 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import { emitSceneReviewed, emitRecommendedTaskOpened, emitClassroomCompleted } from '@/utils/classroomEvents'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
 import {
@@ -435,6 +436,8 @@ const autoPlayEnabled = ref(true)
 const discussionMessages = ref<ClassroomDiscussionMessage[]>([])
 const discussionSubmitting = ref(false)
 const multiAgentDiscussionEnabled = ref(localStorage.getItem('ai_creator.classroom_discussion.multi_agent') === 'true')
+const visitedSceneIds = ref<Set<string>>(new Set())
+const classroomCompletedEmitted = ref(false)
 const isAudioPlaying = ref(false)
 const currentAudioTime = ref(0)
 const audioDuration = ref(0)
@@ -950,6 +953,13 @@ function selectScene(idx: number) {
   if (target?.type === 'report') {
     showReport().catch(() => undefined)
   }
+  // P7: 复听 — 用户重新进入已访问过的 slide 场景
+  if (target && target.type === 'slide' && classroom.value) {
+    if (visitedSceneIds.value.has(target.id)) {
+      emitSceneReviewed(classroom.value.id, target).catch(() => undefined)
+    }
+    visitedSceneIds.value = new Set([...visitedSceneIds.value, target.id])
+  }
 }
 
 function goPrev() {
@@ -1201,7 +1211,19 @@ async function loadClassroom() {
     const restored = buildPlayerAnswerState(classroom.value)
     answersByScene.value = restored.answersByScene
     quizResultsByScene.value = restored.quizResultsByScene
+    // P7: 标记初始场景为已访问
+    const initialScene = orderedScenes.value[0]
+    if (initialScene) visitedSceneIds.value = new Set([initialScene.id])
     await loadReport(true)
+    // P7: 恢复状态后检查课堂是否已完成（watch 只响应变化，不响应初始值）
+    if (isClassroomComplete.value && !classroomCompletedEmitted.value) {
+      classroomCompletedEmitted.value = true
+      emitClassroomCompleted(
+        classroom.value.id,
+        quizSceneIds.value.length,
+        answeredQuizCount.value,
+      ).catch(() => undefined)
+    }
     if (route.query.scene === 'report') {
       await showReport()
       const reportIndex = orderedScenes.value.findIndex((scene) => scene.type === 'report')
@@ -1266,6 +1288,21 @@ watch(
   multiAgentDiscussionEnabled,
   (enabled) => {
     localStorage.setItem('ai_creator.classroom_discussion.multi_agent', String(enabled))
+  },
+)
+
+// P7: 课堂完成事件
+watch(
+  isClassroomComplete,
+  (complete) => {
+    if (complete && !classroomCompletedEmitted.value && classroom.value) {
+      classroomCompletedEmitted.value = true
+      emitClassroomCompleted(
+        classroom.value.id,
+        quizSceneIds.value.length,
+        answeredQuizCount.value,
+      ).catch(() => undefined)
+    }
   },
 )
 
@@ -1354,6 +1391,16 @@ function taskButtonLabel(task: ClassroomRecommendedTask) {
 }
 
 function runTask(task: ClassroomRecommendedTask) {
+  // P7: 记录任务点击事件
+  if (classroom.value) {
+    emitRecommendedTaskOpened(
+      classroom.value.id,
+      task.id,
+      task.type,
+      task.knowledge_points,
+    ).catch(() => undefined)
+  }
+
   const action = getTaskAction(task)
   if (action.kind === 'scene') {
     const targetIndex = orderedScenes.value.findIndex((scene) => scene.id === action.sceneId)

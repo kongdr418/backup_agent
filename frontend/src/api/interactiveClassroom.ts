@@ -172,11 +172,13 @@ export interface ClassroomReport {
     earned_points: number
     total_points: number
     mastery: number
+    event_ids?: string[]
   }>
   weak_points: string[]
   strong_points: string[]
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
+  event_count?: number
 }
 
 export interface ClassroomDiscussionMessage {
@@ -407,4 +409,66 @@ export async function* streamInteractiveClassroomGeneration(
     const event = raw as unknown as ClassroomStreamEvent
     yield event
   }
+}
+
+// ---------- P7: 学习事件 ----------
+
+export type LearningEventType =
+  | 'quiz_submitted'
+  | 'short_answer_scored'
+  | 'scene_reviewed'
+  | 'recommended_task_opened'
+  | 'recommended_task_completed'
+  | 'classroom_completed'
+
+export interface LearningEvent {
+  id: string
+  type: LearningEventType
+  user_id: string
+  classroom_id: string
+  scene_id?: string
+  course_id?: string
+  created_at: string
+  knowledge_points: string[]
+  payload: Record<string, unknown>
+  retry_of?: string
+  dedupe_key?: string
+}
+
+export async function recordClassroomEvent(
+  classroomId: string,
+  eventType: LearningEventType,
+  payload?: {
+    scene_id?: string
+    task_id?: string
+    task_type?: string
+    knowledge_points?: string[]
+    quiz_total?: number
+    answered_total?: number
+    review_count?: number
+    result?: Record<string, unknown>
+  },
+): Promise<LearningEvent> {
+  const res = await client.post<{ success: boolean; event: LearningEvent }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/event`,
+    {
+      event_type: eventType,
+      scene_id: payload?.scene_id,
+      payload,
+    },
+  )
+  return res.data.event
+}
+
+export async function listClassroomEvents(
+  classroomId: string,
+  filterType?: LearningEventType,
+): Promise<LearningEvent[]> {
+  const params: Record<string, string> = {}
+  if (filterType) params.type = filterType
+  const res = await client.get<{ success: boolean; events: LearningEvent[] }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/events`,
+    { params },
+  )
+  return res.data.events || []
 }
