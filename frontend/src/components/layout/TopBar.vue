@@ -34,7 +34,7 @@
         >
           <Settings class="w-[16px] h-[16px]" />
         </button>
-        <button class="avatar-dot" title="用户画像" @click="router.push('/student-profile')">
+        <button class="avatar-dot" title="学习者中心" @click="router.push('/student-profile')">
           <User class="w-[14px] h-[14px]" />
         </button>
       </div>

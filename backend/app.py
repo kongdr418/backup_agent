@@ -13,6 +13,7 @@ import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
+from learner_profile.storage import LearnerProfileStorage
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
@@ -74,6 +75,7 @@ def get_memory_manager():
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
+LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
 CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
@@ -1482,6 +1484,27 @@ def update_settings():
 
     request_logger.info(f'[SETTINGS] 设置已更新: {DEFAULT_SETTINGS}')
     return jsonify({'success': True, 'settings': DEFAULT_SETTINGS})
+
+
+# ==================== 学习者画像 API ====================
+
+@app.route('/api/learner-profile', methods=['GET'])
+def get_learner_profile():
+    user_id = get_request_user_id()
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    return jsonify({'success': True, 'profile': profile})
+
+
+@app.route('/api/learner-profile', methods=['PUT'])
+def update_learner_profile():
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    profile = data.get('profile')
+    if not isinstance(profile, dict):
+        return jsonify({'success': False, 'error': 'profile must be an object'}), 400
+
+    saved_profile = LEARNER_PROFILE_STORAGE.save_profile(user_id, profile)
+    return jsonify({'success': True, 'profile': saved_profile})
 
 
 # ==================== 文件管理 API ====================
