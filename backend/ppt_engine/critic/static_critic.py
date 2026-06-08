@@ -591,6 +591,9 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         _check_text_container_overflow(
             root, text_boxes, element_order, canvas, violations
         )
+        _check_container_content_bounds(
+            root, text_boxes, element_order, canvas, violations
+        )
 
     # 4f. Empty bullet detector.
     _check_empty_bullets(root, text_boxes, violations)
@@ -958,6 +961,93 @@ def _check_text_container_overflow(
                 bbox=text_bbox,
             )
         )
+
+
+def _candidate_content_shapes(
+    root: ET.Element,
+    element_order: dict[int, int],
+) -> list[tuple[int, ET.Element, tuple[float, float, float, float]]]:
+    out: list[tuple[int, ET.Element, tuple[float, float, float, float]]] = []
+    for el in _iter_all(root):
+        if not _is_visible_filled_shape(el):
+            continue
+        bbox = _shape_bbox(el)
+        if bbox is None:
+            continue
+        x, y, w, h = bbox
+        if w <= 0.0 or h <= 0.0:
+            continue
+        if h <= 8.0 and w >= 80.0:
+            # Top accent bars are often intentionally attached to card edges.
+            continue
+        out.append((element_order.get(id(el), 0), el, bbox))
+    return out
+
+
+def _check_container_content_bounds(
+    root: ET.Element,
+    text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
+    element_order: dict[int, int],
+    canvas: tuple[float, float],
+    violations: list[Violation],
+) -> None:
+    containers = _collect_text_containers(root, element_order, canvas)
+    if not containers:
+        return
+
+    container_ids = {id(el) for _, el, _ in containers}
+    content_items: list[tuple[int, ET.Element, tuple[float, float, float, float], str]] = [
+        (order, el, bbox, "text") for order, el, bbox in text_boxes
+    ]
+    content_items.extend(
+        (order, el, bbox, "shape")
+        for order, el, bbox in _candidate_content_shapes(root, element_order)
+        if id(el) not in container_ids
+    )
+
+    reported: set[tuple[int, int]] = set()
+    for container_order, container_el, container_bbox in containers:
+        x, y, w, h = container_bbox
+        pad = min(18.0, max(12.0, min(w, h) * 0.08))
+        padded = (x + pad, y + pad, max(0.0, w - pad * 2), max(0.0, h - pad * 2))
+        # Catch content aligned with a card but placed just below its bottom edge.
+        influence = (x, y - 2.0, w, h + 72.0)
+        container_area = w * h
+        for item_order, item_el, item_bbox, item_kind in content_items:
+            if item_order <= container_order:
+                continue
+            ix, iy, iw, ih = item_bbox
+            if iw <= 0.0 or ih <= 0.0:
+                continue
+            if iw * ih > container_area * 0.35:
+                continue
+            cx = ix + iw / 2.0
+            cy = iy + ih / 2.0
+            if not _box_contains_point(influence, cx, cy):
+                continue
+            if _box_inside(item_bbox, padded, slack=3.0):
+                continue
+            key = (id(container_el), id(item_el))
+            if key in reported:
+                continue
+            reported.add(key)
+            violations.append(
+                Violation(
+                    rule="container_content_outside",
+                    severity="error",
+                    detail=(
+                        f"{item_kind.capitalize()} content appears to belong to "
+                        "a card/callout but is outside the card's padded bounds. "
+                        f"Item bbox ({ix:.0f},{iy:.0f},{iw:.0f},{ih:.0f}) does "
+                        f"not fit inside container {_element_identifier(container_el)} "
+                        f"with padding {pad:.0f}px. Move the badge/label/text "
+                        "back inside the card, shorten it, or increase the card "
+                        "height while keeping the footer/page number clear."
+                    ),
+                    element=_element_identifier(item_el),
+                    bbox=item_bbox,
+                )
+            )
 
 
 def _check_empty_bullets(

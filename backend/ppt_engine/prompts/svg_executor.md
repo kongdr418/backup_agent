@@ -56,6 +56,9 @@ One complete SVG file per page with proper viewBox.
 16. For card layouts, keep text compact: title <= 10 Chinese characters when possible, subtitle <= 16 Chinese characters, body <= 2 lines, and each body line <= 18 Chinese characters or equivalent width. Put extended explanations in the manuscript/speaker notes, not inside the slide card.
 17. If a label or body sentence may exceed the card width, shorten it first. If the meaning must be kept, split it into separate `<text>` elements with distinct `y` values and clear line spacing.
 18. Before final output, estimate every card line width as `font-size * (CJK_chars * 0.95 + latin_chars * 0.58)` and make sure it is less than the container inner width after padding. Also ensure the final line baseline stays above the container bottom padding.
+19. Bottom badges, chips, and tags must stay fully inside their parent card. Keep at least 18px gap between the badge bottom and the card bottom, and never let a badge overlap the slide footer or page number.
+20. In 3-card or 4-card layouts, do not put full-sentence explanations inside each card. Use compact phrases, mini bullets, or code-like snippets. If a card needs more than 2 body lines, reduce the text content instead of pushing content lower.
+21. Reserve the bottom 56px of the slide for footer/page numbers. Card content must not enter that footer area even when the card itself is tall.
 
 ## Educational Slide Layout Patterns
 
