@@ -26,3 +26,36 @@ def test_card_text_overflow_repair_prompt_is_actionable():
     prompt = report.to_prompt_block()
     assert "hard failure for card layouts" in prompt
     assert "multiple shorter <text> lines" in prompt
+
+
+def test_card_bottom_badge_outside_container_is_blocked():
+    svg = """
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+      <rect x="100" y="140" width="460" height="480" rx="10" fill="#ffffff" stroke="#d9e2ec"/>
+      <rect x="128" y="646" width="120" height="28" rx="14" fill="#e8f2ff"/>
+      <text x="154" y="665" font-size="14" fill="#0f172a">PROTECTED</text>
+    </svg>
+    """
+
+    report = check_svg(svg)
+    rules = {v.rule for v in report.violations}
+
+    assert "container_content_outside" in rules
+
+
+def test_card_content_inside_container_passes_overflow_checks():
+    svg = """
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+      <rect x="100" y="140" width="460" height="480" rx="10" fill="#ffffff" stroke="#d9e2ec"/>
+      <text x="128" y="210" font-size="22" fill="#0f172a">元组定义与特性</text>
+      <text x="128" y="250" font-size="16" fill="#64748b">不可变序列类型</text>
+      <rect x="128" y="570" width="120" height="28" rx="14" fill="#e8f2ff"/>
+      <text x="154" y="589" font-size="14" fill="#0f172a">IMMUTABLE</text>
+    </svg>
+    """
+
+    report = check_svg(svg)
+    rules = {v.rule for v in report.violations}
+
+    assert "text_overflow_in_container" not in rules
+    assert "container_content_outside" not in rules
