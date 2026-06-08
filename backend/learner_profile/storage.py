@@ -182,3 +182,20 @@ class LearnerProfileStorage:
             json.dump(profile, file, ensure_ascii=False, indent=2)
         os.replace(temp_path, path)
         return profile
+
+    def load_classroom_profile(self, user_id: str) -> dict[str, str]:
+        profile = self.load_profile(user_id)
+        basic = profile.get("basic", {})
+        preferences = profile.get("preferences", {})
+        content_style = preferences.get("content_style", [])
+        style = "+".join(
+            str(item).strip()
+            for item in content_style
+            if str(item).strip()
+        )
+        return {
+            "basis": basic.get("learning_basis") or "零基础",
+            "goal": preferences.get("goal") or "考试通过",
+            "style": style or "图解+案例",
+            "difficulty": preferences.get("preferred_difficulty") or "基础",
+        }

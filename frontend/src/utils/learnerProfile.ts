@@ -12,6 +12,12 @@ export const UNIVERSITY_STAGE_VALUES = [
   '博士研究生',
 ] as const
 
+export interface LearnerProfileSummary {
+  isEmpty: boolean
+  tags: string[]
+  description: string
+}
+
 export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
   return {
     profile_version: 1,
@@ -85,6 +91,32 @@ export function toLegacyStudentProfile(profile: LearnerProfile): Required<Studen
     goal: profile.preferences.goal || '考试通过',
     style: profile.preferences.content_style.join('+') || '图解+案例',
     difficulty: profile.preferences.preferred_difficulty || '基础',
+  }
+}
+
+export function buildLearnerProfileSummary(profile: LearnerProfile): LearnerProfileSummary {
+  const tags = [
+    profile.basic.learning_stage,
+    profile.basic.learning_basis,
+    profile.preferences.goal,
+    ...profile.preferences.content_style,
+    profile.preferences.preferred_difficulty
+      ? `${profile.preferences.preferred_difficulty}难度`
+      : '',
+  ].map((item) => item.trim()).filter(Boolean)
+
+  if (!tags.length) {
+    return {
+      isEmpty: true,
+      tags: ['默认学习策略'],
+      description: '尚未完善画像，课堂生成时将使用基础默认策略。',
+    }
+  }
+
+  return {
+    isEmpty: false,
+    tags,
+    description: '课堂生成时将自动读取学习者中心的正式画像。',
   }
 }
 

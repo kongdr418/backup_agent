@@ -2823,7 +2823,7 @@ def interactive_classroom_generate():
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
     request_id = (data.get('request_id') or '').strip()
-    student_profile = data.get('student_profile') if isinstance(data.get('student_profile'), dict) else {}
+    student_profile = LEARNER_PROFILE_STORAGE.load_classroom_profile(user_id)
 
     if not topic:
         return jsonify({'success': False, 'error': 'topic 不能为空'}), 400
