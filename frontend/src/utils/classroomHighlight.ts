@@ -20,6 +20,11 @@ export interface HighlightCue {
   label?: string
 }
 
+const HIGHLIGHT_ENTRY_DELAY_SECONDS = 0.35
+const SPOTLIGHT_MIN_HOLD_SECONDS = 0.8
+const SPOTLIGHT_MAX_HOLD_SECONDS = 1.0
+const SPOTLIGHT_HOLD_SHARE = 0.3
+
 function clampRatio(value: unknown, fallback: number) {
   const numberValue = Number(value)
   if (!Number.isFinite(numberValue)) return fallback
@@ -57,13 +62,29 @@ export function activeHighlightCue(
   duration: number,
 ): HighlightCue | null {
   if (!cues.length) return null
+  if (!Number.isFinite(currentTime) || currentTime < HIGHLIGHT_ENTRY_DELAY_SECONDS) return null
   const ratio = duration > 0 && Number.isFinite(duration)
     ? Math.min(1, Math.max(0, currentTime / duration))
     : 0
-  return (
-    cues.find((cue) => ratio >= cue.start_ratio && ratio < cue.end_ratio)
-    || cues[cues.length - 1]
+  return cues.find((cue) => ratio >= cue.start_ratio && ratio < cue.end_ratio) || null
+}
+
+export function activeHighlightMode(
+  cue: HighlightCue,
+  currentTime: number,
+  duration: number,
+): 'outline' | 'spotlight' {
+  if (cue.mode !== 'spotlight') return 'outline'
+  if (!(duration > 0) || !Number.isFinite(duration) || !Number.isFinite(currentTime)) {
+    return 'outline'
+  }
+  const cueStart = cue.start_ratio * duration
+  const cueDuration = Math.max(0, (cue.end_ratio - cue.start_ratio) * duration)
+  const spotlightHoldSeconds = Math.min(
+    SPOTLIGHT_MAX_HOLD_SECONDS,
+    Math.max(SPOTLIGHT_MIN_HOLD_SECONDS, cueDuration * SPOTLIGHT_HOLD_SHARE),
   )
+  return currentTime - cueStart <= spotlightHoldSeconds ? 'spotlight' : 'outline'
 }
 
 function roundedBox(box: DOMRect | { x: number; y: number; width: number; height: number }): HighlightBox {

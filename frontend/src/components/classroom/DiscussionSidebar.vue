@@ -18,7 +18,7 @@
 
       <article
         v-for="(message, index) in messages"
-        :key="`${message.role}-${index}`"
+        :key="message.message_id || `${message.role}-${index}-${message.content.slice(0, 24)}`"
         class="message-card"
         :class="[message.role, message.agent_id || '', { pending: message.pending }]"
       >
@@ -82,9 +82,19 @@
           </span>
           <span>多 Agent</span>
         </label>
-        <button type="submit" class="submit-btn" :disabled="submitting || !draft.trim()">
-          {{ submitting ? '思考中...' : '发送' }}
-        </button>
+        <div class="submit-actions">
+          <button
+            type="button"
+            class="clear-btn"
+            :disabled="submitting || !messages.length"
+            @click="$emit('clear-history')"
+          >
+            清空
+          </button>
+          <button type="submit" class="submit-btn" :disabled="submitting || !draft.trim()">
+            {{ submitting ? '思考中...' : '发送' }}
+          </button>
+        </div>
       </div>
     </form>
   </aside>
@@ -108,6 +118,7 @@ const emit = defineEmits<{
   submit: [content: string]
   'quick-action': [action: string]
   'update:multi-agent-enabled': [enabled: boolean]
+  'clear-history': []
 }>()
 
 const draft = ref('')
@@ -552,6 +563,29 @@ defineExpose({ submitDraft })
   gap: 10px;
 }
 
+.submit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clear-btn {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 10px;
+  background: rgb(var(--bg-base-rgb));
+  color: rgb(var(--ink-2-rgb));
+  min-width: 56px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.clear-btn:hover:not(:disabled) {
+  border-color: rgb(var(--line-strong-rgb));
+  background: rgb(var(--bg-subtle-rgb));
+}
+
 .submit-btn {
   border: none;
   border-radius: 10px;
@@ -563,7 +597,8 @@ defineExpose({ submitDraft })
   cursor: pointer;
 }
 
-.submit-btn:disabled {
+.submit-btn:disabled,
+.clear-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

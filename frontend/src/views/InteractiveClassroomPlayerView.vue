@@ -35,14 +35,16 @@
               class="highlight-layer"
               :style="highlightLayerStyle"
             >
-              <div
-                v-if="activeHighlight.cue.mode === 'spotlight'"
-                class="highlight-spotlight"
-                :style="highlightBoxStyle"
-              />
+              <Transition name="spotlight-mask">
+                <div
+                  v-if="activeHighlight.mode === 'spotlight'"
+                  class="highlight-spotlight"
+                  :style="highlightBoxStyle"
+                />
+              </Transition>
               <div
                 class="highlight-box"
-                :class="{ spotlight: activeHighlight.cue.mode === 'spotlight' }"
+                :class="{ spotlight: activeHighlight.mode === 'spotlight' }"
                 :style="highlightBoxStyle"
               />
             </div>
@@ -64,6 +66,7 @@
               <div class="q-title">
                 {{ q.question }}
                 <span v-if="q.type === 'short_answer'" class="question-type-tag">简答题</span>
+                <span v-else-if="q.type === 'multiple'" class="question-type-tag">多选题</span>
               </div>
             </div>
 
@@ -246,7 +249,23 @@
                 <div class="play-status">{{ playbackStatusText }}</div>
               </div>
             </div>
-            <div class="speech-text">{{ currentSpeechText || '当前场景暂无讲解词' }}</div>
+            <div ref="speechTextRef" class="speech-text">
+              <template v-if="currentSpeechParagraphs.length">
+                <span
+                  v-for="(paragraph, idx) in currentSpeechParagraphs"
+                  :key="`${idx}-${paragraph.start_ratio}`"
+                  :data-speech-segment-index="idx"
+                  class="speech-segment"
+                  :class="{
+                    active: idx === activeSpeechParagraphIdx,
+                    inactive: activeSpeechParagraphIdx >= 0 && idx !== activeSpeechParagraphIdx,
+                  }"
+                >
+                  {{ paragraph.text }}
+                </span>
+              </template>
+              <template v-else>{{ currentSpeechText || '当前场景暂无讲解词' }}</template>
+            </div>
           </div>
 
           <template v-if="currentAudioUrl">
@@ -344,6 +363,7 @@
       :multi-agent-enabled="multiAgentDiscussionEnabled"
       @submit="handleDiscussionSubmit"
       @quick-action="handleDiscussionQuickAction"
+      @clear-history="confirmClearDiscussionHistory"
       @update:multi-agent-enabled="multiAgentDiscussionEnabled = $event"
     />
   </div>
@@ -354,7 +374,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
@@ -373,14 +393,19 @@ import {
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
+import { buildClassroomDiscussionLlmPayload } from '@/utils/classroomDiscussionLlmConfig'
 import {
+  clearPersistedDiscussionMessages,
   loadPersistedDiscussionMessages,
   savePersistedDiscussionMessages,
 } from '@/utils/classroomDiscussionState'
-import { applyDiscussionAgentEvent } from '@/utils/classroomDiscussionStream'
+import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
+import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
 import {
   activeHighlightCue,
+  activeHighlightMode,
   fallbackHighlightTargetsFromSvgElement,
   normalizeHighlightCues,
   resolveHighlightTargetsFromSvgElement,
@@ -393,6 +418,7 @@ import { useSettingStore } from '@/stores/settingStore'
 
 const route = useRoute()
 const router = useRouter()
+const dialog = useDialog()
 const message = useMessage()
 const settingStore = useSettingStore()
 
@@ -415,6 +441,7 @@ const audioDuration = ref(0)
 const audioVolume = ref(1)
 const audioPlaybackRate = ref(1)
 const playbackRateOptions = [0.75, 1, 1.25, 1.5, 2]
+const speechTextRef = ref<HTMLElement | null>(null)
 const svgStageRef = ref<HTMLElement | null>(null)
 const svgBoxRef = ref<HTMLElement | null>(null)
 const fallbackHighlightTargets = ref<HighlightTarget[]>([])
@@ -442,6 +469,29 @@ function onAudioVolumeChange() {
 
 function onAudioRateChange() {
   audioPlaybackRate.value = audioRef.value?.playbackRate || 1
+}
+
+function syncSpeechParagraphScroll() {
+  const container = speechTextRef.value
+  const activeIndex = activeSpeechParagraphIdx.value
+  if (!container || activeIndex < 0) return
+
+  const activeSegment = container.querySelector(`[data-speech-segment-index="${activeIndex}"]`) as HTMLElement | null
+  if (!activeSegment) return
+
+  const targetTop = computeSpeechAutoScrollTop({
+    currentScrollTop: container.scrollTop,
+    containerHeight: container.clientHeight,
+    contentHeight: container.scrollHeight,
+    segmentTop: activeSegment.offsetTop,
+    segmentHeight: activeSegment.offsetHeight,
+  })
+  if (targetTop === null) return
+
+  container.scrollTo({
+    top: targetTop,
+    behavior: 'smooth',
+  })
 }
 
 function toggleAudioPlay() {
@@ -607,6 +657,12 @@ const currentSpeechText = computed(() => {
   return currentSpeechAction.value?.text || ''
 })
 
+const currentSpeechParagraphs = computed(() => buildSpeechParagraphs(currentSpeechText.value, sceneHighlightCues.value))
+
+const activeSpeechParagraphIdx = computed(() => (
+  activeSpeechParagraphIndex(currentSpeechParagraphs.value, currentAudioTime.value, audioDuration.value)
+))
+
 const currentAudioUrl = computed(() => {
   const audioUrl = currentSpeechAction.value?.audio_url || ''
   if (!audioUrl) return ''
@@ -674,7 +730,11 @@ const activeHighlight = computed(() => {
   if (!cue) return null
   const target = sceneHighlightTargets.value.find((item) => item.id === cue.target_id)
   if (!target) return null
-  return { cue, target }
+  return {
+    cue,
+    target,
+    mode: activeHighlightMode(cue, currentAudioTime.value, audioDuration.value),
+  }
 })
 
 const highlightLayerStyle = computed<CSSProperties | null>(() => {
@@ -694,7 +754,7 @@ const highlightBoxStyle = computed<CSSProperties | null>(() => {
   const metrics = svgMetrics.value
   const scaleX = metrics.width / metrics.viewWidth
   const scaleY = metrics.height / metrics.viewHeight
-  const pad = activeHighlight.value.cue.mode === 'spotlight' ? 8 : 5
+  const pad = activeHighlight.value.mode === 'spotlight' ? 8 : 5
   const left = Math.max(0, target.bbox.x * scaleX - pad)
   const top = Math.max(0, target.bbox.y * scaleY - pad)
   const width = Math.min(metrics.width - left, target.bbox.width * scaleX + pad * 2)
@@ -839,6 +899,27 @@ function syncDiscussionPersistence() {
   savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
 }
 
+function clearDiscussionHistory() {
+  if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
+  discussionMessages.value = []
+  discussionSubmitting.value = false
+  clearPersistedDiscussionMessages(classroom.value.id, currentScene.value.id)
+}
+
+function confirmClearDiscussionHistory() {
+  if (!discussionMessages.value.length) return
+  dialog.warning({
+    title: '清空互动讨论记录',
+    content: '只清除当前课堂当前场景的 AI 互动讨论记录，操作后无法恢复，是否继续？',
+    positiveText: '确认清空',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      clearDiscussionHistory()
+      message.success('已清空当前场景的讨论记录')
+    },
+  })
+}
+
 function restoreDiscussionForCurrentScene() {
   if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') {
     discussionMessages.value = []
@@ -907,10 +988,13 @@ function handleAudioEnded() {
 async function requestDiscussion(trigger: string, payload: { content?: string; quickAction?: string }) {
   if (!classroom.value) return
   const nextMessages = [...discussionMessages.value]
+  const requestNonce = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const userMessageId = `discussion_user_${requestNonce}`
+  const singleAgentMessageId = `discussion_single_${requestNonce}`
   if (payload.content) {
-    nextMessages.push({ role: 'user', content: payload.content })
+    nextMessages.push({ role: 'user', content: payload.content, message_id: userMessageId })
   } else if (payload.quickAction) {
-    nextMessages.push({ role: 'user', content: payload.quickAction })
+    nextMessages.push({ role: 'user', content: payload.quickAction, message_id: userMessageId })
   }
 
   const baseRequest = {
@@ -920,10 +1004,12 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     trigger,
     quick_action: payload.quickAction,
     multi_agent: multiAgentDiscussionEnabled.value,
-    content_model: settingStore.settings.content_model,
-    content_api_key: settingStore.getEffectiveContentApiKey(),
-    content_base_url: settingStore.getEffectiveContentBaseUrl(),
-    content_provider_type: settingStore.getContentProviderType(),
+    ...buildClassroomDiscussionLlmPayload({
+      settings: settingStore.settings,
+      getEffectiveApiKey: () => settingStore.getEffectiveApiKey(),
+      getEffectiveBaseUrl: () => settingStore.getEffectiveBaseUrl(),
+      getProviderType: () => settingStore.getProviderType(),
+    }),
   }
 
   // 不 upfront 推空 assistant — 让"正在思考"指示器独占显示，
@@ -931,15 +1017,21 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
   discussionMessages.value = nextMessages
   discussionSubmitting.value = true
 
-  function pushOrReplaceAssistant(content: string) {
-    const updated = [...discussionMessages.value]
-    const last = updated[updated.length - 1]
-    if (last && last.role === 'assistant') {
-      updated[updated.length - 1] = { role: 'assistant', content, trigger }
-    } else {
-      updated.push({ role: 'assistant', content, trigger })
+  function scopeAssistantMessage(message: ClassroomDiscussionMessage): ClassroomDiscussionMessage {
+    return {
+      ...message,
+      message_id: scopeDiscussionMessageId(requestNonce, message.message_id),
     }
-    discussionMessages.value = updated
+  }
+
+  function pushOrReplaceAssistant(content: string) {
+    discussionMessages.value = upsertDiscussionAssistantMessage(discussionMessages.value, {
+      message_id: scopeDiscussionMessageId(requestNonce, singleAgentMessageId),
+      content,
+      trigger,
+      agent_id: 'teacher',
+      agent_name: 'AI 教师',
+    })
   }
 
   let accumulated = ''
@@ -947,13 +1039,17 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     for await (const ev of discussInteractiveClassroomStream(classroom.value.id, baseRequest)) {
       if (ev.error) throw new Error(ev.error)
       if (ev.done) break
+      const scopedEvent = {
+        ...ev,
+        message_id: scopeDiscussionMessageId(requestNonce, ev.message_id),
+      }
       if (ev.type === 'agent_start') {
-        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, scopedEvent, trigger)
         continue
       }
       if (ev.type === 'agent_chunk' || ev.type === 'agent_done') {
         accumulated += ev.chunk || ev.content || ''
-        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, ev, trigger)
+        discussionMessages.value = applyDiscussionAgentEvent(discussionMessages.value, scopedEvent, trigger)
         continue
       }
       if (ev.chunk) {
@@ -965,7 +1061,7 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     if (!accumulated) {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
       if (result.assistant_messages?.length) {
-        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages.map(scopeAssistantMessage)]
       } else {
         pushOrReplaceAssistant(result.assistant_message.content)
       }
@@ -975,7 +1071,7 @@ async function requestDiscussion(trigger: string, payload: { content?: string; q
     try {
       const result = await discussInteractiveClassroom(classroom.value.id, baseRequest)
       if (result.assistant_messages?.length) {
-        discussionMessages.value = [...nextMessages, ...result.assistant_messages]
+        discussionMessages.value = [...nextMessages, ...result.assistant_messages.map(scopeAssistantMessage)]
       } else {
         pushOrReplaceAssistant(result.assistant_message.content)
       }
@@ -1144,6 +1240,15 @@ watch(
     restoreDiscussionForCurrentScene()
   },
   { immediate: true },
+)
+
+watch(
+  () => [currentScene.value?.id, activeSpeechParagraphIdx.value],
+  async () => {
+    await nextTick()
+    syncSpeechParagraphScroll()
+  },
+  { flush: 'post' },
 )
 
 // 直接 watch ref 本身（比 `() => [a, b, ref.value]` 数组源 + deep 更可靠）
@@ -1522,15 +1627,40 @@ function runTask(task: ClassroomRecommendedTask) {
   background: rgba(45, 80, 22, 0.08);
   box-shadow: 0 8px 22px rgba(45, 80, 22, 0.14);
   animation: highlight-breathe 1.9s ease-in-out infinite;
+  transition:
+    left 220ms var(--ease-out),
+    top 220ms var(--ease-out),
+    width 220ms var(--ease-out),
+    height 220ms var(--ease-out),
+    background-color 220ms ease-out,
+    box-shadow 240ms ease-out,
+    border-color 220ms ease-out;
 }
 
 .highlight-box.spotlight {
   background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 10px 28px rgba(45, 80, 22, 0.22);
+  animation: highlight-spotlight-enter 260ms ease-out;
 }
 
 .highlight-spotlight {
-  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.36);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.14);
+  animation: highlight-spotlight-fade 320ms ease-out;
+}
+
+.spotlight-mask-enter-active,
+.spotlight-mask-leave-active {
+  transition: opacity 240ms ease-out;
+}
+
+.spotlight-mask-enter-from,
+.spotlight-mask-leave-to {
+  opacity: 0;
+}
+
+.spotlight-mask-enter-to,
+.spotlight-mask-leave-from {
+  opacity: 1;
 }
 
 @keyframes highlight-breathe {
@@ -1541,6 +1671,26 @@ function runTask(task: ClassroomRecommendedTask) {
   50% {
     border-color: rgba(45, 80, 22, 1);
     box-shadow: 0 10px 24px rgba(45, 80, 22, 0.16), 0 0 0 5px rgba(45, 80, 22, 0.08);
+  }
+}
+
+@keyframes highlight-spotlight-enter {
+  0% {
+    transform: scale(0.985);
+    opacity: 0.78;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes highlight-spotlight-fade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
   }
 }
 
@@ -2172,6 +2322,33 @@ function runTask(task: ClassroomRecommendedTask) {
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: rgb(var(--line-rgb)) transparent;
+}
+
+.speech-segment {
+  display: block;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: rgb(var(--ink-2-rgb));
+  transition:
+    background-color 220ms ease-out,
+    color 220ms ease-out,
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+}
+
+.speech-segment:last-child {
+  margin-bottom: 0;
+}
+
+.speech-segment.active {
+  background: rgb(var(--nav-classroom-rgb, 15 118 110) / 0.12);
+  color: rgb(var(--ink-1-rgb));
+  transform: translateX(1px);
+}
+
+.speech-segment.inactive {
+  opacity: 0.72;
 }
 
 .speech-text::after {

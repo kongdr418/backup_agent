@@ -424,6 +424,30 @@ def _apply_content_llm_config(data: dict):
             pass
 
 
+def _resolve_content_llm_request_config(data: dict) -> dict[str, str]:
+    """解析一次请求里的 LLM 配置，并在缺 key / base_url / provider_type 时做 provider 回退。"""
+    content_model = (data.get('content_model') or '').strip()
+    content_api_key = data.get('content_api_key') or ''
+    content_base_url = (data.get('content_base_url') or '').strip()
+    content_provider_type = (data.get('content_provider_type') or '').strip()
+
+    if content_model:
+        pid, provider, _ = _get_provider_for_model(content_model)
+        if not content_api_key and pid and pid in SERVER_API_KEYS:
+            content_api_key = SERVER_API_KEYS[pid]
+        if not content_base_url and provider:
+            content_base_url = provider.get('defaultBaseUrl', '') or ''
+        if not content_provider_type and provider:
+            content_provider_type = provider.get('type', '') or ''
+
+    return {
+        'content_model': content_model,
+        'content_api_key': content_api_key,
+        'content_base_url': content_base_url,
+        'content_provider_type': content_provider_type,
+    }
+
+
 # ==================== 健康检查 & API 信息 ====================
 
 @app.route('/api/health', methods=['GET'])
@@ -3067,12 +3091,7 @@ def interactive_classroom_answer(classroom_id):
         str(q.get('type', '')) == 'short_answer'
         for q in scene.get('content', {}).get('questions', [])
     )
-    llm_config = {
-        'content_model': (data.get('content_model') or '').strip(),
-        'content_api_key': data.get('content_api_key') or '',
-        'content_base_url': (data.get('content_base_url') or '').strip(),
-        'content_provider_type': (data.get('content_provider_type') or '').strip(),
-    } if has_short_answer else None
+    llm_config = _resolve_content_llm_request_config(data) if has_short_answer else None
 
     if has_short_answer:
         try:
@@ -3179,12 +3198,7 @@ def interactive_classroom_discuss(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
-    llm_config = {
-        'content_model': (data.get('content_model') or '').strip(),
-        'content_api_key': data.get('content_api_key') or '',
-        'content_base_url': (data.get('content_base_url') or '').strip(),
-        'content_provider_type': (data.get('content_provider_type') or '').strip(),
-    }
+    llm_config = _resolve_content_llm_request_config(data)
 
     if multi_agent:
         turns = generate_multi_agent_discussion_turns(
@@ -3264,12 +3278,7 @@ def interactive_classroom_discuss_stream(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
-    llm_config = {
-        'content_model': (data.get('content_model') or '').strip(),
-        'content_api_key': data.get('content_api_key') or '',
-        'content_base_url': (data.get('content_base_url') or '').strip(),
-        'content_provider_type': (data.get('content_provider_type') or '').strip(),
-    }
+    llm_config = _resolve_content_llm_request_config(data)
 
     def generate():
         try:
