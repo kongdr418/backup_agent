@@ -945,10 +945,14 @@ def _check_text_container_overflow(
                 severity="error",
                 detail=(
                     "Text extends outside its local card/callout container. "
+                    "This is a hard failure for card layouts: do not leave a "
+                    "single long <text> node clipped by the card. "
                     f"Estimated text bbox ({tx:.0f},{ty:.0f},{tw:.0f},{th:.0f}) "
                     f"does not fit inside container {_element_identifier(container_el)} "
-                    f"with padding {pad:.0f}px. Wrap the line, shorten it, or use "
-                    "a wider layout."
+                    f"with padding {pad:.0f}px. Replace it with multiple shorter "
+                    "<text> lines using distinct y values, shorten the card body "
+                    "to 1-2 lines, reduce font-size within the readable range, "
+                    "or widen the card while preserving inner padding."
                 ),
                 element=_element_identifier(text_el),
                 bbox=text_bbox,

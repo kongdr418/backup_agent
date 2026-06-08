@@ -51,6 +51,11 @@ One complete SVG file per page with proper viewBox.
 11. If a bullet line is long, wrap it onto a new line by changing `y` or using a new block, never by stacking multiple same-position text nodes.
 12. Ensure sufficient contrast: dark text on light backgrounds, light text on dark backgrounds. Never pair light text with light fill or dark text with dark fill.
 13. For KPI, metric, or callout rows that pair a large number with a smaller label on the same visual line, use the same SVG text baseline: the number `<text>` and label `<text>` must have the same `y` value.
+14. Card/container text overflow is a HARD FAILURE. Any text visually inside a card, callout, table cell, or rounded rectangle must stay inside the container with at least 16px horizontal padding and 14px vertical padding.
+15. SVG `<text>` does not auto-wrap. Never place a long sentence in one `<text>` node and expect the browser, PPT, or exporter to wrap it.
+16. For card layouts, keep text compact: title <= 10 Chinese characters when possible, subtitle <= 16 Chinese characters, body <= 2 lines, and each body line <= 18 Chinese characters or equivalent width. Put extended explanations in the manuscript/speaker notes, not inside the slide card.
+17. If a label or body sentence may exceed the card width, shorten it first. If the meaning must be kept, split it into separate `<text>` elements with distinct `y` values and clear line spacing.
+18. Before final output, estimate every card line width as `font-size * (CJK_chars * 0.95 + latin_chars * 0.58)` and make sure it is less than the container inner width after padding. Also ensure the final line baseline stays above the container bottom padding.
 
 ## Educational Slide Layout Patterns
 
