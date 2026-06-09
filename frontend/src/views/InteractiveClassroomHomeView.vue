@@ -1417,6 +1417,7 @@ onBeforeUnmount(() => {
 }
 
 .list-item {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
@@ -1428,7 +1429,18 @@ onBeforeUnmount(() => {
 }
 
 .lesson-item.child {
-  margin-left: 18px;
+  padding-left: 30px;
+}
+
+.lesson-item.child::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 22px;
+  bottom: 22px;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(45, 80, 22, 0.22);
 }
 
 .thumb-btn {
