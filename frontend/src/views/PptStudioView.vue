@@ -350,6 +350,7 @@ function applyClassroomDraft() {
       notes: buildClassroomPptNotes(store.params.notes, learningContext),
       deep_research: false,
       visual_critic: false,
+      repair_enabled: store.params.repair_enabled ?? false,
     }
     store.resetGen()
   }

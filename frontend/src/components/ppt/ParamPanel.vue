@@ -152,6 +152,13 @@
             </div>
             <n-switch v-model:value="local.visual_critic" :disabled="disabled" size="small" />
           </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">自动返修</span>
+              <span class="toggle-desc">发现阻塞问题时让 AI 再修一次；关闭后生成更快但可能保留瑕疵</span>
+            </div>
+            <n-switch v-model:value="local.repair_enabled" :disabled="disabled" size="small" />
+          </div>
           <p class="advanced-hint" style="margin-top: 10px;">模型在「设置 → PPT 生成模型」中统一配置</p>
         </div>
       </details>
@@ -213,11 +220,17 @@ const emit = defineEmits<{
 }>()
 
 const local = reactive<PptGenerateParams>({ ...props.modelValue })
+if (local.repair_enabled == null) {
+  local.repair_enabled = false
+}
 
 watch(
   () => props.modelValue,
   (v) => {
     Object.assign(local, v)
+    if (local.repair_enabled == null) {
+      local.repair_enabled = false
+    }
   },
   { deep: true },
 )

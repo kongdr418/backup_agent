@@ -108,6 +108,22 @@ def _is_safe_classroom_request_id(value: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9_.:-]{1,128}$', value or ''))
 
 
+def _bool_from_payload(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'y', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'n', 'off'}:
+            return False
+    return default
+
+
 def _register_classroom_generation(request_id: str) -> threading.Event | None:
     if not request_id:
         return None
@@ -2245,8 +2261,9 @@ def ppt_svg_generate():
         if pid and pid in SERVER_API_KEYS:
             api_key = SERVER_API_KEYS[pid]
 
-    deep_research = data.get('deep_research', False)
-    visual_critic = data.get('visual_critic', False)
+    deep_research = _bool_from_payload(data.get('deep_research'), False)
+    visual_critic = _bool_from_payload(data.get('visual_critic'), False)
+    repair_enabled = _bool_from_payload(data.get('repair_enabled'), False)
     template_id = data.get('template_id')
     user_id = get_request_user_id()
     notes = _resolve_ppt_generation_notes(data, user_id)
@@ -2272,6 +2289,7 @@ def ppt_svg_generate():
             detail_level=detail_level,
             deep_research=deep_research,
             visual_critic=visual_critic,
+            repair_enabled=repair_enabled,
             template_id=template_id,
             notes=notes,
         ))

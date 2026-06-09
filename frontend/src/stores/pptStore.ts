@@ -33,6 +33,7 @@ const DEFAULT_PARAMS: PptGenerateParams = {
   detail_level: 'normal',
   model: 'deepseek-v4-flash',
   canvas_format: 'ppt169',
+  repair_enabled: false,
   template_id: undefined,
 }
 

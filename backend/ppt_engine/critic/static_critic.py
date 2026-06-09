@@ -1034,7 +1034,7 @@ def _check_container_content_bounds(
             violations.append(
                 Violation(
                     rule="container_content_outside",
-                    severity="error",
+                    severity="warning",
                     detail=(
                         f"{item_kind.capitalize()} content appears to belong to "
                         "a card/callout but is outside the card's padded bounds. "
@@ -1055,6 +1055,7 @@ def _check_empty_bullets(
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
     violations: list[Violation],
 ) -> None:
+    decorative_paths = _collect_path_bboxes(root)
     for el in _iter_all(root):
         if _strip_ns(el.tag) != "circle":
             continue
@@ -1064,6 +1065,8 @@ def _check_empty_bullets(
         if r < 3.0 or r > 8.0:
             continue
         if cx > 120:
+            continue
+        if _point_near_any_box(cx, cy, decorative_paths, slack=18.0):
             continue
         has_text = False
         for _order, text_el, bbox in text_boxes:
@@ -1092,6 +1095,38 @@ def _check_empty_bullets(
                 bbox=(cx - r, cy - r, r * 2, r * 2),
             )
         )
+
+
+def _collect_path_bboxes(root: ET.Element) -> list[tuple[float, float, float, float]]:
+    boxes: list[tuple[float, float, float, float]] = []
+    for el in _iter_all(root):
+        if _strip_ns(el.tag) != "path":
+            continue
+        raw = el.get("d") or ""
+        values = [float(m.group(0)) for m in re.finditer(r"-?\d+(?:\.\d+)?", raw)]
+        if len(values) < 4:
+            continue
+        xs = values[0::2]
+        ys = values[1::2]
+        if not xs or not ys:
+            continue
+        min_x = min(xs)
+        min_y = min(ys)
+        boxes.append((min_x, min_y, max(xs) - min_x, max(ys) - min_y))
+    return boxes
+
+
+def _point_near_any_box(
+    x: float,
+    y: float,
+    boxes: list[tuple[float, float, float, float]],
+    *,
+    slack: float,
+) -> bool:
+    for bx, by, bw, bh in boxes:
+        if bx - slack <= x <= bx + bw + slack and by - slack <= y <= by + bh + slack:
+            return True
+    return False
 
 
 def _check_icon_text_misalign(
@@ -1228,7 +1263,7 @@ def _check_inline_emphasis_drift(
             violations.append(
                 Violation(
                     rule="inline_emphasis_drift",
-                    severity="error",
+                    severity="warning",
                     detail=(
                         "A short colored keyword appears far from the preceding text "
                         f"on the same baseline (estimated gap {gap:.0f}px). This is "
