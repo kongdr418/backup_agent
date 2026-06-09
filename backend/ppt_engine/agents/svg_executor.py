@@ -23,8 +23,16 @@ logger = get_logger(__name__)
 
 MAX_REPAIR_ATTEMPTS = 2
 MAX_SVG_EXTRACTION_ATTEMPTS = 2
+SVG_INITIAL_LLM_TIMEOUT_SECONDS = 120
+SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS = 90
 
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
+_COMPACT_CONTEXT_LIMIT = 1800
+_RETRY_TEMPLATE_EXCERPT_LIMIT = 1800
+_EXTRACTION_RETRY_SYSTEM_PROMPT = (
+    "You generate valid presentation SVG. Return only one complete SVG document "
+    "inside a ```svg code block. No explanations, no markdown outside the code block."
+)
 
 CriticCallback = Callable[[int, int, CriticReport], Awaitable[None]]
 
@@ -57,12 +65,88 @@ def _extract_svg(text: str) -> str | None:
     return None
 
 
+def _compact_text(text: str, limit: int = _COMPACT_CONTEXT_LIMIT) -> str:
+    normalized = re.sub(r"\s+", " ", (text or "")).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip() + "\n...[truncated]"
+
+
+def _looks_like_toc(page_content: str) -> bool:
+    normalized = (page_content or "").lower()
+    toc_keywords = (
+        "目录",
+        "大纲",
+        "概览",
+        "路线",
+        "结构",
+        "agenda",
+        "outline",
+        "overview",
+    )
+    return any(keyword in normalized for keyword in toc_keywords)
+
+
+def _select_retry_template_key(
+    *,
+    page_num: int,
+    total_pages: int,
+    page_content: str,
+    template_svgs: dict[str, str] | None,
+) -> str | None:
+    if not template_svgs:
+        return None
+    if page_num == 1 and "cover" in template_svgs:
+        return "cover"
+    if page_num == total_pages and total_pages > 1 and "ending" in template_svgs:
+        return "ending"
+    if page_num == 2 and "toc" in template_svgs and _looks_like_toc(page_content):
+        return "toc"
+    if "content" in template_svgs:
+        return "content"
+    return next(iter(template_svgs))
+
+
+def _build_retry_template_excerpt(
+    *,
+    page_num: int,
+    total_pages: int,
+    page_content: str,
+    template_svgs: dict[str, str] | None,
+) -> str:
+    template_key = _select_retry_template_key(
+        page_num=page_num,
+        total_pages=total_pages,
+        page_content=page_content,
+        template_svgs=template_svgs,
+    )
+    if not template_key or not template_svgs:
+        return "No template excerpt is available. Follow the compact style summary."
+
+    svg_text = template_svgs.get(template_key, "")
+    excerpt = svg_text[:_RETRY_TEMPLATE_EXCERPT_LIMIT]
+    if len(svg_text) > _RETRY_TEMPLATE_EXCERPT_LIMIT:
+        excerpt += "\n<!-- ... truncated template excerpt ... -->"
+    return (
+        f"Use this single `{template_key}` template excerpt as the visual anchor. "
+        "Match its palette, typography, spacing, and light/dark surface treatment; "
+        "do not invent a different visual theme.\n\n"
+        f"```svg\n{excerpt}\n```"
+    )
+
+
 def _build_extraction_retry_prompt(
     *,
     page_num: int,
     total_pages: int,
     page_name: str,
     page_content: str,
+    design_spec: str,
+    style: str,
+    language: str,
+    detail_level: str,
+    template_context: str | None,
+    template_excerpt: str,
     attempt: int,
 ) -> str:
     return (
@@ -75,8 +159,33 @@ def _build_extraction_retry_prompt(
         f"- Regenerate page {page_num}/{total_pages} only.\n"
         "- Return one complete SVG document, wrapped in a ```svg code block.\n"
         "- The SVG must start with `<svg` and end with `</svg>`.\n\n"
+        "## Compact Runtime Configuration\n"
+        f"- Selected style preset: {style}\n"
+        f"- Selected language: {language}\n"
+        f"- Selected detail level: {detail_level}\n"
+        "- Prefer a simpler, reliable layout over a complex one.\n"
+        "- Keep visible text concise and split long sentences across short lines.\n"
+        "- Do not include commentary, analysis, or partial SVG fragments.\n\n"
+        f"## Compact Design Specification\n\n{_compact_text(design_spec)}\n\n"
+        f"## Template Style Summary\n\n{_compact_text(template_context or 'Follow the selected style preset.')}\n\n"
+        f"## Single Template Excerpt\n\n{template_excerpt}\n\n"
         f"## Page Content To Render\n\n{page_content}\n\n"
         f"## Retry Attempt\n\n{attempt}"
+    )
+
+
+async def _chat_with_timeout(
+    llm: LLMProvider,
+    messages: list[LLMMessage],
+    model: str,
+    *,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: int,
+) -> LLMResponse:
+    return await asyncio.wait_for(
+        llm.chat(messages, model, temperature=temperature, max_tokens=max_tokens),
+        timeout=timeout_seconds,
     )
 
 
@@ -156,9 +265,23 @@ async def _generate_single_page(
     ]
 
     llm_start = time.monotonic()
-    response: LLMResponse = await llm.chat(
-        conversation, model, temperature=0.3, max_tokens=16384
-    )
+    try:
+        response: LLMResponse = await _chat_with_timeout(
+            llm,
+            conversation,
+            model,
+            temperature=0.3,
+            max_tokens=16384,
+            timeout_seconds=SVG_INITIAL_LLM_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[PPT-PERF] stage=svg_generation page=%s/%s step=initial_llm_timeout timeout=%ss",
+            page_num,
+            total_pages,
+            SVG_INITIAL_LLM_TIMEOUT_SECONDS,
+        )
+        response = LLMResponse(content="", usage=None, raw=None)
     logger.info(
         "[PPT-PERF] stage=svg_generation page=%s/%s step=initial_llm elapsed=%.2fs chars=%s",
         page_num,
@@ -171,24 +294,50 @@ async def _generate_single_page(
     for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
         if svg_content:
             break
-        # Don't append the full failed response — use a short summary instead
-        # to keep conversation context lean and reduce token processing time.
-        conversation.append(LLMMessage.assistant("[SVG extraction failed]"))
-        conversation.append(
+        # Extraction retry must be compact. Reusing the initial conversation would
+        # resend full template SVG references, which makes a formatting retry slow.
+        retry_conversation = [
+            LLMMessage.system(_EXTRACTION_RETRY_SYSTEM_PROMPT),
             LLMMessage.user(
                 _build_extraction_retry_prompt(
                     page_num=page_num,
                     total_pages=total_pages,
                     page_name=page_name,
                     page_content=page_content,
+                    design_spec=design_spec,
+                    style=style,
+                    language=language,
+                    detail_level=detail_level,
+                    template_context=template_context,
+                    template_excerpt=_build_retry_template_excerpt(
+                        page_num=page_num,
+                        total_pages=total_pages,
+                        page_content=page_content,
+                        template_svgs=template_svgs,
+                    ),
                     attempt=extraction_attempt,
                 )
-            )
-        )
+            ),
+        ]
         llm_start = time.monotonic()
-        response = await llm.chat(
-            conversation, model, temperature=0.2, max_tokens=16384
-        )
+        try:
+            response = await _chat_with_timeout(
+                llm,
+                retry_conversation,
+                model,
+                temperature=0.2,
+                max_tokens=8192,
+                timeout_seconds=SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[PPT-PERF] stage=svg_generation page=%s/%s step=extraction_retry_timeout attempt=%s timeout=%ss",
+                page_num,
+                total_pages,
+                extraction_attempt,
+                SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS,
+            )
+            response = LLMResponse(content="", usage=None, raw=None)
         logger.info(
             "[PPT-PERF] stage=svg_generation page=%s/%s step=extraction_retry attempt=%s elapsed=%.2fs chars=%s",
             page_num,

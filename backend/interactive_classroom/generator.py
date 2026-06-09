@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import unescape
 from typing import Any, Callable
@@ -24,6 +25,7 @@ class ClassroomGenerationCancelled(Exception):
 
 CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[dict[str, Any]], None]
+DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY = 10
 
 
 def _emit_progress(
@@ -764,6 +766,8 @@ class InteractiveClassroomGenerator:
         manuscript_notes = self._load_manuscript_notes(job_dir)
         svg_files = _sorted_svg_files(svg_dir)
         scenes: list[ClassroomScene] = []
+        if not svg_files:
+            return scenes
 
         # 阶段 1 推进：开始读课件
         _emit_progress(
@@ -782,69 +786,103 @@ class InteractiveClassroomGenerator:
             scene_total=len(svg_files),
         )
 
-        for idx, fname in enumerate(svg_files, start=1):
-            _raise_if_cancelled(cancel_check)
-            path = os.path.join(svg_dir, fname)
-            with open(path, "r", encoding="utf-8") as f:
-                svg = f.read()
+        max_workers = min(DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY, len(svg_files))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-slide") as executor:
+            futures = [
+                executor.submit(
+                    self._build_single_slide_scene_from_svg,
+                    idx,
+                    fname,
+                    svg_dir,
+                    manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else "",
+                    len(svg_files),
+                    ppt_job_id,
+                    student_profile,
+                    cancel_check,
+                )
+                for idx, fname in enumerate(svg_files, start=1)
+            ]
 
-            svg_texts = _extract_svg_texts(svg)
-            manuscript_note = manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else ""
-            title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
-            highlight_targets = _extract_svg_highlight_targets(svg)
-            teaching_segments = self._generate_teaching_segments(
-                page_index=idx,
-                page_total=len(svg_files),
-                title=title,
-                manuscript_note=manuscript_note,
-                targets=highlight_targets,
-                svg_texts=svg_texts,
-                student_profile=student_profile,
-            )
-            speech_text = _compose_teaching_speech(teaching_segments)
-            if not speech_text:
-                speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
-                teaching_segments = [
-                    {"target_id": item["target_id"], "mode": item["mode"], "text": item["label"]}
-                    for item in _build_highlight_cues(_split_speech_segments(speech_text), highlight_targets)
-                ]
-            speech_segments = [str(item.get("text") or "").strip() for item in teaching_segments if str(item.get("text") or "").strip()]
-            highlight_cues = _build_highlight_cues_from_teaching_segments(teaching_segments)
-
-            scene = ClassroomScene(
-                id=f"scene_slide_{idx:03d}",
-                type="slide",
-                title=title,
-                order=idx,
-                knowledge_points=svg_texts[:4],
-                content={
-                    "format": "svg",
-                    "svg": svg,
-                    "ppt_slide": {"job_id": ppt_job_id, "page": idx, "filename": fname},
-                    "extracted_text": svg_texts,
-                    "speech_source": "manuscript" if manuscript_note else "svg_text",
-                    "speech_segments": speech_segments,
-                    "highlight_targets": highlight_targets,
-                },
-                actions=[
-                    ClassroomAction(
-                        id=f"act_slide_{idx:03d}",
-                        type="speech",
-                        text=speech_text,
-                        payload={"highlight_cues": highlight_cues},
-                    )
-                ],
-            )
-            scenes.append(scene)
-            _emit_progress(
-                progress_callback,
-                stage="build_scenes",
-                stage_index=1,
-                scene_index=idx,
-                scene_total=len(svg_files),
-                scene=scene,
-            )
+            for idx, future in enumerate(futures, start=1):
+                _raise_if_cancelled(cancel_check)
+                scene = future.result()
+                scenes.append(scene)
+                _emit_progress(
+                    progress_callback,
+                    stage="build_scenes",
+                    stage_index=1,
+                    scene_index=idx,
+                    scene_total=len(svg_files),
+                    scene=scene,
+                )
         return scenes
+
+    def _build_single_slide_scene_from_svg(
+        self,
+        idx: int,
+        fname: str,
+        svg_dir: str,
+        manuscript_note: str,
+        page_total: int,
+        ppt_job_id: str,
+        student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
+    ) -> ClassroomScene:
+        _raise_if_cancelled(cancel_check)
+        path = os.path.join(svg_dir, fname)
+        with open(path, "r", encoding="utf-8") as f:
+            svg = f.read()
+
+        svg_texts = _extract_svg_texts(svg)
+        title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
+        highlight_targets = _extract_svg_highlight_targets(svg)
+        teaching_segments = self._generate_teaching_segments(
+            page_index=idx,
+            page_total=page_total,
+            title=title,
+            manuscript_note=manuscript_note,
+            targets=highlight_targets,
+            svg_texts=svg_texts,
+            student_profile=student_profile,
+        )
+        speech_text = _compose_teaching_speech(teaching_segments)
+        if not speech_text:
+            speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
+            teaching_segments = [
+                {"target_id": item["target_id"], "mode": item["mode"], "text": item["label"]}
+                for item in _build_highlight_cues(_split_speech_segments(speech_text), highlight_targets)
+            ]
+        speech_segments = [
+            str(item.get("text") or "").strip()
+            for item in teaching_segments
+            if str(item.get("text") or "").strip()
+        ]
+        highlight_cues = _build_highlight_cues_from_teaching_segments(teaching_segments)
+
+        return ClassroomScene(
+            id=f"scene_slide_{idx:03d}",
+            type="slide",
+            title=title,
+            order=idx,
+            knowledge_points=svg_texts[:4],
+            content={
+                "format": "svg",
+                "svg": svg,
+                "ppt_slide": {"job_id": ppt_job_id, "page": idx, "filename": fname},
+                "extracted_text": svg_texts,
+                "speech_source": "manuscript" if manuscript_note else "svg_text",
+                "speech_segments": speech_segments,
+                "highlight_targets": highlight_targets,
+            },
+            actions=[
+                ClassroomAction(
+                    id=f"act_slide_{idx:03d}",
+                    type="speech",
+                    text=speech_text,
+                    payload={"highlight_cues": highlight_cues},
+                )
+            ],
+        )
 
     def _build_fallback_slide_scenes(
         self,

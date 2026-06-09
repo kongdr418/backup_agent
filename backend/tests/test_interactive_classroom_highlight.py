@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -166,6 +167,54 @@ class InteractiveClassroomHighlightTest(unittest.TestCase):
             ["hl_001", "hl_002"],
         )
         self.assertEqual(action.payload["highlight_cues"][0]["mode"], "spotlight")
+
+    def test_ppt_job_builds_slide_scenes_concurrently_while_preserving_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_dir = os.path.join(tmpdir, "generated_svg_ppt", "users", "user_1", "job_1")
+            svg_dir = os.path.join(job_dir, "svg_final")
+            os.makedirs(svg_dir)
+            with open(os.path.join(job_dir, "manuscript.md"), "w", encoding="utf-8") as f:
+                f.write("\n---\n".join(["第一页讲稿", "第二页讲稿", "第三页讲稿"]))
+            for idx in range(1, 4):
+                with open(os.path.join(svg_dir, f"slide_{idx:03d}.svg"), "w", encoding="utf-8") as f:
+                    f.write(
+                        f"""
+                        <svg viewBox="0 0 1000 562">
+                          <text x="80" y="100" font-size="32">第 {idx} 页标题</text>
+                          <text x="120" y="210" font-size="24">第 {idx} 页要点</text>
+                        </svg>
+                        """
+                    )
+
+            generator = InteractiveClassroomGenerator(tmpdir, ClassroomStorage(tmpdir))
+            starts: list[tuple[int, float]] = []
+
+            def slow_segments(**kwargs):
+                page_index = int(kwargs["page_index"])
+                starts.append((page_index, time.perf_counter()))
+                time.sleep(0.2)
+                return [
+                    {
+                        "target_id": "hl_001",
+                        "mode": "spotlight",
+                        "text": f"第 {page_index} 页讲解内容，说明这一页的核心标题和重点。",
+                    }
+                ]
+
+            generator._generate_teaching_segments = slow_segments  # type: ignore[method-assign]
+
+            start = time.perf_counter()
+            scenes = generator._build_slide_scenes_from_ppt_job("user_1", "job_1")
+            elapsed = time.perf_counter() - start
+
+        self.assertLess(elapsed, 0.45)
+        self.assertEqual([scene.id for scene in scenes], ["scene_slide_001", "scene_slide_002", "scene_slide_003"])
+        self.assertEqual([scene.actions[0].text for scene in scenes], [
+            "第 1 页讲解内容，说明这一页的核心标题和重点。",
+            "第 2 页讲解内容，说明这一页的核心标题和重点。",
+            "第 3 页讲解内容，说明这一页的核心标题和重点。",
+        ])
+        self.assertLess(max(ts for _, ts in starts) - min(ts for _, ts in starts), 0.15)
 
     def test_ppt_job_fallback_expands_short_notes_around_svg_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
