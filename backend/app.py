@@ -14,8 +14,10 @@ from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from learner_profile.storage import LearnerProfileStorage
+from learner_profile.profile_agent import ProfileAgent, build_course_id
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report
 from interactive_classroom.event_service import (
@@ -85,8 +87,13 @@ def get_memory_manager():
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
+PROFILE_AGENT = ProfileAgent()
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
+CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
+    CLASSROOM_STORAGE,
+    CLASSROOM_GENERATOR,
+)
 CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
 CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
 CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
@@ -1512,8 +1519,36 @@ def update_learner_profile():
     if not isinstance(profile, dict):
         return jsonify({'success': False, 'error': 'profile must be an object'}), 400
 
-    saved_profile = LEARNER_PROFILE_STORAGE.save_profile(user_id, profile)
+    saved_profile = LEARNER_PROFILE_STORAGE.save_manual_profile(user_id, profile)
     return jsonify({'success': True, 'profile': saved_profile})
+
+
+@app.route('/api/learner-profile/strategy', methods=['GET'])
+def get_learner_profile_strategy():
+    user_id = get_request_user_id()
+    course = (request.args.get('course') or '通用课程').strip() or '通用课程'
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    strategy = PROFILE_AGENT.build_generation_strategy(profile, course)
+    return jsonify({'success': True, 'generation_strategy': strategy})
+
+
+@app.route('/api/learner-profile/updates/<update_id>', methods=['PATCH'])
+def resolve_learner_profile_update(update_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    action = (data.get('action') or '').strip()
+    try:
+        profile = LEARNER_PROFILE_STORAGE.resolve_pending_update(
+            user_id,
+            update_id,
+            action=action,
+            modified_after=data.get('after'),
+        )
+    except KeyError:
+        return jsonify({'success': False, 'error': '画像更新建议不存在'}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify({'success': True, 'profile': profile})
 
 
 # ==================== 文件管理 API ====================
@@ -2841,7 +2876,12 @@ def interactive_classroom_generate():
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
     request_id = (data.get('request_id') or '').strip()
+    learner_profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
     student_profile = LEARNER_PROFILE_STORAGE.load_classroom_profile(user_id)
+    generation_strategy = PROFILE_AGENT.build_generation_strategy(
+        learner_profile,
+        course,
+    )
 
     if not topic:
         return jsonify({'success': False, 'error': 'topic 不能为空'}), 400
@@ -2879,6 +2919,7 @@ def interactive_classroom_generate():
                     tts_config=tts_config,
                     ppt_job_id=ppt_job_id,
                     student_profile=student_profile,
+                    generation_strategy=generation_strategy,
                     cancel_check=cancel_event.is_set if cancel_event is not None else None,
                     progress_callback=on_progress,
                 )
@@ -2926,6 +2967,7 @@ def interactive_classroom_generate():
             tts_config=tts_config,
             ppt_job_id=ppt_job_id,
             student_profile=student_profile,
+            generation_strategy=generation_strategy,
             cancel_check=cancel_event.is_set if cancel_event is not None else None,
         )
     except ClassroomGenerationCancelled:
@@ -3235,9 +3277,154 @@ def interactive_classroom_report(classroom_id):
 
     answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
     events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-    report = build_classroom_report(classroom, answers, events)
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+    course_id = build_course_id(course_name)
+    course_profile = profile.get('courses', {}).get(course_id, {})
+    report = build_classroom_report(
+        classroom,
+        answers,
+        events,
+        course_profile=course_profile,
+    )
+    proposals = _analyze_classroom_profile_updates(
+        user_id,
+        classroom,
+        report,
+        events,
+    )
+    report['profile_update_count'] = len(proposals)
+    report['profile_update_ids'] = [row.get('id') for row in proposals if row.get('id')]
     CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+    LEARNER_PROFILE_STORAGE.record_recommendations(
+        user_id,
+        classroom_id,
+        course_id,
+        report.get('recommended_tasks', []),
+    )
     return jsonify({'success': True, 'report': report})
+
+
+def _analyze_classroom_profile_updates(
+    user_id: str,
+    classroom: dict,
+    report: dict,
+    events: list[dict],
+) -> list[dict]:
+    try:
+        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+        course_id = build_course_id(course_name)
+        course_profile = profile.get('courses', {}).get(course_id, {})
+        cached_points = CLASSROOM_STORAGE.load_knowledge_point_cache(
+            user_id,
+            classroom.get('id', ''),
+        )
+        cached_by_raw = {
+            str(row.get('raw_name')): row
+            for row in cached_points
+            if isinstance(row, dict) and row.get('raw_name')
+        }
+        raw_points = list((report.get('knowledge_summary') or {}).keys())
+        missing_points = [point for point in raw_points if point not in cached_by_raw]
+        if missing_points:
+            normalized_missing = PROFILE_AGENT.normalize_knowledge_points(
+                missing_points,
+                course_profile,
+                context=f"{course_name} {classroom.get('topic', '')}",
+            )
+            for row in normalized_missing:
+                if isinstance(row, dict) and row.get('raw_name'):
+                    cached_by_raw[str(row['raw_name'])] = row
+            cached_points = list(cached_by_raw.values())
+            CLASSROOM_STORAGE.save_knowledge_point_cache(
+                user_id,
+                classroom.get('id', ''),
+                cached_points,
+            )
+        observations = PROFILE_AGENT.collect_evidence_observations(
+            profile,
+            classroom,
+            report,
+            events,
+            normalized_points=[
+                cached_by_raw[point]
+                for point in raw_points
+                if point in cached_by_raw
+            ],
+        )
+        profile = LEARNER_PROFILE_STORAGE.accumulate_evidence(
+            user_id,
+            observations,
+        )
+        proposals = PROFILE_AGENT.analyze_learning_evidence(
+            profile,
+            classroom,
+            report,
+            events,
+            observations=observations,
+        )
+        if proposals:
+            LEARNER_PROFILE_STORAGE.add_pending_updates(user_id, proposals)
+        return proposals
+    except Exception:
+        request_logger.warning(
+            '[INTERACTIVE-CLASSROOM] 画像建议分析失败（不影响报告主流程）',
+            exc_info=True,
+        )
+        return []
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/practice', methods=['POST'])
+def interactive_classroom_create_practice(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+    data = request.get_json(silent=True) or {}
+    task_id = (data.get('task_id') or '').strip()
+    task_type = (data.get('task_type') or '').strip()
+    if not task_id or not task_type:
+        return jsonify({'success': False, 'error': 'task_id 和 task_type 不能为空'}), 400
+
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
+    if report is None:
+        answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+        events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+        course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
+        report = build_classroom_report(
+            classroom,
+            answers,
+            events,
+            course_profile=course_profile,
+        )
+        CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    strategy = PROFILE_AGENT.build_generation_strategy(
+        profile,
+        classroom.get('course') or classroom.get('topic') or '通用课程',
+    )
+    try:
+        practice = CLASSROOM_PRACTICE_SERVICE.create_practice(
+            user_id=user_id,
+            source_classroom=classroom,
+            report=report,
+            task_id=task_id,
+            task_type=task_type,
+            generation_strategy=strategy,
+        )
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify({
+        'success': True,
+        'classroom_id': practice.get('id'),
+        'classroom': practice,
+    }), 201
 
 
 # ---- P7: 学习事件 API ----
@@ -3304,10 +3491,87 @@ def interactive_classroom_record_event(classroom_id):
             return jsonify({'success': False, 'error': f'不支持的 event_type: {event_type}'}), 400
 
         saved = record_event(CLASSROOM_STORAGE, event)
+        if event_type == 'classroom_completed':
+            _handle_classroom_completion(user_id, classroom)
         return jsonify({'success': True, 'event': saved.to_dict()})
     except Exception as exc:
         request_logger.exception(f'[INTERACTIVE-CLASSROOM] /event 记录失败: {exc}')
         return jsonify({'success': False, 'error': '事件记录失败'}), 500
+
+
+def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
+    try:
+        classroom_id = classroom.get('id', '')
+        source = classroom.get('source') if isinstance(classroom.get('source'), dict) else {}
+        quiz_scene_ids = {
+            scene.get('id')
+            for scene in classroom.get('scenes', [])
+            if scene.get('type') == 'quiz' and scene.get('id')
+        }
+        answered_scene_ids = set(
+            CLASSROOM_STORAGE.load_answers(user_id, classroom_id).get('scenes', {}).keys()
+        )
+        is_actually_complete = bool(quiz_scene_ids) and quiz_scene_ids.issubset(
+            answered_scene_ids
+        )
+        if source.get('type') == 'recommended_practice':
+            parent_classroom_id = (source.get('parent_classroom_id') or '').strip()
+            task_id = (source.get('recommendation_task_id') or '').strip()
+            task_type = (source.get('recommendation_task_type') or '').strip()
+            parent = (
+                CLASSROOM_STORAGE.load_classroom(user_id, parent_classroom_id)
+                if parent_classroom_id
+                else None
+            )
+            if parent is not None and task_id and is_actually_complete:
+                completion_event = create_recommended_task_completed_event(
+                    user_id=user_id,
+                    classroom_id=parent_classroom_id,
+                    course_id=parent.get('course') or parent.get('topic') or '',
+                    task_id=task_id,
+                    task_type=task_type,
+                    knowledge_points=classroom.get('knowledge_points', []),
+                    result={
+                        'status': 'completed',
+                        'practice_classroom_id': classroom_id,
+                    },
+                )
+                record_event(CLASSROOM_STORAGE, completion_event)
+
+        answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+        events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+        course_id = build_course_id(course_name)
+        course_profile = profile.get('courses', {}).get(course_id, {})
+        report = build_classroom_report(
+            classroom,
+            answers,
+            events,
+            course_profile=course_profile,
+        )
+        proposals = _analyze_classroom_profile_updates(
+            user_id,
+            classroom,
+            report,
+            events,
+        )
+        report['profile_update_count'] = len(proposals)
+        report['profile_update_ids'] = [
+            row.get('id') for row in proposals if row.get('id')
+        ]
+        CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+        LEARNER_PROFILE_STORAGE.record_recommendations(
+            user_id,
+            classroom_id,
+            course_id,
+            report.get('recommended_tasks', []),
+        )
+    except Exception:
+        request_logger.warning(
+            '[INTERACTIVE-CLASSROOM] 课堂完成后的画像闭环处理失败',
+            exc_info=True,
+        )
 
 
 @app.route('/api/interactive-classroom/<classroom_id>/events', methods=['GET'])

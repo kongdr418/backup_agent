@@ -17,6 +17,7 @@ export interface ReportTaskActionContext {
 export type ReportTaskAction =
   | { kind: 'scene'; sceneId: string }
   | { kind: 'ppt-studio'; query: Record<string, string> }
+  | { kind: 'practice'; taskId: string; taskType: string }
   | { kind: 'none' }
 
 export function buildNextLessonQuery(payload: {
@@ -73,6 +74,14 @@ export function resolveReportTaskAction(
         studentProfile: context.studentProfile,
         report: context.report,
       }),
+    }
+  }
+
+  if (task.type === 'practice_weak_points' || task.type === 'challenge_practice') {
+    return {
+      kind: 'practice',
+      taskId: task.id,
+      taskType: task.type,
     }
   }
 

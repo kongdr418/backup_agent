@@ -224,11 +224,18 @@
                   <div class="task-copy">
                     <div class="task-title">{{ task.title }}</div>
                     <p>{{ task.description }}</p>
+                    <p v-if="task.reason" class="task-reason">依据：{{ task.reason }}</p>
                     <div v-if="task.knowledge_points.length" class="tag-row">
                       <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
                     </div>
                   </div>
-                  <button class="task-action" :disabled="!canRunTask(task)" @click="runTask(task)">{{ taskButtonLabel(task) }}</button>
+                  <button
+                    class="task-action"
+                    :disabled="!canRunTask(task) || runningTaskId === task.id"
+                    @click="runTask(task)"
+                  >
+                    {{ taskButtonLabel(task) }}
+                  </button>
                 </article>
               </div>
             </section>
@@ -378,6 +385,7 @@ import { useDialog, useMessage } from 'naive-ui'
 import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
+  createClassroomPractice,
   discussInteractiveClassroom,
   discussInteractiveClassroomStream,
   type ClassroomRecommendedTask,
@@ -427,8 +435,10 @@ const classroom = ref<InteractiveClassroomPayload | null>(null)
 const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
+let classroomLoadVersion = 0
 const discussionRef = ref<InstanceType<typeof DiscussionSidebar> | null>(null)
 const submitting = ref(false)
+const runningTaskId = ref('')
 const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
 const reportAutoShown = ref(false)
@@ -1206,8 +1216,22 @@ async function showReportAfterClassroomEnd() {
 async function loadClassroom() {
   const classroomId = String(route.params.classroomId || '')
   if (!classroomId) return
+  const loadVersion = ++classroomLoadVersion
+  clearAdvanceTimer()
+  classroom.value = null
+  currentIndex.value = 0
+  report.value = null
+  answersByScene.value = {}
+  quizResultsByScene.value = {}
+  reportAutoShown.value = false
+  classroomCompletedEmitted.value = false
+  visitedSceneIds.value = new Set()
+  discussionMessages.value = []
+  discussionSubmitting.value = false
   try {
-    classroom.value = await getInteractiveClassroom(classroomId)
+    const loadedClassroom = await getInteractiveClassroom(classroomId)
+    if (loadVersion !== classroomLoadVersion) return
+    classroom.value = loadedClassroom
     const restored = buildPlayerAnswerState(classroom.value)
     answersByScene.value = restored.answersByScene
     quizResultsByScene.value = restored.quizResultsByScene
@@ -1226,23 +1250,33 @@ async function loadClassroom() {
     }
     if (route.query.scene === 'report') {
       await showReport()
+      if (loadVersion !== classroomLoadVersion) return
       const reportIndex = orderedScenes.value.findIndex((scene) => scene.type === 'report')
       if (canOpenReportScene.value && reportIndex >= 0) currentIndex.value = reportIndex
     }
   } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return
     message.error(err instanceof Error ? err.message : '加载失败')
   }
 }
 
 onMounted(() => {
-  loadClassroom().catch(() => undefined)
   window.addEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 onBeforeUnmount(() => {
+  classroomLoadVersion += 1
   clearAdvanceTimer()
   window.removeEventListener('resize', refreshSvgHighlightMetrics)
 })
+
+watch(
+  () => route.params.classroomId,
+  () => {
+    loadClassroom().catch(() => undefined)
+  },
+  { immediate: true },
+)
 
 watch(
   () => [currentScene.value?.id, sceneSvg.value],
@@ -1387,10 +1421,11 @@ function canRunTask(task: ClassroomRecommendedTask) {
 }
 
 function taskButtonLabel(task: ClassroomRecommendedTask) {
+  if (runningTaskId.value === task.id) return '正在生成...'
   return canRunTask(task) ? task.action_label : `${task.action_label}（待开放）`
 }
 
-function runTask(task: ClassroomRecommendedTask) {
+async function runTask(task: ClassroomRecommendedTask) {
   // P7: 记录任务点击事件
   if (classroom.value) {
     emitRecommendedTaskOpened(
@@ -1413,7 +1448,27 @@ function runTask(task: ClassroomRecommendedTask) {
   }
 
   if (action.kind === 'ppt-studio') {
-    router.push({ name: 'ppt-studio', query: action.query })
+    await router.push({ name: 'ppt-studio', query: action.query })
+    return
+  }
+
+  if (action.kind === 'practice' && classroom.value) {
+    runningTaskId.value = task.id
+    try {
+      const practice = await createClassroomPractice(
+        classroom.value.id,
+        action.taskId,
+        action.taskType,
+      )
+      await router.push({
+        name: 'interactive-classroom-player',
+        params: { classroomId: practice.id },
+      })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '练习生成失败')
+    } finally {
+      runningTaskId.value = ''
+    }
     return
   }
 

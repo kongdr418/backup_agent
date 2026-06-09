@@ -112,6 +112,56 @@ class ClassroomStorage:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
+    def load_report(self, user_id: str, classroom_id: str) -> dict[str, Any] | None:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id, create=False),
+            "report.json",
+        )
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else None
+
+    def load_knowledge_point_cache(
+        self,
+        user_id: str,
+        classroom_id: str,
+    ) -> list[dict[str, Any]]:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id, create=False),
+            "knowledge_point_map.json",
+        )
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        rows = payload.get("knowledge_points", []) if isinstance(payload, dict) else []
+        return rows if isinstance(rows, list) else []
+
+    def save_knowledge_point_cache(
+        self,
+        user_id: str,
+        classroom_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id),
+            "knowledge_point_map.json",
+        )
+        temp_path = f"{path}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "knowledge_points": rows,
+                    "updated_at": _now_iso(),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+        os.replace(temp_path, path)
+
     def list_classrooms(self, user_id: str) -> list[dict[str, Any]]:
         user_id = _safe_id(user_id, "user_id")
         root = os.path.join(self.memory_root, user_id, "interactive_classrooms")

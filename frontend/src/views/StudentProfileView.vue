@@ -57,8 +57,8 @@
           <div class="phase-note">
             <Sparkles :size="17" />
             <div>
-              <strong>当前阶段：手动画像</strong>
-              <p>课程掌握度、学习证据和 Agent 更新建议将在后续阶段接入。</p>
+              <strong>Profile Agent 已接入</strong>
+              <p>课堂证据只会生成待确认建议，未经你的确认不会修改正式课程画像。</p>
             </div>
           </div>
         </aside>
@@ -165,22 +165,112 @@
             </div>
           </section>
 
-          <section class="future-grid">
-            <article>
-              <BookOpenCheck :size="20" />
-              <div><strong>课程画像</strong><span>按课程累计知识点掌握度</span></div>
-              <em>下一阶段</em>
-            </article>
-            <article>
-              <History :size="20" />
-              <div><strong>学习证据</strong><span>记录答题、复听和任务完成</span></div>
-              <em>规划中</em>
-            </article>
-            <article>
-              <Bot :size="20" />
-              <div><strong>画像 Agent</strong><span>提出可确认的画像更新建议</span></div>
-              <em>规划中</em>
-            </article>
+          <section class="profile-card insight-card">
+            <div class="section-head">
+              <div class="section-icon"><BookOpenCheck :size="19" /></div>
+              <div>
+                <h2>课程画像</h2>
+                <p>只展示已经确认的知识点掌握度和跨课堂趋势。</p>
+              </div>
+            </div>
+            <div v-if="courseProfiles.length" class="course-grid">
+              <article v-for="course in courseProfiles" :key="course.course_id" class="course-card">
+                <div class="course-head">
+                  <div>
+                    <strong>{{ course.course_name || '未命名课程' }}</strong>
+                    <span>{{ trendLabel(course.recent_trend) }}</span>
+                  </div>
+                  <em>{{ Object.keys(course.mastery || {}).length }} 个知识点</em>
+                </div>
+                <div class="mastery-mini-list">
+                  <div
+                    v-for="(point, pointId) in course.mastery"
+                    :key="pointId"
+                    class="mastery-mini-row"
+                  >
+                    <span>{{ point.name }}</span>
+                    <div><i :style="{ width: `${point.score}%` }"></i></div>
+                    <strong>{{ point.score }}%</strong>
+                  </div>
+                </div>
+              </article>
+            </div>
+            <div v-else class="empty-panel">完成课堂并确认画像建议后，这里会形成课程掌握度。</div>
+          </section>
+
+          <section class="profile-card insight-card">
+            <div class="section-head">
+              <div class="section-icon warm"><Bot :size="19" /></div>
+              <div>
+                <h2>待确认更新</h2>
+                <p>每条建议都保留证据、原因、置信度和调整前后值。</p>
+              </div>
+            </div>
+            <div v-if="pendingUpdates.length" class="update-list">
+              <article v-for="update in pendingUpdates" :key="update.id" class="update-card">
+                <div class="update-head">
+                  <div>
+                    <span>{{ update.course_name || '课程画像' }}</span>
+                    <strong>{{ update.knowledge_point_name || '知识点' }}</strong>
+                  </div>
+                  <em>置信度 {{ Math.round((update.confidence || 0) * 100) }}%</em>
+                </div>
+                <div class="change-value">
+                  {{ formatMasteryChange(update.before || 0, update.after || 0) }}
+                </div>
+                <p>{{ update.reason || '系统根据近期学习证据提出此建议。' }}</p>
+                <small>关联证据 {{ update.evidence_ids?.length || 0 }} 条</small>
+                <div class="update-actions">
+                  <button
+                    class="accept-btn"
+                    :disabled="resolvingUpdateId === update.id"
+                    @click="handleUpdate(update, 'accept')"
+                  >
+                    接受建议
+                  </button>
+                  <label>
+                    <input
+                      v-model.number="modifiedScores[update.id]"
+                      type="number"
+                      min="0"
+                      max="100"
+                    />
+                    <button
+                      :disabled="resolvingUpdateId === update.id"
+                      @click="handleUpdate(update, 'modify')"
+                    >
+                      按此分值确认
+                    </button>
+                  </label>
+                  <button
+                    class="ignore-btn"
+                    :disabled="resolvingUpdateId === update.id"
+                    @click="handleUpdate(update, 'ignore')"
+                  >
+                    忽略
+                  </button>
+                </div>
+              </article>
+            </div>
+            <div v-else class="empty-panel">当前没有待确认的画像更新。</div>
+          </section>
+
+          <section class="profile-card insight-card">
+            <div class="section-head">
+              <div class="section-icon"><History :size="19" /></div>
+              <div>
+                <h2>下一步建议</h2>
+                <p>推荐同时参考最近课堂报告和已确认的历史课程画像。</p>
+              </div>
+            </div>
+            <div v-if="recentRecommendations.length" class="recommendation-list">
+              <article v-for="item in recentRecommendations" :key="`${item.classroom_id}-${item.id}`">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.description }}</span>
+                <small v-if="item.reason">{{ item.reason }}</small>
+              </article>
+            </div>
+            <div v-else class="empty-panel">完成课堂报告后，这里会显示可执行的后续学习建议。</div>
           </section>
         </div>
       </section>
@@ -205,7 +295,13 @@ import {
   TriangleAlert,
   UserRound,
 } from 'lucide-vue-next'
-import { getLearnerProfile, saveLearnerProfile, type LearnerProfile } from '@/api/learnerProfile'
+import {
+  getLearnerProfile,
+  resolveLearnerProfileUpdate,
+  saveLearnerProfile,
+  type LearnerProfile,
+  type LearnerProfileUpdate,
+} from '@/api/learnerProfile'
 import {
   createEmptyLearnerProfile,
   mergeLegacyStudentProfile,
@@ -214,6 +310,11 @@ import {
   UNIVERSITY_STAGE_VALUES,
   writeLegacyStudentProfile,
 } from '@/utils/learnerProfile'
+import {
+  formatMasteryChange,
+  pendingProfileUpdates,
+  trendLabel,
+} from '@/utils/learnerProfileUpdates'
 
 const message = useMessage()
 const profile = ref<LearnerProfile>(createEmptyLearnerProfile())
@@ -222,6 +323,8 @@ const saving = ref(false)
 const dirty = ref(false)
 const profileReady = ref(false)
 const loadError = ref('')
+const resolvingUpdateId = ref('')
+const modifiedScores = ref<Record<string, number>>({})
 let stopWatching: (() => void) | null = null
 
 const stageOptions: SelectOption[] = UNIVERSITY_STAGE_VALUES.map((value) => ({
@@ -265,6 +368,11 @@ const summaryTags = computed(() => [
   ...profile.value.preferences.content_style,
   profile.value.preferences.preferred_difficulty,
 ].filter(Boolean))
+const courseProfiles = computed(() => Object.values(profile.value.courses || {}))
+const pendingUpdates = computed(() => pendingProfileUpdates(profile.value.pending_updates || []))
+const recentRecommendations = computed(() => (
+  [...(profile.value.recent_recommendations || [])].reverse().slice(0, 6)
+))
 
 function startDirtyWatch() {
   stopWatching?.()
@@ -310,6 +418,32 @@ async function handleSave() {
     message.error(error instanceof Error ? error.message : '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+async function handleUpdate(
+  update: LearnerProfileUpdate,
+  action: 'accept' | 'modify' | 'ignore',
+) {
+  const modifiedAfter = action === 'modify'
+    ? modifiedScores.value[update.id] ?? update.after
+    : undefined
+  if (action === 'modify' && (modifiedAfter === undefined || modifiedAfter < 0 || modifiedAfter > 100)) {
+    message.warning('请输入 0-100 的掌握度')
+    return
+  }
+  resolvingUpdateId.value = update.id
+  try {
+    const saved = await resolveLearnerProfileUpdate(update.id, action, modifiedAfter)
+    stopWatching?.()
+    profile.value = saved
+    dirty.value = false
+    startDirtyWatch()
+    message.success(action === 'ignore' ? '已忽略画像建议' : '课程画像已更新')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '画像建议处理失败')
+  } finally {
+    resolvingUpdateId.value = ''
   }
 }
 
@@ -714,6 +848,162 @@ onBeforeUnmount(() => stopWatching?.())
   padding: 3px 7px;
   font-size: 9px;
   font-style: normal;
+}
+
+.insight-card {
+  padding: 22px;
+  animation: rise-in 520ms 220ms var(--ease-out) both;
+}
+
+.course-grid,
+.update-list,
+.recommendation-list {
+  display: grid;
+  gap: 12px;
+}
+
+.empty-panel {
+  border: 1px dashed rgb(var(--line-strong-rgb));
+  border-radius: 12px;
+  color: rgb(var(--ink-4-rgb));
+  padding: 18px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.course-card,
+.update-card,
+.recommendation-list article {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 12px;
+  background: rgb(var(--bg-inset-rgb) / 0.46);
+  padding: 15px;
+}
+
+.course-head,
+.update-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.course-head strong,
+.course-head span,
+.update-head span,
+.update-head strong {
+  display: block;
+}
+
+.course-head strong,
+.update-head strong,
+.recommendation-list strong {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 13px;
+}
+
+.course-head span,
+.update-head span {
+  margin-top: 3px;
+  color: rgb(var(--ink-4-rgb));
+  font-size: 11px;
+}
+
+.course-head em,
+.update-head em {
+  color: rgb(var(--nav-classroom-rgb));
+  font-size: 10px;
+  font-style: normal;
+}
+
+.mastery-mini-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.mastery-mini-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(120px, 2fr) 42px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.mastery-mini-row > div {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(var(--line-rgb));
+}
+
+.mastery-mini-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(var(--nav-classroom-rgb));
+}
+
+.change-value {
+  margin: 12px 0 6px;
+  color: rgb(var(--nav-classroom-rgb));
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.update-card p,
+.recommendation-list span,
+.recommendation-list small {
+  display: block;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.update-card small {
+  color: rgb(var(--ink-4-rgb));
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.update-actions label {
+  display: flex;
+}
+
+.update-actions input {
+  width: 62px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 7px 0 0 7px;
+  padding: 0 8px;
+}
+
+.update-actions button {
+  min-height: 32px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 7px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.update-actions label button {
+  border-left: 0;
+  border-radius: 0 7px 7px 0;
+}
+
+.update-actions .accept-btn {
+  border-color: rgb(var(--nav-classroom-rgb));
+  background: rgb(var(--nav-classroom-rgb));
+  color: white;
+}
+
+.update-actions .ignore-btn {
+  color: rgb(var(--ink-4-rgb));
 }
 
 .spin {

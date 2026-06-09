@@ -96,6 +96,7 @@ export interface InteractiveClassroomPayload {
   course?: string
   status: string
   student_profile?: StudentProfile
+  generation_strategy?: Record<string, unknown>
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
   answers_record?: {
@@ -150,6 +151,8 @@ export interface ClassroomRecommendedTask {
   knowledge_points: string[]
   target_scene_ids: string[]
   action_label: string
+  reason?: string
+  evidence_ids?: string[]
 }
 
 export interface ClassroomReport {
@@ -179,6 +182,9 @@ export interface ClassroomReport {
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
   event_count?: number
+  course_trend?: string
+  profile_update_count?: number
+  profile_update_ids?: string[]
 }
 
 export interface ClassroomDiscussionMessage {
@@ -471,4 +477,23 @@ export async function listClassroomEvents(
     { params },
   )
   return res.data.events || []
+}
+
+export async function createClassroomPractice(
+  classroomId: string,
+  taskId: string,
+  taskType: 'practice_weak_points' | 'challenge_practice' | string,
+): Promise<InteractiveClassroomPayload> {
+  const res = await client.post<{
+    success: boolean
+    classroom_id: string
+    classroom: InteractiveClassroomPayload
+  }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/practice`,
+    {
+      task_id: taskId,
+      task_type: taskType,
+    },
+  )
+  return res.data.classroom
 }

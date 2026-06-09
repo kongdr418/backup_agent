@@ -1,8 +1,7 @@
-import {
-  recordClassroomEvent,
-  type InteractiveClassroomScene,
-  type LearningEventType,
-} from '@/api/interactiveClassroom'
+import type {
+  InteractiveClassroomScene,
+  LearningEventType,
+} from '../api/interactiveClassroom.ts'
 
 /** 尝试记录学习事件，失败时静默（不影响主流程）。 */
 async function emit(
@@ -11,6 +10,7 @@ async function emit(
   payload?: Record<string, unknown>,
 ): Promise<void> {
   try {
+    const { recordClassroomEvent } = await import('../api/interactiveClassroom.ts')
     await recordClassroomEvent(classroomId, type, payload as any)
   } catch {
     // 静默：学习事件记录不应阻断课堂播放

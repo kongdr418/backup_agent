@@ -55,7 +55,28 @@ def _build_recommended_tasks(
     weak_points: list[str],
     strong_points: list[str],
     point_scene_ids: dict[str, list[str]] | None = None,
+    course_profile: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    course_profile = course_profile or {}
+    mastery = (
+        course_profile.get("mastery")
+        if isinstance(course_profile.get("mastery"), dict)
+        else {}
+    )
+
+    def history_for(point_names: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+        rows = [
+            row
+            for row in mastery.values()
+            if isinstance(row, dict) and row.get("name") in point_names
+        ]
+        evidence_ids: list[str] = []
+        for row in rows:
+            for event_id in row.get("evidence_ids", []):
+                if event_id and event_id not in evidence_ids:
+                    evidence_ids.append(event_id)
+        return rows, evidence_ids
+
     if status == "not_started":
         return [
             {
@@ -67,6 +88,8 @@ def _build_recommended_tasks(
                 "knowledge_points": [],
                 "target_scene_ids": [],
                 "action_label": "回到测验",
+                "reason": "当前课堂尚无答题证据。",
+                "evidence_ids": [],
             }
         ]
 
@@ -77,6 +100,17 @@ def _build_recommended_tasks(
             for scene_id in (point_scene_ids or {}).get(point, []):
                 if scene_id not in target_scene_ids:
                     target_scene_ids.append(scene_id)
+        history_rows, history_evidence_ids = history_for(focus_points)
+        historical_scores = [
+            int(round(float(row.get("score", 0) or 0)))
+            for row in history_rows
+        ]
+        historical_reason = (
+            f"历史课程画像中相关掌握度最低为 {min(historical_scores)}%，"
+            f"近期趋势为 {course_profile.get('recent_trend', 'stable')}。"
+            if historical_scores
+            else "本次课堂报告首次识别到这些薄弱点。"
+        )
         return [
             {
                 "id": "task_review_weak_points",
@@ -87,20 +121,35 @@ def _build_recommended_tasks(
                 "knowledge_points": focus_points,
                 "target_scene_ids": target_scene_ids,
                 "action_label": "复听讲解",
+                "reason": historical_reason,
+                "evidence_ids": history_evidence_ids,
             },
             {
                 "id": "task_practice_weak_points",
                 "type": "practice_weak_points",
                 "title": "完成补强练习",
                 "description": "围绕薄弱点再做一轮同类题，确认概念、判断依据和应用步骤都能独立完成。",
-                "priority": "medium",
+                "priority": "high" if historical_scores and min(historical_scores) < 65 else "medium",
                 "knowledge_points": focus_points,
                 "target_scene_ids": [],
                 "action_label": "生成练习",
+                "reason": historical_reason,
+                "evidence_ids": history_evidence_ids,
             },
         ]
 
     next_points = strong_points[:3]
+    history_rows, history_evidence_ids = history_for(next_points)
+    historical_scores = [
+        int(round(float(row.get("score", 0) or 0)))
+        for row in history_rows
+    ]
+    history_reason = (
+        f"历史课程画像中相关掌握度达到 {max(historical_scores)}%，"
+        "可以进入迁移应用。"
+        if historical_scores
+        else "本次课堂未发现明显薄弱点。"
+    )
     return [
         {
             "id": "task_next_lesson",
@@ -111,6 +160,8 @@ def _build_recommended_tasks(
             "knowledge_points": next_points,
             "target_scene_ids": [],
             "action_label": "规划下一课",
+            "reason": history_reason,
+            "evidence_ids": history_evidence_ids,
         },
         {
             "id": "task_challenge_practice",
@@ -121,6 +172,8 @@ def _build_recommended_tasks(
             "knowledge_points": next_points,
             "target_scene_ids": [],
             "action_label": "挑战练习",
+            "reason": history_reason,
+            "evidence_ids": history_evidence_ids,
         },
     ]
 
@@ -129,6 +182,7 @@ def build_classroom_report(
     classroom: dict[str, Any],
     answers_record: dict[str, Any],
     events: list[dict[str, Any]] | None = None,
+    course_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scenes = answers_record.get("scenes", {})
     quiz_scene_count = sum(1 for scene in classroom.get("scenes", []) if scene.get("type") == "quiz")
@@ -218,6 +272,7 @@ def build_classroom_report(
         weak_points,
         strong_points,
         point_scene_ids,
+        course_profile,
     )
 
     return {
@@ -240,4 +295,5 @@ def build_classroom_report(
         "next_recommendation": next_recommendation,
         "recommended_tasks": recommended_tasks,
         "event_count": len(events or []),
+        "course_trend": (course_profile or {}).get("recent_trend", "stable"),
     }

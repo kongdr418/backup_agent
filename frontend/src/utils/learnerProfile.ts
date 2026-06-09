@@ -37,6 +37,8 @@ export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
     courses: {},
     pending_updates: [],
     recent_recommendations: [],
+    update_history: [],
+    evidence_buffer: {},
     created_at: '',
     updated_at: '',
   }
