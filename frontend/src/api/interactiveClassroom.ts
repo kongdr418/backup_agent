@@ -7,6 +7,11 @@ export interface InteractiveClassroomGenerateRequest {
   request_id?: string
   course?: string
   ppt_job_id?: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   student_profile?: StudentProfile
   tts_provider?: string
   tts_model?: string
@@ -32,8 +37,14 @@ export interface InteractiveClassroomListItem {
   title: string
   topic: string
   course?: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   scene_count: number
   created_at: string
+  updated_at?: string
 }
 
 export interface InteractiveClassroomAction {
@@ -95,7 +106,13 @@ export interface InteractiveClassroomPayload {
   topic: string
   course?: string
   status: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   student_profile?: StudentProfile
+  generation_strategy?: Record<string, unknown>
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
   answers_record?: {
@@ -150,6 +167,8 @@ export interface ClassroomRecommendedTask {
   knowledge_points: string[]
   target_scene_ids: string[]
   action_label: string
+  reason?: string
+  evidence_ids?: string[]
 }
 
 export interface ClassroomReport {
@@ -172,11 +191,36 @@ export interface ClassroomReport {
     earned_points: number
     total_points: number
     mastery: number
+    event_ids?: string[]
   }>
   weak_points: string[]
   strong_points: string[]
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
+  event_count?: number
+  course_trend?: string
+  profile_update_count?: number
+  profile_update_ids?: string[]
+}
+
+export interface NextLessonPlan {
+  topic: string
+  course: string
+  learning_goal: string
+  review_points: string[]
+  focus_points: string[]
+  weak_points: string[]
+  strong_points: string[]
+  rationale: string
+  ppt_notes: string
+  source_classroom_id: string
+  source_topic: string
+  source_ppt_job_id?: string
+  course_root_id: string
+  parent_classroom_id: string
+  lesson_depth: number
+  lesson_index: number
+  lesson_kind: string
 }
 
 export interface ClassroomDiscussionMessage {
@@ -305,6 +349,17 @@ export async function getInteractiveClassroomReport(classroomId: string) {
   return res.data.report
 }
 
+export async function getNextLessonPlan(
+  classroomId: string,
+  overrides: Partial<Pick<NextLessonPlan, 'topic' | 'learning_goal' | 'focus_points' | 'review_points'>> = {},
+) {
+  const res = await client.post<{ success: boolean; plan: NextLessonPlan }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/next-lesson-plan`,
+    overrides,
+  )
+  return res.data.plan
+}
+
 export async function discussInteractiveClassroom(
   classroomId: string,
   body: {
@@ -407,4 +462,85 @@ export async function* streamInteractiveClassroomGeneration(
     const event = raw as unknown as ClassroomStreamEvent
     yield event
   }
+}
+
+// ---------- P7: 学习事件 ----------
+
+export type LearningEventType =
+  | 'quiz_submitted'
+  | 'short_answer_scored'
+  | 'scene_reviewed'
+  | 'recommended_task_opened'
+  | 'recommended_task_completed'
+  | 'classroom_completed'
+
+export interface LearningEvent {
+  id: string
+  type: LearningEventType
+  user_id: string
+  classroom_id: string
+  scene_id?: string
+  course_id?: string
+  created_at: string
+  knowledge_points: string[]
+  payload: Record<string, unknown>
+  retry_of?: string
+  dedupe_key?: string
+}
+
+export async function recordClassroomEvent(
+  classroomId: string,
+  eventType: LearningEventType,
+  payload?: {
+    scene_id?: string
+    task_id?: string
+    task_type?: string
+    knowledge_points?: string[]
+    quiz_total?: number
+    answered_total?: number
+    review_count?: number
+    result?: Record<string, unknown>
+  },
+): Promise<LearningEvent> {
+  const res = await client.post<{ success: boolean; event: LearningEvent }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/event`,
+    {
+      event_type: eventType,
+      scene_id: payload?.scene_id,
+      payload,
+    },
+  )
+  return res.data.event
+}
+
+export async function listClassroomEvents(
+  classroomId: string,
+  filterType?: LearningEventType,
+): Promise<LearningEvent[]> {
+  const params: Record<string, string> = {}
+  if (filterType) params.type = filterType
+  const res = await client.get<{ success: boolean; events: LearningEvent[] }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/events`,
+    { params },
+  )
+  return res.data.events || []
+}
+
+export async function createClassroomPractice(
+  classroomId: string,
+  taskId: string,
+  taskType: 'practice_weak_points' | 'challenge_practice' | string,
+): Promise<InteractiveClassroomPayload> {
+  const res = await client.post<{
+    success: boolean
+    classroom_id: string
+    classroom: InteractiveClassroomPayload
+  }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/practice`,
+    {
+      task_id: taskId,
+      task_type: taskType,
+    },
+  )
+  return res.data.classroom
 }

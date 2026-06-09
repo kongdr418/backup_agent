@@ -224,12 +224,57 @@
                   <div class="task-copy">
                     <div class="task-title">{{ task.title }}</div>
                     <p>{{ task.description }}</p>
+                    <p v-if="task.reason" class="task-reason">依据：{{ task.reason }}</p>
                     <div v-if="task.knowledge_points.length" class="tag-row">
                       <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
                     </div>
                   </div>
-                  <button class="task-action" :disabled="!canRunTask(task)" @click="runTask(task)">{{ taskButtonLabel(task) }}</button>
+                  <button
+                    class="task-action"
+                    :disabled="!canRunTask(task) || runningTaskId === task.id"
+                    @click="runTask(task)"
+                  >
+                    {{ taskButtonLabel(task) }}
+                  </button>
                 </article>
+              </div>
+            </section>
+
+            <section class="report-block next-lesson-block">
+              <div class="next-lesson-head">
+                <div>
+                  <div class="report-label">生成下一堂课</div>
+                  <p>基于本节学习报告生成下一课 PPT，开头会先回顾上一课，再进入新内容。</p>
+                </div>
+                <button
+                  class="task-action next-lesson-refresh"
+                  :disabled="nextLessonLoading"
+                  @click="loadNextLessonPlan()"
+                >
+                  {{ nextLessonLoading ? '生成中...' : '刷新建议' }}
+                </button>
+              </div>
+              <div v-if="nextLessonLoading && !nextLessonPlan" class="next-lesson-empty">
+                正在生成下一课建议...
+              </div>
+              <div v-else class="next-lesson-form">
+                <label>
+                  <span>下一课主题</span>
+                  <input v-model.trim="nextLessonDraft.topic" placeholder="例如：K 近邻算法" />
+                </label>
+                <label>
+                  <span>学习目标</span>
+                  <textarea v-model.trim="nextLessonDraft.learningGoal" rows="2" placeholder="这堂课希望学生学会什么" />
+                </label>
+                <label>
+                  <span>重点知识点</span>
+                  <textarea v-model.trim="nextLessonDraft.focusPoints" rows="2" placeholder="用顿号或换行分隔" />
+                </label>
+                <p v-if="nextLessonPlan?.rationale" class="task-reason">依据：{{ nextLessonPlan.rationale }}</p>
+                <button class="next-lesson-primary" :disabled="nextLessonLoading || !nextLessonDraft.topic" @click="openNextLessonInPptStudio">
+                  <Sparkles :size="16" />
+                  生成下一课 PPT
+                </button>
               </div>
             </section>
           </div>
@@ -375,11 +420,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
-import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
+  createClassroomPractice,
   discussInteractiveClassroom,
   discussInteractiveClassroomStream,
+  getNextLessonPlan,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
   getInteractiveClassroom,
@@ -390,6 +437,7 @@ import {
   type InteractiveClassroomPayload,
   type InteractiveClassroomQuestion,
   type InteractiveClassroomScene,
+  type NextLessonPlan,
   type QuizSubmitResult,
 } from '@/api/interactiveClassroom'
 import { resolveReportTaskAction } from '@/utils/classroomReportTask'
@@ -401,6 +449,8 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
+import { emitSceneReviewed, emitRecommendedTaskOpened, emitClassroomCompleted } from '@/utils/classroomEvents'
+import { saveNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
 import {
@@ -426,15 +476,26 @@ const classroom = ref<InteractiveClassroomPayload | null>(null)
 const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
+let classroomLoadVersion = 0
 const discussionRef = ref<InstanceType<typeof DiscussionSidebar> | null>(null)
 const submitting = ref(false)
+const runningTaskId = ref('')
 const reportLoading = ref(false)
 const report = ref<ClassroomReport | null>(null)
+const nextLessonPlan = ref<NextLessonPlan | null>(null)
+const nextLessonLoading = ref(false)
+const nextLessonDraft = ref({
+  topic: '',
+  learningGoal: '',
+  focusPoints: '',
+})
 const reportAutoShown = ref(false)
 const autoPlayEnabled = ref(true)
 const discussionMessages = ref<ClassroomDiscussionMessage[]>([])
 const discussionSubmitting = ref(false)
 const multiAgentDiscussionEnabled = ref(localStorage.getItem('ai_creator.classroom_discussion.multi_agent') === 'true')
+const visitedSceneIds = ref<Set<string>>(new Set())
+const classroomCompletedEmitted = ref(false)
 const isAudioPlaying = ref(false)
 const currentAudioTime = ref(0)
 const audioDuration = ref(0)
@@ -950,6 +1011,13 @@ function selectScene(idx: number) {
   if (target?.type === 'report') {
     showReport().catch(() => undefined)
   }
+  // P7: 复听 — 用户重新进入已访问过的 slide 场景
+  if (target && target.type === 'slide' && classroom.value) {
+    if (visitedSceneIds.value.has(target.id)) {
+      emitSceneReviewed(classroom.value.id, target).catch(() => undefined)
+    }
+    visitedSceneIds.value = new Set([...visitedSceneIds.value, target.id])
+  }
 }
 
 function goPrev() {
@@ -1155,6 +1223,7 @@ async function submitQuiz() {
       message.success(result.feedback_action.text)
     }
     report.value = null
+    nextLessonPlan.value = null
     // 不再自动跳转到报告，由用户手动控制翻页
   } catch (err) {
     message.error(err instanceof Error ? err.message : '提交失败')
@@ -1168,10 +1237,84 @@ async function loadReport(silent = false) {
   reportLoading.value = true
   try {
     report.value = await getInteractiveClassroomReport(classroom.value.id)
+    await loadNextLessonPlan()
   } catch (err) {
     if (!silent) message.error(err instanceof Error ? err.message : '报告生成失败')
   } finally {
     reportLoading.value = false
+  }
+}
+
+async function loadNextLessonPlan(overrides: Partial<Pick<NextLessonPlan, 'topic' | 'learning_goal' | 'focus_points'>> = {}) {
+  if (!classroom.value) return
+  nextLessonLoading.value = true
+  try {
+    const plan = await getNextLessonPlan(classroom.value.id, overrides)
+    nextLessonPlan.value = plan
+    nextLessonDraft.value = {
+      topic: plan.topic,
+      learningGoal: plan.learning_goal,
+      focusPoints: plan.focus_points.join('、'),
+    }
+  } catch {
+    nextLessonPlan.value = null
+  } finally {
+    nextLessonLoading.value = false
+  }
+}
+
+function splitDraftPoints(value: string) {
+  return value
+    .split(/[、,，;；\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+async function openNextLessonInPptStudio() {
+  if (!classroom.value) return
+  const focusPoints = splitDraftPoints(nextLessonDraft.value.focusPoints)
+  nextLessonLoading.value = true
+  try {
+    const plan = await getNextLessonPlan(classroom.value.id, {
+      topic: nextLessonDraft.value.topic,
+      learning_goal: nextLessonDraft.value.learningGoal,
+      focus_points: focusPoints,
+    })
+    nextLessonPlan.value = plan
+    saveNextLessonDraft({
+      topic: plan.topic,
+      course: plan.course,
+      weakPoints: plan.weak_points,
+      strongPoints: plan.strong_points,
+      nextRecommendation: plan.rationale,
+      nextLessonNotes: plan.ppt_notes,
+      courseRootId: plan.course_root_id,
+      parentClassroomId: plan.parent_classroom_id,
+      lessonDepth: plan.lesson_depth,
+      lessonIndex: plan.lesson_index,
+      lessonKind: plan.lesson_kind,
+    })
+    await router.push({
+      name: 'ppt-studio',
+      query: {
+        from: 'interactive-classroom',
+        topic: plan.topic,
+        course: plan.course,
+        weak_points: plan.weak_points.join('||'),
+        strong_points: plan.strong_points.join('||'),
+        next_recommendation: plan.rationale,
+        next_lesson_notes: plan.ppt_notes,
+        course_root_id: plan.course_root_id,
+        parent_classroom_id: plan.parent_classroom_id,
+        lesson_depth: String(plan.lesson_depth),
+        lesson_index: String(plan.lesson_index),
+        lesson_kind: plan.lesson_kind,
+      },
+    })
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '下一课生成失败')
+  } finally {
+    nextLessonLoading.value = false
   }
 }
 
@@ -1196,31 +1339,69 @@ async function showReportAfterClassroomEnd() {
 async function loadClassroom() {
   const classroomId = String(route.params.classroomId || '')
   if (!classroomId) return
+  const loadVersion = ++classroomLoadVersion
+  clearAdvanceTimer()
+  classroom.value = null
+  currentIndex.value = 0
+  report.value = null
+  nextLessonPlan.value = null
+  nextLessonDraft.value = { topic: '', learningGoal: '', focusPoints: '' }
+  answersByScene.value = {}
+  quizResultsByScene.value = {}
+  reportAutoShown.value = false
+  classroomCompletedEmitted.value = false
+  visitedSceneIds.value = new Set()
+  discussionMessages.value = []
+  discussionSubmitting.value = false
   try {
-    classroom.value = await getInteractiveClassroom(classroomId)
+    const loadedClassroom = await getInteractiveClassroom(classroomId)
+    if (loadVersion !== classroomLoadVersion) return
+    classroom.value = loadedClassroom
     const restored = buildPlayerAnswerState(classroom.value)
     answersByScene.value = restored.answersByScene
     quizResultsByScene.value = restored.quizResultsByScene
+    // P7: 标记初始场景为已访问
+    const initialScene = orderedScenes.value[0]
+    if (initialScene) visitedSceneIds.value = new Set([initialScene.id])
     await loadReport(true)
+    // P7: 恢复状态后检查课堂是否已完成（watch 只响应变化，不响应初始值）
+    if (isClassroomComplete.value && !classroomCompletedEmitted.value) {
+      classroomCompletedEmitted.value = true
+      emitClassroomCompleted(
+        classroom.value.id,
+        quizSceneIds.value.length,
+        answeredQuizCount.value,
+      ).catch(() => undefined)
+    }
     if (route.query.scene === 'report') {
       await showReport()
+      if (loadVersion !== classroomLoadVersion) return
       const reportIndex = orderedScenes.value.findIndex((scene) => scene.type === 'report')
       if (canOpenReportScene.value && reportIndex >= 0) currentIndex.value = reportIndex
     }
   } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return
     message.error(err instanceof Error ? err.message : '加载失败')
   }
 }
 
 onMounted(() => {
-  loadClassroom().catch(() => undefined)
   window.addEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 onBeforeUnmount(() => {
+  classroomLoadVersion += 1
   clearAdvanceTimer()
   window.removeEventListener('resize', refreshSvgHighlightMetrics)
 })
+
+watch(
+  () => route.params.classroomId,
+  () => {
+    loadClassroom().catch(() => undefined)
+  },
+  { immediate: true },
+)
 
 watch(
   () => [currentScene.value?.id, sceneSvg.value],
@@ -1266,6 +1447,21 @@ watch(
   multiAgentDiscussionEnabled,
   (enabled) => {
     localStorage.setItem('ai_creator.classroom_discussion.multi_agent', String(enabled))
+  },
+)
+
+// P7: 课堂完成事件
+watch(
+  isClassroomComplete,
+  (complete) => {
+    if (complete && !classroomCompletedEmitted.value && classroom.value) {
+      classroomCompletedEmitted.value = true
+      emitClassroomCompleted(
+        classroom.value.id,
+        quizSceneIds.value.length,
+        answeredQuizCount.value,
+      ).catch(() => undefined)
+    }
   },
 )
 
@@ -1350,10 +1546,26 @@ function canRunTask(task: ClassroomRecommendedTask) {
 }
 
 function taskButtonLabel(task: ClassroomRecommendedTask) {
+  if (runningTaskId.value === task.id) return '正在生成...'
   return canRunTask(task) ? task.action_label : `${task.action_label}（待开放）`
 }
 
-function runTask(task: ClassroomRecommendedTask) {
+async function runTask(task: ClassroomRecommendedTask) {
+  // P7: 记录任务点击事件
+  if (classroom.value) {
+    emitRecommendedTaskOpened(
+      classroom.value.id,
+      task.id,
+      task.type,
+      task.knowledge_points,
+    ).catch(() => undefined)
+  }
+
+  if (task.type === 'next_lesson') {
+    await openNextLessonInPptStudio()
+    return
+  }
+
   const action = getTaskAction(task)
   if (action.kind === 'scene') {
     const targetIndex = orderedScenes.value.findIndex((scene) => scene.id === action.sceneId)
@@ -1366,7 +1578,27 @@ function runTask(task: ClassroomRecommendedTask) {
   }
 
   if (action.kind === 'ppt-studio') {
-    router.push({ name: 'ppt-studio', query: action.query })
+    await router.push({ name: 'ppt-studio', query: action.query })
+    return
+  }
+
+  if (action.kind === 'practice' && classroom.value) {
+    runningTaskId.value = task.id
+    try {
+      const practice = await createClassroomPractice(
+        classroom.value.id,
+        action.taskId,
+        action.taskType,
+      )
+      await router.push({
+        name: 'interactive-classroom-player',
+        params: { classroomId: practice.id },
+      })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '练习生成失败')
+    } finally {
+      runningTaskId.value = ''
+    }
     return
   }
 
@@ -2251,6 +2483,84 @@ function runTask(task: ClassroomRecommendedTask) {
   background: rgb(var(--bg-base-rgb));
   font-size: 12px;
   white-space: nowrap;
+}
+
+.next-lesson-block {
+  display: grid;
+  gap: 14px;
+}
+
+.next-lesson-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.next-lesson-head p {
+  margin: 5px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.next-lesson-refresh {
+  flex: 0 0 auto;
+}
+
+.next-lesson-empty {
+  border: 1px dashed rgb(var(--line-rgb));
+  border-radius: 8px;
+  padding: 16px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+}
+
+.next-lesson-form {
+  display: grid;
+  gap: 12px;
+}
+
+.next-lesson-form label {
+  display: grid;
+  gap: 7px;
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.next-lesson-form input,
+.next-lesson-form textarea {
+  width: 100%;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-1-rgb));
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.next-lesson-primary {
+  justify-self: start;
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgb(var(--nav-classroom-rgb));
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.next-lesson-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .teacher-mark {

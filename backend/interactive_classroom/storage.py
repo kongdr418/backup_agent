@@ -5,7 +5,10 @@ import os
 import re
 import shutil
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from interactive_classroom.schema import LearningEvent
 
 
 def _now_iso() -> str:
@@ -16,6 +19,13 @@ def _safe_id(value: str, field_name: str) -> str:
     if not re.match(r"^[a-zA-Z0-9_-]{1,128}$", value or ""):
         raise ValueError(f"invalid {field_name}")
     return value
+
+
+def _safe_int(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 class ClassroomStorage:
@@ -109,6 +119,56 @@ class ClassroomStorage:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
+    def load_report(self, user_id: str, classroom_id: str) -> dict[str, Any] | None:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id, create=False),
+            "report.json",
+        )
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else None
+
+    def load_knowledge_point_cache(
+        self,
+        user_id: str,
+        classroom_id: str,
+    ) -> list[dict[str, Any]]:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id, create=False),
+            "knowledge_point_map.json",
+        )
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        rows = payload.get("knowledge_points", []) if isinstance(payload, dict) else []
+        return rows if isinstance(rows, list) else []
+
+    def save_knowledge_point_cache(
+        self,
+        user_id: str,
+        classroom_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        path = os.path.join(
+            self.classroom_dir(user_id, classroom_id),
+            "knowledge_point_map.json",
+        )
+        temp_path = f"{path}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "knowledge_points": rows,
+                    "updated_at": _now_iso(),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+        os.replace(temp_path, path)
+
     def list_classrooms(self, user_id: str) -> list[dict[str, Any]]:
         user_id = _safe_id(user_id, "user_id")
         root = os.path.join(self.memory_root, user_id, "interactive_classrooms")
@@ -131,6 +191,11 @@ class ClassroomStorage:
                         "title": c.get("title", ""),
                         "topic": c.get("topic", ""),
                         "course": c.get("course", ""),
+                        "course_root_id": c.get("course_root_id") or c.get("id", classroom_id),
+                        "parent_classroom_id": c.get("parent_classroom_id", ""),
+                        "lesson_depth": _safe_int(c.get("lesson_depth", 0), 0),
+                        "lesson_index": _safe_int(c.get("lesson_index", 1), 1),
+                        "lesson_kind": c.get("lesson_kind", "root"),
                         "scene_count": len(c.get("scenes", [])),
                         "created_at": c.get("created_at", ""),
                         "updated_at": c.get("updated_at", ""),
@@ -141,3 +206,42 @@ class ClassroomStorage:
                 continue
         rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return rows
+
+    # ---- 学习事件 (P7) ----
+
+    def _events_path(self, user_id: str, classroom_id: str) -> str:
+        return os.path.join(self.classroom_dir(user_id, classroom_id), "learning_events.json")
+
+    def _load_events_file(self, user_id: str, classroom_id: str) -> dict[str, Any]:
+        path = self._events_path(user_id, classroom_id)
+        if not os.path.exists(path):
+            return {"events": []}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_events_file(self, user_id: str, classroom_id: str, data: dict[str, Any]) -> None:
+        path = self._events_path(user_id, classroom_id)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def save_event(self, user_id: str, classroom_id: str, event: "LearningEvent") -> None:
+        data = self._load_events_file(user_id, classroom_id)
+        data["events"].append(event.to_dict())
+        data["updated_at"] = _now_iso()
+        self._write_events_file(user_id, classroom_id, data)
+
+    def load_events(self, user_id: str, classroom_id: str) -> list[dict[str, Any]]:
+        data = self._load_events_file(user_id, classroom_id)
+        return data.get("events", [])
+
+    def find_event_by_dedupe_key(
+        self, user_id: str, classroom_id: str, dedupe_key: str
+    ) -> "LearningEvent | None":
+        if not dedupe_key:
+            return None
+        events = self.load_events(user_id, classroom_id)
+        for ev_data in events:
+            if ev_data.get("dedupe_key") == dedupe_key:
+                from interactive_classroom.schema import LearningEvent
+                return LearningEvent(**{k: v for k, v in ev_data.items() if k in LearningEvent.__dataclass_fields__})
+        return None

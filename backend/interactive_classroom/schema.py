@@ -44,6 +44,28 @@ class ClassroomScene:
 
 
 @dataclass
+class LearningEvent:
+    """课堂学习事件 —— 可追踪、可解释的学习证据。"""
+    id: str
+    type: str  # quiz_submitted | short_answer_scored | scene_reviewed | recommended_task_opened | recommended_task_completed | classroom_completed
+    user_id: str
+    classroom_id: str
+    scene_id: str = ""
+    course_id: str = ""
+    created_at: str = ""
+    # 事件关联的知识点
+    knowledge_points: list[str] = field(default_factory=list)
+    # 事件负载：不同事件类型携带不同结构
+    payload: dict[str, Any] = field(default_factory=dict)
+    # 重试信息
+    retry_of: str = ""  # 如果是重试，指向原事件 ID
+    dedupe_key: str = ""  # 幂等键，用于防重复提交
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class InteractiveClassroom:
     id: str
     user_id: str
@@ -55,6 +77,12 @@ class InteractiveClassroom:
     updated_at: str
     tts: dict[str, str]
     student_profile: dict[str, str] = field(default_factory=dict)
+    generation_strategy: dict[str, Any] = field(default_factory=dict)
+    course_root_id: str = ""
+    parent_classroom_id: str = ""
+    lesson_depth: int = 0
+    lesson_index: int = 1
+    lesson_kind: str = "root"
     source: dict[str, Any] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
     knowledge_points: list[str] = field(default_factory=list)

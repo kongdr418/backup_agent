@@ -457,6 +457,47 @@ def _student_profile_hint(profile: dict[str, str]) -> str:
     return "；".join(parts)
 
 
+def _normalize_generation_strategy(strategy: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(strategy, dict):
+        return {}
+    focus_points = [
+        _clean_text(str(value))[:80]
+        for value in strategy.get("focus_knowledge_points", [])
+        if _clean_text(str(value))
+    ][:5]
+    content_style = [
+        _clean_text(str(value))[:40]
+        for value in strategy.get("content_style", [])
+        if _clean_text(str(value))
+    ][:8]
+    avoid = [
+        _clean_text(str(value))[:80]
+        for value in strategy.get("avoid", [])
+        if _clean_text(str(value))
+    ][:8]
+    return {
+        "strategy_version": int(strategy.get("strategy_version", 1) or 1),
+        "course_id": _clean_text(str(strategy.get("course_id", "")))[:80],
+        "course_name": _clean_text(str(strategy.get("course_name", "")))[:120],
+        "explanation_depth": _clean_text(
+            str(strategy.get("explanation_depth", "basic_to_intermediate"))
+        )[:40],
+        "content_style": content_style,
+        "quiz_difficulty": _clean_text(
+            str(strategy.get("quiz_difficulty", "basic"))
+        )[:40],
+        "feedback_style": _clean_text(
+            str(strategy.get("feedback_style", "guided"))
+        )[:40],
+        "focus_knowledge_points": focus_points,
+        "avoid": avoid,
+        "reason": _clean_text(str(strategy.get("reason", "")))[:400],
+        "profile_updated_at": _clean_text(
+            str(strategy.get("profile_updated_at", ""))
+        )[:40],
+    }
+
+
 def _option_rows(correct: str, distractors: list[str], offset: int = 0) -> tuple[list[dict[str, str]], str]:
     values = ["A", "B", "C", "D"]
     rows: list[str] = []
@@ -585,6 +626,26 @@ class InteractiveClassroomGenerator:
 
         return f"现在进入第 {idx} 页“{title}”。这一页主要帮助我们建立整体印象，先抓住标题和页面中的核心关系。"
 
+    def _profile_from_generation_strategy(
+        self,
+        generation_strategy: dict[str, Any] | None,
+    ) -> dict[str, str]:
+        strategy = _normalize_generation_strategy(generation_strategy)
+        if not strategy:
+            return {}
+        focus_points = strategy.get("focus_knowledge_points", [])
+        goal_parts = []
+        if focus_points:
+            goal_parts.append(f"重点补强：{'、'.join(focus_points)}")
+        return _normalize_student_profile(
+            {
+                "basis": strategy.get("explanation_depth", ""),
+                "goal": "；".join(goal_parts),
+                "style": "+".join(strategy.get("content_style", [])),
+                "difficulty": strategy.get("quiz_difficulty", ""),
+            }
+        )
+
     def _build_teaching_segments_prompt(
         self,
         *,
@@ -646,7 +707,7 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         valid_ids = {str(target.get("id")) for target in targets if target.get("id")}
-        if targets:
+        if targets and self.llm_quiz_enabled:
             try:
                 quiz_generator = self._get_quiz_generator()
                 prompt = self._build_teaching_segments_prompt(
@@ -1309,6 +1370,61 @@ class InteractiveClassroomGenerator:
             actions=[],
         )
 
+    def build_practice_quiz_scene(
+        self,
+        *,
+        topic: str,
+        knowledge_points: list[str],
+        task_type: str,
+        generation_strategy: dict[str, Any] | None = None,
+    ) -> ClassroomScene:
+        clean_points = [
+            _clean_text(str(value))[:80]
+            for value in knowledge_points
+            if _clean_text(str(value))
+        ][:5]
+        if not clean_points:
+            clean_points = [_clean_text(topic) or "综合理解"]
+        source_scenes = [
+            ClassroomScene(
+                id=f"practice_source_{idx:03d}",
+                type="slide",
+                title=point,
+                order=idx,
+                knowledge_points=[point],
+                content={
+                    "extracted_text": [
+                        point,
+                        (
+                            f"围绕{point}完成迁移应用和综合判断。"
+                            if task_type == "challenge_practice"
+                            else f"围绕{point}复习概念、判断依据和应用步骤。"
+                        ),
+                    ]
+                },
+                actions=[],
+            )
+            for idx, point in enumerate(clean_points, start=1)
+        ]
+        profile = self._profile_from_generation_strategy(generation_strategy)
+        scene = self._build_quiz_scene(
+            quiz_index=1,
+            order=1,
+            topic=topic,
+            scenes=source_scenes,
+            max_questions=4,
+            student_profile=profile,
+            require_short_answer=task_type == "challenge_practice",
+        )
+        scene.title = (
+            f"挑战练习：{'、'.join(clean_points[:3])}"
+            if task_type == "challenge_practice"
+            else f"补强练习：{'、'.join(clean_points[:3])}"
+        )
+        scene.content["practice_task_type"] = task_type
+        scene.content["covered_scene_ids"] = []
+        return scene
+
     def _build_mindmap_prompt(
         self,
         topic: str,
@@ -1543,13 +1659,36 @@ class InteractiveClassroomGenerator:
         tts_config: dict[str, Any],
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
+        generation_strategy: dict[str, Any] | None = None,
+        lineage: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
         classroom_id = f"cls_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
-        normalized_profile = _normalize_student_profile(student_profile)
+        lineage = lineage if isinstance(lineage, dict) else {}
+        parent_classroom_id = _clean_text(str(lineage.get("parent_classroom_id") or ""))[:128]
+        course_root_id = _clean_text(str(lineage.get("course_root_id") or ""))[:128] or (
+            parent_classroom_id or classroom_id
+        )
+        try:
+            lesson_depth = max(0, int(lineage.get("lesson_depth", 0) or 0))
+        except (TypeError, ValueError):
+            lesson_depth = 0
+        try:
+            lesson_index = max(1, int(lineage.get("lesson_index", 1) or 1))
+        except (TypeError, ValueError):
+            lesson_index = 1
+        lesson_kind = _clean_text(str(lineage.get("lesson_kind") or ""))[:40] or (
+            "next_lesson" if parent_classroom_id else "root"
+        )
+        normalized_strategy = _normalize_generation_strategy(generation_strategy)
+        normalized_profile = (
+            self._profile_from_generation_strategy(normalized_strategy)
+            if normalized_strategy
+            else _normalize_student_profile(student_profile)
+        )
 
         if ppt_job_id:
             scenes = self._build_slide_scenes_from_ppt_job(
@@ -1602,6 +1741,12 @@ class InteractiveClassroomGenerator:
                 "voice": tts_config.get("voice", ""),
             },
             student_profile=normalized_profile,
+            generation_strategy=normalized_strategy,
+            course_root_id=course_root_id,
+            parent_classroom_id=parent_classroom_id,
+            lesson_depth=lesson_depth,
+            lesson_index=lesson_index,
+            lesson_kind=lesson_kind,
             source={"type": "ppt_svg_job" if ppt_job_id else "topic_fallback", "job_id": ppt_job_id},
             agents=[
                 {

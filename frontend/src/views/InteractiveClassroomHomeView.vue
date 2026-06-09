@@ -37,42 +37,42 @@
             </label>
           </div>
 
-          <div class="profile-grid">
-            <div class="profile-card">
-              <div class="profile-icon forest">
-                <BookOpen class="profile-icon-svg" />
+          <div class="profile-summary">
+            <div class="profile-summary-icon">
+              <UserRound class="profile-summary-icon-svg" />
+            </div>
+            <div class="profile-summary-main">
+              <div class="profile-summary-heading">
+                <span>本次课堂使用的学习者画像</span>
+                <span v-if="learnerProfileLoading" class="profile-state">读取中</span>
+                <span v-else-if="learnerProfileError" class="profile-state error">读取失败</span>
               </div>
-              <div class="profile-body">
-                <span class="profile-label">学习基础</span>
-                <n-select v-model:value="studentProfile.basis" :options="basisOptions" size="small" class="profile-select" :consistent-menu-width="false" />
+              <p class="profile-summary-desc">{{ learnerProfileSummary.description }}</p>
+              <div class="profile-tags">
+                <span
+                  v-for="tag in learnerProfileSummary.tags"
+                  :key="tag"
+                  class="profile-tag"
+                  :class="{ muted: learnerProfileSummary.isEmpty }"
+                >
+                  {{ tag }}
+                </span>
               </div>
             </div>
-            <div class="profile-card">
-              <div class="profile-icon forest">
-                <Target class="profile-icon-svg" />
-              </div>
-              <div class="profile-body">
-                <span class="profile-label">学习目标</span>
-                <n-select v-model:value="studentProfile.goal" :options="goalOptions" size="small" class="profile-select" :consistent-menu-width="false" />
-              </div>
-            </div>
-            <div class="profile-card">
-              <div class="profile-icon purple">
-                <MessageSquare class="profile-icon-svg" />
-              </div>
-              <div class="profile-body">
-                <span class="profile-label">讲解偏好</span>
-                <n-select v-model:value="studentProfile.style" :options="styleOptions" size="small" class="profile-select" :consistent-menu-width="false" />
-              </div>
-            </div>
-            <div class="profile-card">
-              <div class="profile-icon amber">
-                <BarChart3 class="profile-icon-svg" />
-              </div>
-              <div class="profile-body">
-                <span class="profile-label">题目难度</span>
-                <n-select v-model:value="studentProfile.difficulty" :options="difficultyOptions" size="small" class="profile-select" :consistent-menu-width="false" />
-              </div>
+            <div class="profile-summary-actions">
+              <button
+                v-if="learnerProfileError"
+                type="button"
+                class="profile-link"
+                @click="loadLearnerProfile"
+              >
+                <RefreshCw class="profile-link-icon" />
+                重试
+              </button>
+              <button type="button" class="profile-link" @click="router.push('/student-profile')">
+                <Pencil class="profile-link-icon" />
+                修改画像
+              </button>
             </div>
           </div>
 
@@ -140,54 +140,80 @@
         </button>
       </div>
 
-      <div v-if="classrooms.length === 0" class="empty">暂无课堂记录</div>
-      <div v-else class="list">
+      <div v-if="classroomGroups.length === 0" class="empty">暂无课堂记录</div>
+      <div v-else class="course-list">
         <div
-          v-for="item in classrooms"
-          :key="item.id"
-          class="list-item"
+          v-for="group in classroomGroups"
+          :key="group.rootId"
+          class="course-folder"
         >
-          <button class="thumb-btn" :title="`打开 ${item.title}`" @click="openClassroom(item.id)">
-            <span class="thumb-screen"></span>
-            <PlayCircle class="thumb-play" />
-            <span class="thumb-card small-one"></span>
-            <span class="thumb-card small-two"></span>
+          <button class="course-folder-head" @click="toggleCourseGroup(group.rootId)">
+            <span class="folder-mark">
+              <FolderOpen class="folder-mark-icon" />
+            </span>
+            <span class="course-folder-copy">
+              <strong>{{ group.title }}</strong>
+              <span>
+                {{ group.lessons.length }} 节课
+                <template v-if="group.latest"> · 最近：{{ group.latest.topic }}</template>
+              </span>
+            </span>
+            <span class="folder-toggle">{{ expandedCourseIds[group.rootId] ? '收起' : '展开' }}</span>
           </button>
-          <button class="item-main" @click="openClassroom(item.id)">
-            <div class="item-title">{{ item.title }}</div>
-            <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
-            <div class="detail-row">
-              <span>
-                <CalendarDays class="detail-icon" />
-                创建于 {{ formatCreatedAt(item.created_at) }}
-              </span>
-              <span>
-                <UserRound class="detail-icon" />
-                创建者：当前用户
-              </span>
-              <span>
-                <BookOpen class="detail-icon" />
-                学习时长：约 {{ estimatedMinutes(item.scene_count) }} 分钟
-              </span>
+
+          <div v-if="expandedCourseIds[group.rootId]" class="list">
+            <div
+              v-for="item in group.lessons"
+              :key="item.id"
+              class="list-item lesson-item"
+              :class="{ child: item.parent_classroom_id }"
+            >
+              <button class="thumb-btn" :title="`打开 ${item.title}`" @click="openClassroom(item.id)">
+                <span class="thumb-screen"></span>
+                <PlayCircle class="thumb-play" />
+                <span class="thumb-card small-one"></span>
+                <span class="thumb-card small-two"></span>
+              </button>
+              <button class="item-main" @click="openClassroom(item.id)">
+                <div class="item-title">
+                  <span class="lesson-badge">第 {{ item.lesson_index || 1 }} 课</span>
+                  {{ item.title }}
+                </div>
+                <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
+                <div class="detail-row">
+                  <span>
+                    <CalendarDays class="detail-icon" />
+                    创建于 {{ formatCreatedAt(item.created_at) }}
+                  </span>
+                  <span>
+                    <UserRound class="detail-icon" />
+                    创建者：当前用户
+                  </span>
+                  <span>
+                    <BookOpen class="detail-icon" />
+                    学习时长：约 {{ estimatedMinutes(item.scene_count) }} 分钟
+                  </span>
+                </div>
+              </button>
+              <div class="item-actions">
+                <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">
+                  <BookOpen class="mini-icon" />
+                  学习报告
+                </button>
+                <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">
+                  <RotateCcw class="mini-icon" />
+                  重新生成
+                </button>
+                <button class="mini-btn" @click="renameClassroom(item)">
+                  <Pencil class="mini-icon" />
+                  重命名
+                </button>
+                <button class="mini-btn danger" @click="deleteClassroom(item)">
+                  <Trash2 class="mini-icon" />
+                  删除
+                </button>
+              </div>
             </div>
-          </button>
-          <div class="item-actions">
-            <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">
-              <BookOpen class="mini-icon" />
-              学习报告
-            </button>
-            <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">
-              <RotateCcw class="mini-icon" />
-              重新生成
-            </button>
-            <button class="mini-btn" @click="renameClassroom(item)">
-              <Pencil class="mini-icon" />
-              重命名
-            </button>
-            <button class="mini-btn danger" @click="deleteClassroom(item)">
-              <Trash2 class="mini-icon" />
-              删除
-            </button>
           </div>
         </div>
       </div>
@@ -213,19 +239,16 @@ import { NInput, NModal, NSelect, useDialog, useMessage } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import {
   ArrowRight,
-  BarChart3,
   BookOpen,
   CalendarDays,
   Clock3,
   FolderOpen,
   GraduationCap,
-  MessageSquare,
   Pencil,
   PlayCircle,
   RefreshCw,
   RotateCcw,
   Sparkles,
-  Target,
   Trash2,
   UserRound,
 } from 'lucide-vue-next'
@@ -238,9 +261,9 @@ import {
   startInteractiveClassroomGeneration,
   type InteractiveClassroomListItem,
 } from '@/api/interactiveClassroom'
+import { getLearnerProfile, type LearnerProfile } from '@/api/learnerProfile'
 import { listFiles } from '@/api/files'
 import { useSettingStore } from '@/stores/settingStore'
-import { useStudentProfile } from '@/composables/useStudentProfile'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import type { GeneratedFile } from '@/types'
 import {
@@ -248,6 +271,10 @@ import {
   loadPersistedClassroomGeneration,
   savePersistedClassroomGeneration,
 } from '@/utils/classroomGenerationState'
+import {
+  buildLearnerProfileSummary,
+  createEmptyLearnerProfile,
+} from '@/utils/learnerProfile'
 
 const router = useRouter()
 const message = useMessage()
@@ -259,28 +286,12 @@ const renameShow = ref(false)
 const renameValue = ref('')
 const renameTargetId = ref('')
 const renameTargetTitle = ref('')
-const { profile: studentProfile } = useStudentProfile()
-
-const basisOptions: SelectOption[] = [
-  { label: '零基础', value: '零基础' },
-  { label: '有基础', value: '有基础' },
-  { label: '进阶学习', value: '进阶学习' },
-]
-const goalOptions: SelectOption[] = [
-  { label: '考试通过', value: '考试通过' },
-  { label: '项目实战', value: '项目实战' },
-  { label: '概念理解', value: '概念理解' },
-]
-const styleOptions: SelectOption[] = [
-  { label: '图解+案例', value: '图解+案例' },
-  { label: '步骤推导', value: '步骤推导' },
-  { label: '对比辨析', value: '对比辨析' },
-]
-const difficultyOptions: SelectOption[] = [
-  { label: '基础', value: '基础' },
-  { label: '中等', value: '中等' },
-  { label: '挑战', value: '挑战' },
-]
+const learnerProfile = ref<LearnerProfile>(createEmptyLearnerProfile())
+const learnerProfileLoading = ref(false)
+const learnerProfileError = ref('')
+const learnerProfileSummary = computed(() =>
+  buildLearnerProfileSummary(learnerProfile.value),
+)
 
 const pptSelectOptions = computed<SelectOption[]>(() => [
   { label: '选择已有课件', value: '' },
@@ -298,6 +309,7 @@ const loadingList = ref(false)
 const reportLoading = ref(false)
 const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
+const expandedCourseIds = ref<Record<string, boolean>>({})
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
 const activeSuccessMessage = ref('课堂已生成')
@@ -331,6 +343,47 @@ const pptCoursewareOptions = computed(() =>
   files.value.filter((file) => Boolean(getPptJobId(file))),
 )
 
+const classroomGroups = computed(() => {
+  const groups = new Map<string, {
+    rootId: string
+    title: string
+    latest: InteractiveClassroomListItem | null
+    lessons: InteractiveClassroomListItem[]
+  }>()
+  for (const item of classrooms.value) {
+    const rootId = item.course_root_id || item.id
+    const group = groups.get(rootId) || {
+      rootId,
+      title: item.course || item.topic || item.title || '未命名课程',
+      latest: null,
+      lessons: [],
+    }
+    if (item.id === rootId || item.lesson_kind === 'root') {
+      group.title = item.course || item.topic || item.title || group.title
+    }
+    group.lessons.push(item)
+    const latestTime = Date.parse(group.latest?.updated_at || group.latest?.created_at || '')
+    const itemTime = Date.parse(item.updated_at || item.created_at || '')
+    if (!group.latest || itemTime > latestTime) group.latest = item
+    groups.set(rootId, group)
+  }
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      lessons: group.lessons.sort((a, b) => {
+        const ai = a.lesson_index || 1
+        const bi = b.lesson_index || 1
+        if (ai !== bi) return ai - bi
+        return (a.created_at || '').localeCompare(b.created_at || '')
+      }),
+    }))
+    .sort((a, b) => {
+      const at = a.latest?.updated_at || a.latest?.created_at || ''
+      const bt = b.latest?.updated_at || b.latest?.created_at || ''
+      return bt.localeCompare(at)
+    })
+})
+
 // 当前阶段的中文标签；还没收到 progress 事件时给个默认
 const progressStageLabel = computed(
   () => stream.stageLabel.value || '准备中',
@@ -363,10 +416,26 @@ async function loadList() {
     ])
     classrooms.value = classroomRows
     files.value = fileRows
+    ensureExpandedCourseGroups()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '加载失败')
   } finally {
     loadingList.value = false
+  }
+}
+
+function ensureExpandedCourseGroups() {
+  const next = { ...expandedCourseIds.value }
+  classroomGroups.value.forEach((group, index) => {
+    if (next[group.rootId] === undefined) next[group.rootId] = index === 0
+  })
+  expandedCourseIds.value = next
+}
+
+function toggleCourseGroup(rootId: string) {
+  expandedCourseIds.value = {
+    ...expandedCourseIds.value,
+    [rootId]: !expandedCourseIds.value[rootId],
   }
 }
 
@@ -387,10 +456,6 @@ function goPptStudio() {
       from: 'interactive-classroom',
       topic: topic.value,
       course: course.value || undefined,
-      basis: studentProfile.value.basis,
-      goal: studentProfile.value.goal,
-      style: studentProfile.value.style,
-      difficulty: studentProfile.value.difficulty,
     },
   })
 }
@@ -422,7 +487,6 @@ async function onGenerate() {
       topic: finalTopic,
       course: course.value || undefined,
       ppt_job_id: selectedPptJobId.value || undefined,
-      student_profile: studentProfile.value,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
       tts_voice: settingStore.settings.tts_voice,
@@ -470,7 +534,11 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       topic: original.topic || item.topic,
       course: original.course || item.course || undefined,
       ppt_job_id: typeof source.job_id === 'string' ? source.job_id : undefined,
-      student_profile: original.student_profile || studentProfile.value,
+      course_root_id: original.course_root_id,
+      parent_classroom_id: original.parent_classroom_id,
+      lesson_depth: original.lesson_depth,
+      lesson_index: original.lesson_index,
+      lesson_kind: original.lesson_kind,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
       tts_voice: settingStore.settings.tts_voice,
@@ -611,8 +679,21 @@ function deleteClassroom(item: InteractiveClassroomListItem) {
   })
 }
 
+async function loadLearnerProfile() {
+  learnerProfileLoading.value = true
+  learnerProfileError.value = ''
+  try {
+    learnerProfile.value = await getLearnerProfile()
+  } catch {
+    learnerProfileError.value = '学习者画像读取失败'
+  } finally {
+    learnerProfileLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadList().catch(() => undefined)
+  loadLearnerProfile()
   restorePersistedGeneration()
 })
 
@@ -869,110 +950,115 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(45, 80, 22, 0.08);
 }
 
-.profile-grid {
+.profile-summary {
   margin-top: 30px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.profile-card {
-  height: 70px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(232, 240, 226, 0.52), rgba(255, 255, 255, 0.94));
+  padding: 16px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 14px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  min-width: 0;
+  gap: 14px;
   box-shadow: var(--shadow-sm);
 }
 
-.profile-icon {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  border-radius: 10px;
+.profile-summary-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
-}
-
-.profile-icon.forest {
-  background: rgba(232, 240, 226, 0.78);
+  background: rgba(45, 80, 22, 0.12);
   color: var(--forest);
 }
 
-.profile-icon.purple {
-  background: rgba(240, 232, 245, 0.7);
-  color: var(--nav-ppt);
+.profile-summary-icon-svg {
+  width: 22px;
+  height: 22px;
 }
 
-.profile-icon.amber {
-  background: rgba(251, 244, 230, 0.82);
-  color: var(--amber);
-}
-
-.profile-icon-svg {
-  width: 21px;
-  height: 21px;
-}
-
-.profile-body {
+.profile-summary-main {
   min-width: 0;
-  display: grid;
-  grid-template-rows: 18px 24px;
-  align-items: center;
-  row-gap: 1px;
 }
 
-.profile-label {
-  display: block;
-  margin-bottom: 0;
-  color: var(--ink-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  white-space: nowrap;
-}
-
-.profile-select :deep(.n-base-selection) {
-  min-height: 24px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.profile-select :deep(.n-base-selection-label) {
-  height: 24px;
-  padding: 0;
-  background: transparent;
+.profile-summary-heading {
   display: flex;
   align-items: center;
-}
-
-.profile-select :deep(.n-base-selection-input),
-.profile-select :deep(.n-base-selection-placeholder) {
-  height: 24px;
-  line-height: 24px;
-  font-size: 14px;
-  font-weight: 700;
+  gap: 8px;
   color: var(--ink-primary);
-  padding: 0;
+  font-size: 14px;
+  font-weight: 750;
 }
 
-.profile-select :deep(.n-base-selection__border),
-.profile-select :deep(.n-base-selection__state-border) {
-  display: none;
-}
-
-.profile-select :deep(.n-base-suffix) {
-  right: -26px;
-  height: 24px;
-  display: flex;
-  align-items: center;
+.profile-state {
   color: var(--ink-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-state.error {
+  color: #b45309;
+}
+
+.profile-summary-desc {
+  margin: 4px 0 9px;
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-tag {
+  border: 1px solid rgba(45, 80, 22, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 4px 9px;
+  color: var(--forest);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profile-tag.muted {
+  border-color: var(--line);
+  color: var(--ink-tertiary);
+}
+
+.profile-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-link {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px 9px;
+  color: var(--forest);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-link:hover {
+  background: rgba(45, 80, 22, 0.08);
+}
+
+.profile-link-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .primary-btn {
@@ -1258,6 +1344,78 @@ onBeforeUnmount(() => {
   gap: 13px;
 }
 
+.course-list {
+  display: grid;
+  gap: 14px;
+}
+
+.course-folder {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.course-folder-head {
+  width: 100%;
+  min-height: 74px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-subtle));
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(45, 80, 22, 0.10);
+  color: var(--forest);
+}
+
+.folder-mark-icon {
+  width: 21px;
+  height: 21px;
+}
+
+.course-folder-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.course-folder-copy strong {
+  color: var(--ink-primary);
+  font-size: 16px;
+}
+
+.course-folder-copy span,
+.folder-toggle {
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.folder-toggle {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-base);
+  white-space: nowrap;
+}
+
+.course-folder > .list {
+  padding: 14px;
+}
+
 .list-item {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -1267,6 +1425,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 26px;
   box-shadow: var(--shadow-sm);
+}
+
+.lesson-item.child {
+  margin-left: 18px;
 }
 
 .thumb-btn {
@@ -1344,6 +1506,19 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--ink-primary);
   line-height: 1.35;
+}
+
+.lesson-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .item-meta {
@@ -1447,8 +1622,7 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  .form-grid,
-  .profile-grid {
+  .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1512,9 +1686,17 @@ onBeforeUnmount(() => {
     border-radius: 14px;
   }
 
-  .form-grid,
-  .profile-grid {
+  .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-summary {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .profile-summary-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .primary-btn {

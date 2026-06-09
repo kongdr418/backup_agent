@@ -84,7 +84,7 @@ def content_llm_call(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=60,
+            timeout=120,
         )
         return response.choices[0].message.content or ''
 
@@ -161,7 +161,7 @@ def content_llm_call_stream(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        timeout=60,
+        timeout=120,
         stream=True,
     )
     for chunk in response:

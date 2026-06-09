@@ -63,7 +63,7 @@ const routes: RouteRecordRaw[] = [
         path: 'student-profile',
         name: 'student-profile',
         component: () => import('./views/StudentProfileView.vue'),
-        meta: { title: '用户画像' },
+        meta: { title: '学习者中心' },
       },
     ],
   },
