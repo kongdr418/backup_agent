@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
@@ -9,6 +10,7 @@ from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_r
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "content_planner.md"
 MAX_TOKENS = 24576
+_SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
 
 
 def _language_guidance(language: str) -> str:
@@ -27,6 +29,51 @@ def _language_guidance(language: str) -> str:
     if normalized in guidance:
         return guidance[normalized]
     return f"Write all visible slide content in {language.strip()}."
+
+
+def _split_manuscript_pages(manuscript: str) -> list[str]:
+    return [p.strip() for p in _SLIDE_DELIMITER_RE.split(manuscript or "") if p.strip()]
+
+
+def _split_paragraph_pages(manuscript: str) -> list[str]:
+    normalized = (manuscript or "").replace("\r\n", "\n").strip()
+    if not normalized:
+        return []
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", normalized) if p.strip()]
+    if len(paragraphs) > 1:
+        return paragraphs
+    return [normalized]
+
+
+def _coerce_page_list_to_count(pages: list[str], num_slides: int) -> list[str]:
+    if num_slides <= 0 or not pages:
+        return pages
+    if len(pages) == num_slides:
+        return pages
+    if len(pages) > num_slides:
+        head = pages[: num_slides - 1]
+        tail = "\n\n".join(pages[num_slides - 1 :]).strip()
+        return [*head, tail] if head else [tail]
+    return pages
+
+
+def _coerce_manuscript_page_count(manuscript: str, num_slides: int | None) -> str:
+    if not num_slides:
+        return manuscript
+
+    pages = _split_manuscript_pages(manuscript)
+    if len(pages) == num_slides:
+        return "\n\n---\n\n".join(pages)
+
+    paragraph_pages = _split_paragraph_pages(manuscript)
+    if len(pages) <= 1 and len(paragraph_pages) > 1:
+        pages = paragraph_pages
+
+    coerced_pages = _coerce_page_list_to_count(pages, num_slides)
+    if len(coerced_pages) == num_slides:
+        return "\n\n---\n\n".join(coerced_pages)
+
+    return manuscript
 
 
 async def plan_content(
@@ -117,4 +164,4 @@ async def plan_content(
         temperature=0.5,
         max_tokens=MAX_TOKENS,
     )
-    return response.content
+    return _coerce_manuscript_page_count(response.content, num_slides)
