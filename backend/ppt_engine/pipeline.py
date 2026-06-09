@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +25,10 @@ from ppt_engine.config import DESIGN_STYLES, WORKSPACES_DIR, get_deepseek_api_ke
 from ppt_engine.llm.deepseek_provider import DeepSeekProvider
 from ppt_engine.llm.anthropic_provider import AnthropicProvider
 from ppt_engine.llm.base import LLMProvider
+from ppt_engine.logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -78,6 +83,7 @@ class PPTPipeline:
         style_overrides: dict | None = None,
         deep_research: bool = False,
         visual_critic: bool = False,
+        repair_enabled: bool = False,
         template_id: str | None = None,
         notes: str | None = None,
     ) -> AsyncIterator[PipelineEvent]:
@@ -104,6 +110,7 @@ class PPTPipeline:
         workspace.mkdir(parents=True, exist_ok=True)
         project_dir = workspace / job_id
         project_dir.mkdir(parents=True, exist_ok=True)
+        pipeline_start = time.monotonic()
 
         style_info = DESIGN_STYLES.get(style, DESIGN_STYLES["education"])
 
@@ -122,6 +129,15 @@ class PPTPipeline:
             0.0,
             {"job_id": job_id, "project_dir": str(project_dir)},
         )
+        logger.info(
+            "[PPT-PERF] job=%s stage=init status=started topic=%s slides=%s model=%s template=%s repair_enabled=%s",
+            job_id,
+            topic,
+            num_slides,
+            model,
+            template_id or "",
+            repair_enabled,
+        )
 
         # Save metadata
         meta = {
@@ -138,6 +154,8 @@ class PPTPipeline:
 
         try:
             # ── Stage 1: Content Planning (0% → 15%) ──
+            stage_start = time.monotonic()
+            logger.info("[PPT-PERF] job=%s stage=content_planning status=started", job_id)
             yield PipelineEvent("content_planning", "started", "正在规划课程内容...", 0.05)
 
             if deep_research:
@@ -176,8 +194,16 @@ class PPTPipeline:
                 0.15,
                 {"slide_count": slide_count},
             )
+            logger.info(
+                "[PPT-PERF] job=%s stage=content_planning status=complete elapsed=%.2fs slides=%s",
+                job_id,
+                time.monotonic() - stage_start,
+                slide_count,
+            )
 
             # ── Stage 2: Design Strategy (15% → 30%) ──
+            stage_start = time.monotonic()
+            logger.info("[PPT-PERF] job=%s stage=design status=started", job_id)
             yield PipelineEvent("design", "started", "正在生成设计规范...", 0.15)
 
             if tmpl and len(tmpl.design_spec) >= 500:
@@ -194,8 +220,16 @@ class PPTPipeline:
                 )
                 yield PipelineEvent("design", "complete", "设计规范生成完成", 0.30)
             (project_dir / "design_spec.md").write_text(design_spec, encoding="utf-8")
+            logger.info(
+                "[PPT-PERF] job=%s stage=design status=complete elapsed=%.2fs source=%s",
+                job_id,
+                time.monotonic() - stage_start,
+                "template" if tmpl and len(tmpl.design_spec) >= 500 else "llm",
+            )
 
             # ── Stage 3: SVG Generation (30% → 75%) ──
+            stage_start = time.monotonic()
+            logger.info("[PPT-PERF] job=%s stage=svg_generation status=started slides=%s", job_id, slide_count)
             yield PipelineEvent("svg_generation", "started", "正在逐页生成 SVG...", 0.30)
 
             # Load template context for SVG generation
@@ -218,6 +252,7 @@ class PPTPipeline:
                 detail_level=detail_level,
                 template_context=template_context,
                 template_svgs=template_skeletons,
+                repair_enabled=repair_enabled,
             ):
                 svg_pages.append((page_num, svg_content))
                 completed_pages += 1
@@ -238,8 +273,16 @@ class PPTPipeline:
                 f"全部 {len(svg_pages)} 页 SVG 生成完成",
                 0.75,
             )
+            logger.info(
+                "[PPT-PERF] job=%s stage=svg_generation status=complete elapsed=%.2fs slides=%s",
+                job_id,
+                time.monotonic() - stage_start,
+                len(svg_pages),
+            )
 
             # ── Stage 4: SVG Finalization (75% → 85%) ──
+            stage_start = time.monotonic()
+            logger.info("[PPT-PERF] job=%s stage=finalize status=started", job_id)
             yield PipelineEvent("finalize", "started", "正在后处理 SVG...", 0.75)
 
             svg_output_dir = project_dir / "svg_output"
@@ -257,8 +300,15 @@ class PPTPipeline:
                     shutil.copy2(svg_file, svg_final_dir / svg_file.name)
 
             yield PipelineEvent("finalize", "complete", "SVG 后处理完成", 0.85)
+            logger.info(
+                "[PPT-PERF] job=%s stage=finalize status=complete elapsed=%.2fs",
+                job_id,
+                time.monotonic() - stage_start,
+            )
 
             # ── Stage 5: PPTX Export (85% → 100%) ──
+            stage_start = time.monotonic()
+            logger.info("[PPT-PERF] job=%s stage=export status=started", job_id)
             yield PipelineEvent("export", "started", "正在导出 PPTX...", 0.85)
 
             exports_dir = project_dir / "exports"
@@ -297,8 +347,24 @@ class PPTPipeline:
                     "total_slides": len(svg_pages),
                 },
             )
+            logger.info(
+                "[PPT-PERF] job=%s stage=export status=complete elapsed=%.2fs output=%s",
+                job_id,
+                time.monotonic() - stage_start,
+                pptx_path,
+            )
+            logger.info(
+                "[PPT-PERF] job=%s stage=total status=complete elapsed=%.2fs",
+                job_id,
+                time.monotonic() - pipeline_start,
+            )
 
         except Exception as e:
+            logger.exception(
+                "[PPT-PERF] job=%s stage=total status=error elapsed=%.2fs",
+                job_id,
+                time.monotonic() - pipeline_start,
+            )
             yield PipelineEvent("error", "error", f"生成失败: {e}", 0.0, {"error": str(e)})
 
     def _fallback_png_export(self, svg_dir: Path, pptx_path: Path, canvas_format: str) -> None:

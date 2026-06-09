@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -15,8 +16,10 @@ from ppt_engine.config import REFERENCES_DIR, SVG_MAX_CONCURRENCY
 from ppt_engine.critic import CriticConfig, CriticReport, check_svg
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
 from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_executor_guidance
+from ppt_engine.logger import get_logger
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "svg_executor.md"
+logger = get_logger(__name__)
 
 MAX_REPAIR_ATTEMPTS = 2
 MAX_SVG_EXTRACTION_ATTEMPTS = 2
@@ -94,12 +97,20 @@ async def _generate_single_page(
     svg_output_dir: Path,
     critic_config: CriticConfig | None,
     on_critic: CriticCallback | None,
+    repair_enabled: bool,
     template_svgs: dict[str, str] | None = None,
     template_context: str | None = None,
 ) -> tuple[int, str]:
     """Generate one SVG page independently (no cross-page context)."""
+    page_start = time.monotonic()
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
     page_name = _make_page_name(page_num, page_content)
+    logger.info(
+        "[PPT-PERF] stage=svg_generation page=%s/%s status=started name=%s",
+        page_num,
+        total_pages,
+        page_name,
+    )
 
     # Build template reference block if template SVGs are available
     template_ref_block = ""
@@ -144,8 +155,16 @@ async def _generate_single_page(
         ),
     ]
 
+    llm_start = time.monotonic()
     response: LLMResponse = await llm.chat(
         conversation, model, temperature=0.3, max_tokens=16384
+    )
+    logger.info(
+        "[PPT-PERF] stage=svg_generation page=%s/%s step=initial_llm elapsed=%.2fs chars=%s",
+        page_num,
+        total_pages,
+        time.monotonic() - llm_start,
+        len(response.content),
     )
 
     svg_content = _extract_svg(response.content)
@@ -166,8 +185,17 @@ async def _generate_single_page(
                 )
             )
         )
+        llm_start = time.monotonic()
         response = await llm.chat(
             conversation, model, temperature=0.2, max_tokens=16384
+        )
+        logger.info(
+            "[PPT-PERF] stage=svg_generation page=%s/%s step=extraction_retry attempt=%s elapsed=%.2fs chars=%s",
+            page_num,
+            total_pages,
+            extraction_attempt,
+            time.monotonic() - llm_start,
+            len(response.content),
         )
         svg_content = _extract_svg(response.content)
 
@@ -179,12 +207,30 @@ async def _generate_single_page(
 
     best_svg = svg_content
     for attempt in range(2, MAX_REPAIR_ATTEMPTS + 2):
+        critic_start = time.monotonic()
         report = check_svg(svg_content, critic_config)
+        logger.info(
+            "[PPT-PERF] stage=svg_generation page=%s/%s step=critic attempt=%s elapsed=%.2fs passed=%s errors=%s warnings=%s",
+            page_num,
+            total_pages,
+            attempt - 1,
+            time.monotonic() - critic_start,
+            report.passed,
+            report.error_count,
+            report.warning_count,
+        )
         if on_critic is not None:
             await on_critic(page_num, attempt - 1, report)
 
         if report.passed:
             best_svg = svg_content
+            break
+        if not repair_enabled:
+            logger.info(
+                "[PPT-PERF] stage=svg_generation page=%s/%s step=repair_llm skipped=true reason=disabled",
+                page_num,
+                total_pages,
+            )
             break
 
         # Build a clean repair conversation instead of accumulating history.
@@ -201,8 +247,17 @@ async def _generate_single_page(
             ),
         ]
         repair_temp = max(0.1, 0.3 - 0.1 * (attempt - 1))
+        repair_start = time.monotonic()
         response = await llm.chat(
             repair_conversation, model, temperature=repair_temp, max_tokens=16384
+        )
+        logger.info(
+            "[PPT-PERF] stage=svg_generation page=%s/%s step=repair_llm attempt=%s elapsed=%.2fs chars=%s",
+            page_num,
+            total_pages,
+            attempt - 1,
+            time.monotonic() - repair_start,
+            len(response.content),
         )
 
         repaired = _extract_svg(response.content)
@@ -214,6 +269,13 @@ async def _generate_single_page(
 
     svg_path = svg_output_dir / f"{page_num:02d}_{page_name}.svg"
     svg_path.write_text(best_svg, encoding="utf-8")
+    logger.info(
+        "[PPT-PERF] stage=svg_generation page=%s/%s status=complete elapsed=%.2fs path=%s",
+        page_num,
+        total_pages,
+        time.monotonic() - page_start,
+        svg_path,
+    )
     return page_num, best_svg
 
 
@@ -231,6 +293,7 @@ async def generate_svg_pages(
     target_pages: set[int] | None = None,
     critic_config: CriticConfig | None = None,
     on_critic: CriticCallback | None = None,
+    repair_enabled: bool = False,
     template_svgs: dict[str, str] | None = None,
     template_context: str | None = None,
 ) -> AsyncIterator[tuple[int, str]]:
@@ -241,6 +304,16 @@ async def generate_svg_pages(
     pages = _split_manuscript_pages(manuscript)
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
+    dispatched_page_count = (
+        len(pages)
+        if target_pages is None
+        else sum(1 for i, _page in enumerate(pages, start=1) if i in target_pages)
+    )
+    logger.info(
+        "[PPT-PERF] stage=svg_generation status=dispatch pages=%s concurrency=%s",
+        dispatched_page_count,
+        SVG_MAX_CONCURRENCY,
+    )
 
     standards_path = REFERENCES_DIR / "shared-standards.md"
     standards = ""
@@ -276,6 +349,7 @@ async def generate_svg_pages(
                 svg_output_dir=svg_output_dir,
                 critic_config=critic_config,
                 on_critic=on_critic,
+                repair_enabled=repair_enabled,
                 template_svgs=template_svgs,
                 template_context=template_context,
             )
