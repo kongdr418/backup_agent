@@ -165,6 +165,7 @@ import {
 import { useSettingStore } from '@/stores/settingStore'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
+import { clearNextLessonDraft, loadNextLessonDraft, type StoredNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
@@ -205,14 +206,30 @@ watch(() => store.params.template_id, async (tid) => {
 const message = useMessage()
 const dialog = useDialog()
 
+const isClassroomSourceRoute = computed(() =>
+  firstQueryValue(route.query.from) === 'interactive-classroom',
+)
+
 const activeIdx = ref(0)
 const historyOpen = ref(false)
 const drawerOpen = ref(false)
 const creatingClassroom = ref(false)
-const classroomCourse = ref('Python 程序设计')
+const classroomCourse = ref('')
 const classroomElapsedSeconds = ref(0)
 const classroomRequestId = ref('')
 const classroomStartedAt = ref(0)
+const lastAppliedClassroomDraft = ref('')
+const classroomLineage = ref<{
+  courseRootId?: string
+  parentClassroomId?: string
+  lessonDepth?: number
+  lessonIndex?: number
+  lessonKind?: string
+}>({})
+
+function activeStoredDraft(): StoredNextLessonDraft | null {
+  return loadNextLessonDraft()
+}
 
 // SSE 流式进度
 const classroomStream = useInteractiveClassroomStream()
@@ -289,8 +306,13 @@ watch(
   },
 )
 
+watch(
+  () => route.fullPath,
+  () => applyClassroomDraft(),
+  { immediate: true },
+)
+
 onMounted(() => {
-  applyClassroomDraft()
   restoreClassroomGeneration()
   store.refreshJobs().catch(() => undefined)
 })
@@ -306,11 +328,21 @@ function firstQueryValue(value: unknown) {
 }
 
 function applyClassroomDraft() {
-  if (firstQueryValue(route.query.from) !== 'interactive-classroom') return
+  if (!isClassroomSourceRoute.value) {
+    clearNextLessonDraft()
+    classroomLineage.value = {}
+    classroomCourse.value = ''
+    return
+  }
+  const storedDraft = activeStoredDraft()
+  const signature = `${route.fullPath}|${storedDraft ? JSON.stringify(storedDraft) : ''}`
+  if (signature === lastAppliedClassroomDraft.value) return
+  lastAppliedClassroomDraft.value = signature
 
-  const topic = firstQueryValue(route.query.topic).trim()
-  const course = firstQueryValue(route.query.course).trim()
+  const topic = firstQueryValue(route.query.topic).trim() || storedDraft?.topic || ''
+  const course = firstQueryValue(route.query.course).trim() || storedDraft?.course || ''
   const learningContext = getLearningContextFromQuery()
+  classroomLineage.value = getLineageFromQuery(storedDraft)
   if (topic) {
     store.params = {
       ...store.params,
@@ -326,6 +358,24 @@ function applyClassroomDraft() {
   }
 }
 
+function getNumberQueryValue(value: unknown, fallback: number) {
+  const parsed = Number(firstQueryValue(value))
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function getLineageFromQuery(storedDraft: StoredNextLessonDraft | null = null) {
+  const courseRootId = firstQueryValue(route.query.course_root_id).trim() || storedDraft?.courseRootId || ''
+  const parentClassroomId = firstQueryValue(route.query.parent_classroom_id).trim() || storedDraft?.parentClassroomId || ''
+  const lessonKind = firstQueryValue(route.query.lesson_kind).trim() || storedDraft?.lessonKind || ''
+  return {
+    courseRootId: courseRootId || undefined,
+    parentClassroomId: parentClassroomId || undefined,
+    lessonDepth: getNumberQueryValue(route.query.lesson_depth, storedDraft?.lessonDepth ?? 0),
+    lessonIndex: getNumberQueryValue(route.query.lesson_index, storedDraft?.lessonIndex ?? 1),
+    lessonKind: lessonKind || undefined,
+  }
+}
+
 function splitQueryValues(value: unknown) {
   return firstQueryValue(value)
     .split('||')
@@ -334,10 +384,14 @@ function splitQueryValues(value: unknown) {
 }
 
 function getLearningContextFromQuery(): ClassroomLearningContext {
+  const storedDraft = isClassroomSourceRoute.value ? activeStoredDraft() : null
+  const weakPoints = splitQueryValues(route.query.weak_points)
+  const strongPoints = splitQueryValues(route.query.strong_points)
   return {
-    weakPoints: splitQueryValues(route.query.weak_points),
-    strongPoints: splitQueryValues(route.query.strong_points),
-    nextRecommendation: firstQueryValue(route.query.next_recommendation).trim(),
+    weakPoints: weakPoints.length ? weakPoints : storedDraft?.weakPoints || [],
+    strongPoints: strongPoints.length ? strongPoints : storedDraft?.strongPoints || [],
+    nextRecommendation: firstQueryValue(route.query.next_recommendation).trim() || storedDraft?.nextRecommendation || '',
+    nextLessonNotes: firstQueryValue(route.query.next_lesson_notes).trim() || storedDraft?.nextLessonNotes || '',
   }
 }
 
@@ -418,6 +472,19 @@ async function onCreateClassroom() {
     return ''
   })()
   const topic = (store.params.topic || '').trim() || fallbackTopic
+  const storedDraft = isClassroomSourceRoute.value ? activeStoredDraft() : null
+  const useNextLessonDraft = Boolean(
+    storedDraft?.parentClassroomId &&
+    (!storedDraft.topic || storedDraft.topic === topic),
+  )
+  const activeLineage = {
+    courseRootId: useNextLessonDraft ? classroomLineage.value.courseRootId || storedDraft?.courseRootId : undefined,
+    parentClassroomId: useNextLessonDraft ? classroomLineage.value.parentClassroomId || storedDraft?.parentClassroomId : undefined,
+    lessonDepth: useNextLessonDraft ? classroomLineage.value.lessonDepth ?? storedDraft?.lessonDepth : undefined,
+    lessonIndex: useNextLessonDraft ? classroomLineage.value.lessonIndex ?? storedDraft?.lessonIndex : undefined,
+    lessonKind: useNextLessonDraft ? classroomLineage.value.lessonKind || storedDraft?.lessonKind : undefined,
+  }
+  const activeCourse = useNextLessonDraft ? classroomCourse.value || storedDraft?.course || topic : topic
 
   // 只有当既没有 ppt_job_id 又没有 topic 时才阻止（不可能从零生成）
   if (!pptJobId && !topic) {
@@ -440,8 +507,13 @@ async function onCreateClassroom() {
     await startInteractiveClassroomGeneration({
       topic,
       request_id: requestId,
-      course: classroomCourse.value || topic,
+      course: activeCourse,
       ppt_job_id: pptJobId || undefined,
+      course_root_id: activeLineage.courseRootId,
+      parent_classroom_id: activeLineage.parentClassroomId,
+      lesson_depth: activeLineage.lessonDepth,
+      lesson_index: activeLineage.lessonIndex,
+      lesson_kind: activeLineage.lessonKind,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
       tts_voice: settingStore.settings.tts_voice,
@@ -452,6 +524,7 @@ async function onCreateClassroom() {
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
     })
+    if (isClassroomSourceRoute.value) clearNextLessonDraft()
     // 启动 SSE 流
     void classroomStream.start(requestId)
   } catch (e) {

@@ -1660,12 +1660,29 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
         generation_strategy: dict[str, Any] | None = None,
+        lineage: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
         classroom_id = f"cls_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
+        lineage = lineage if isinstance(lineage, dict) else {}
+        parent_classroom_id = _clean_text(str(lineage.get("parent_classroom_id") or ""))[:128]
+        course_root_id = _clean_text(str(lineage.get("course_root_id") or ""))[:128] or (
+            parent_classroom_id or classroom_id
+        )
+        try:
+            lesson_depth = max(0, int(lineage.get("lesson_depth", 0) or 0))
+        except (TypeError, ValueError):
+            lesson_depth = 0
+        try:
+            lesson_index = max(1, int(lineage.get("lesson_index", 1) or 1))
+        except (TypeError, ValueError):
+            lesson_index = 1
+        lesson_kind = _clean_text(str(lineage.get("lesson_kind") or ""))[:40] or (
+            "next_lesson" if parent_classroom_id else "root"
+        )
         normalized_strategy = _normalize_generation_strategy(generation_strategy)
         normalized_profile = (
             self._profile_from_generation_strategy(normalized_strategy)
@@ -1725,6 +1742,11 @@ class InteractiveClassroomGenerator:
             },
             student_profile=normalized_profile,
             generation_strategy=normalized_strategy,
+            course_root_id=course_root_id,
+            parent_classroom_id=parent_classroom_id,
+            lesson_depth=lesson_depth,
+            lesson_index=lesson_index,
+            lesson_kind=lesson_kind,
             source={"type": "ppt_svg_job" if ppt_job_id else "topic_fallback", "job_id": ppt_job_id},
             agents=[
                 {

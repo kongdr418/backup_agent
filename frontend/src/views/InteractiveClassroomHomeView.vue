@@ -140,54 +140,80 @@
         </button>
       </div>
 
-      <div v-if="classrooms.length === 0" class="empty">暂无课堂记录</div>
-      <div v-else class="list">
+      <div v-if="classroomGroups.length === 0" class="empty">暂无课堂记录</div>
+      <div v-else class="course-list">
         <div
-          v-for="item in classrooms"
-          :key="item.id"
-          class="list-item"
+          v-for="group in classroomGroups"
+          :key="group.rootId"
+          class="course-folder"
         >
-          <button class="thumb-btn" :title="`打开 ${item.title}`" @click="openClassroom(item.id)">
-            <span class="thumb-screen"></span>
-            <PlayCircle class="thumb-play" />
-            <span class="thumb-card small-one"></span>
-            <span class="thumb-card small-two"></span>
+          <button class="course-folder-head" @click="toggleCourseGroup(group.rootId)">
+            <span class="folder-mark">
+              <FolderOpen class="folder-mark-icon" />
+            </span>
+            <span class="course-folder-copy">
+              <strong>{{ group.title }}</strong>
+              <span>
+                {{ group.lessons.length }} 节课
+                <template v-if="group.latest"> · 最近：{{ group.latest.topic }}</template>
+              </span>
+            </span>
+            <span class="folder-toggle">{{ expandedCourseIds[group.rootId] ? '收起' : '展开' }}</span>
           </button>
-          <button class="item-main" @click="openClassroom(item.id)">
-            <div class="item-title">{{ item.title }}</div>
-            <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
-            <div class="detail-row">
-              <span>
-                <CalendarDays class="detail-icon" />
-                创建于 {{ formatCreatedAt(item.created_at) }}
-              </span>
-              <span>
-                <UserRound class="detail-icon" />
-                创建者：当前用户
-              </span>
-              <span>
-                <BookOpen class="detail-icon" />
-                学习时长：约 {{ estimatedMinutes(item.scene_count) }} 分钟
-              </span>
+
+          <div v-if="expandedCourseIds[group.rootId]" class="list">
+            <div
+              v-for="item in group.lessons"
+              :key="item.id"
+              class="list-item lesson-item"
+              :class="{ child: item.parent_classroom_id }"
+            >
+              <button class="thumb-btn" :title="`打开 ${item.title}`" @click="openClassroom(item.id)">
+                <span class="thumb-screen"></span>
+                <PlayCircle class="thumb-play" />
+                <span class="thumb-card small-one"></span>
+                <span class="thumb-card small-two"></span>
+              </button>
+              <button class="item-main" @click="openClassroom(item.id)">
+                <div class="item-title">
+                  <span class="lesson-badge">第 {{ item.lesson_index || 1 }} 课</span>
+                  {{ item.title }}
+                </div>
+                <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
+                <div class="detail-row">
+                  <span>
+                    <CalendarDays class="detail-icon" />
+                    创建于 {{ formatCreatedAt(item.created_at) }}
+                  </span>
+                  <span>
+                    <UserRound class="detail-icon" />
+                    创建者：当前用户
+                  </span>
+                  <span>
+                    <BookOpen class="detail-icon" />
+                    学习时长：约 {{ estimatedMinutes(item.scene_count) }} 分钟
+                  </span>
+                </div>
+              </button>
+              <div class="item-actions">
+                <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">
+                  <BookOpen class="mini-icon" />
+                  学习报告
+                </button>
+                <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">
+                  <RotateCcw class="mini-icon" />
+                  重新生成
+                </button>
+                <button class="mini-btn" @click="renameClassroom(item)">
+                  <Pencil class="mini-icon" />
+                  重命名
+                </button>
+                <button class="mini-btn danger" @click="deleteClassroom(item)">
+                  <Trash2 class="mini-icon" />
+                  删除
+                </button>
+              </div>
             </div>
-          </button>
-          <div class="item-actions">
-            <button class="mini-btn" :disabled="reportLoading" @click="openReport(item)">
-              <BookOpen class="mini-icon" />
-              学习报告
-            </button>
-            <button class="mini-btn" :disabled="loading" @click="regenerateClassroom(item)">
-              <RotateCcw class="mini-icon" />
-              重新生成
-            </button>
-            <button class="mini-btn" @click="renameClassroom(item)">
-              <Pencil class="mini-icon" />
-              重命名
-            </button>
-            <button class="mini-btn danger" @click="deleteClassroom(item)">
-              <Trash2 class="mini-icon" />
-              删除
-            </button>
           </div>
         </div>
       </div>
@@ -283,6 +309,7 @@ const loadingList = ref(false)
 const reportLoading = ref(false)
 const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
+const expandedCourseIds = ref<Record<string, boolean>>({})
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
 const activeSuccessMessage = ref('课堂已生成')
@@ -316,6 +343,47 @@ const pptCoursewareOptions = computed(() =>
   files.value.filter((file) => Boolean(getPptJobId(file))),
 )
 
+const classroomGroups = computed(() => {
+  const groups = new Map<string, {
+    rootId: string
+    title: string
+    latest: InteractiveClassroomListItem | null
+    lessons: InteractiveClassroomListItem[]
+  }>()
+  for (const item of classrooms.value) {
+    const rootId = item.course_root_id || item.id
+    const group = groups.get(rootId) || {
+      rootId,
+      title: item.course || item.topic || item.title || '未命名课程',
+      latest: null,
+      lessons: [],
+    }
+    if (item.id === rootId || item.lesson_kind === 'root') {
+      group.title = item.course || item.topic || item.title || group.title
+    }
+    group.lessons.push(item)
+    const latestTime = Date.parse(group.latest?.updated_at || group.latest?.created_at || '')
+    const itemTime = Date.parse(item.updated_at || item.created_at || '')
+    if (!group.latest || itemTime > latestTime) group.latest = item
+    groups.set(rootId, group)
+  }
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      lessons: group.lessons.sort((a, b) => {
+        const ai = a.lesson_index || 1
+        const bi = b.lesson_index || 1
+        if (ai !== bi) return ai - bi
+        return (a.created_at || '').localeCompare(b.created_at || '')
+      }),
+    }))
+    .sort((a, b) => {
+      const at = a.latest?.updated_at || a.latest?.created_at || ''
+      const bt = b.latest?.updated_at || b.latest?.created_at || ''
+      return bt.localeCompare(at)
+    })
+})
+
 // 当前阶段的中文标签；还没收到 progress 事件时给个默认
 const progressStageLabel = computed(
   () => stream.stageLabel.value || '准备中',
@@ -348,10 +416,26 @@ async function loadList() {
     ])
     classrooms.value = classroomRows
     files.value = fileRows
+    ensureExpandedCourseGroups()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '加载失败')
   } finally {
     loadingList.value = false
+  }
+}
+
+function ensureExpandedCourseGroups() {
+  const next = { ...expandedCourseIds.value }
+  classroomGroups.value.forEach((group, index) => {
+    if (next[group.rootId] === undefined) next[group.rootId] = index === 0
+  })
+  expandedCourseIds.value = next
+}
+
+function toggleCourseGroup(rootId: string) {
+  expandedCourseIds.value = {
+    ...expandedCourseIds.value,
+    [rootId]: !expandedCourseIds.value[rootId],
   }
 }
 
@@ -450,6 +534,11 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       topic: original.topic || item.topic,
       course: original.course || item.course || undefined,
       ppt_job_id: typeof source.job_id === 'string' ? source.job_id : undefined,
+      course_root_id: original.course_root_id,
+      parent_classroom_id: original.parent_classroom_id,
+      lesson_depth: original.lesson_depth,
+      lesson_index: original.lesson_index,
+      lesson_kind: original.lesson_kind,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
       tts_voice: settingStore.settings.tts_voice,
@@ -1255,6 +1344,78 @@ onBeforeUnmount(() => {
   gap: 13px;
 }
 
+.course-list {
+  display: grid;
+  gap: 14px;
+}
+
+.course-folder {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.course-folder-head {
+  width: 100%;
+  min-height: 74px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-subtle));
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(45, 80, 22, 0.10);
+  color: var(--forest);
+}
+
+.folder-mark-icon {
+  width: 21px;
+  height: 21px;
+}
+
+.course-folder-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.course-folder-copy strong {
+  color: var(--ink-primary);
+  font-size: 16px;
+}
+
+.course-folder-copy span,
+.folder-toggle {
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.folder-toggle {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-base);
+  white-space: nowrap;
+}
+
+.course-folder > .list {
+  padding: 14px;
+}
+
 .list-item {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -1264,6 +1425,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 26px;
   box-shadow: var(--shadow-sm);
+}
+
+.lesson-item.child {
+  margin-left: 18px;
 }
 
 .thumb-btn {
@@ -1341,6 +1506,19 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--ink-primary);
   line-height: 1.35;
+}
+
+.lesson-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .item-meta {

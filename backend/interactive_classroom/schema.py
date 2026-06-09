@@ -78,6 +78,11 @@ class InteractiveClassroom:
     tts: dict[str, str]
     student_profile: dict[str, str] = field(default_factory=dict)
     generation_strategy: dict[str, Any] = field(default_factory=dict)
+    course_root_id: str = ""
+    parent_classroom_id: str = ""
+    lesson_depth: int = 0
+    lesson_index: int = 1
+    lesson_kind: str = "root"
     source: dict[str, Any] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
     knowledge_points: list[str] = field(default_factory=list)

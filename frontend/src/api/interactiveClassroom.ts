@@ -7,6 +7,11 @@ export interface InteractiveClassroomGenerateRequest {
   request_id?: string
   course?: string
   ppt_job_id?: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   student_profile?: StudentProfile
   tts_provider?: string
   tts_model?: string
@@ -32,8 +37,14 @@ export interface InteractiveClassroomListItem {
   title: string
   topic: string
   course?: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   scene_count: number
   created_at: string
+  updated_at?: string
 }
 
 export interface InteractiveClassroomAction {
@@ -95,6 +106,11 @@ export interface InteractiveClassroomPayload {
   topic: string
   course?: string
   status: string
+  course_root_id?: string
+  parent_classroom_id?: string
+  lesson_depth?: number
+  lesson_index?: number
+  lesson_kind?: string
   student_profile?: StudentProfile
   generation_strategy?: Record<string, unknown>
   source?: Record<string, unknown>
@@ -185,6 +201,26 @@ export interface ClassroomReport {
   course_trend?: string
   profile_update_count?: number
   profile_update_ids?: string[]
+}
+
+export interface NextLessonPlan {
+  topic: string
+  course: string
+  learning_goal: string
+  review_points: string[]
+  focus_points: string[]
+  weak_points: string[]
+  strong_points: string[]
+  rationale: string
+  ppt_notes: string
+  source_classroom_id: string
+  source_topic: string
+  source_ppt_job_id?: string
+  course_root_id: string
+  parent_classroom_id: string
+  lesson_depth: number
+  lesson_index: number
+  lesson_kind: string
 }
 
 export interface ClassroomDiscussionMessage {
@@ -311,6 +347,17 @@ export async function getInteractiveClassroomReport(classroomId: string) {
     `/api/interactive-classroom/${encodeURIComponent(classroomId)}/report`,
   )
   return res.data.report
+}
+
+export async function getNextLessonPlan(
+  classroomId: string,
+  overrides: Partial<Pick<NextLessonPlan, 'topic' | 'learning_goal' | 'focus_points' | 'review_points'>> = {},
+) {
+  const res = await client.post<{ success: boolean; plan: NextLessonPlan }>(
+    `/api/interactive-classroom/${encodeURIComponent(classroomId)}/next-lesson-plan`,
+    overrides,
+  )
+  return res.data.plan
 }
 
 export async function discussInteractiveClassroom(

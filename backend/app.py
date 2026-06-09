@@ -2868,6 +2868,73 @@ def ppt_video_clear():
 
 # ==================== Interactive Classroom API ====================
 
+def _safe_classroom_ref(value: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9_-]{1,128}$', value or ''))
+
+
+def _resolve_classroom_lineage(data: dict) -> dict | None:
+    course_root_id = (data.get('course_root_id') or '').strip()
+    parent_classroom_id = (data.get('parent_classroom_id') or '').strip()
+    lesson_kind = (data.get('lesson_kind') or '').strip() or (
+        'next_lesson' if parent_classroom_id else 'root'
+    )
+    if course_root_id and not _safe_classroom_ref(course_root_id):
+        return None
+    if parent_classroom_id and not _safe_classroom_ref(parent_classroom_id):
+        return None
+    if not re.match(r'^[a-zA-Z0-9_-]{1,40}$', lesson_kind):
+        return None
+    try:
+        lesson_depth = max(0, min(20, int(data.get('lesson_depth', 0) or 0)))
+    except (TypeError, ValueError):
+        lesson_depth = 0
+    try:
+        lesson_index = max(1, min(500, int(data.get('lesson_index', 1) or 1)))
+    except (TypeError, ValueError):
+        lesson_index = 1
+    return {
+        'course_root_id': course_root_id,
+        'parent_classroom_id': parent_classroom_id,
+        'lesson_depth': lesson_depth,
+        'lesson_index': lesson_index,
+        'lesson_kind': lesson_kind,
+    }
+
+
+def _inherit_classroom_lineage(user_id: str, lineage: dict, course: str) -> tuple[dict, str]:
+    parent_id = (lineage.get('parent_classroom_id') or '').strip()
+    if not parent_id:
+        return lineage, course
+    parent = CLASSROOM_STORAGE.load_classroom(user_id, parent_id)
+    if parent is None:
+        return lineage, course
+
+    inherited = dict(lineage)
+    inherited['course_root_id'] = (
+        inherited.get('course_root_id')
+        or parent.get('course_root_id')
+        or parent.get('id')
+        or parent_id
+    )
+    try:
+        parent_depth = int(parent.get('lesson_depth', 0) or 0)
+    except (TypeError, ValueError):
+        parent_depth = 0
+    try:
+        parent_index = int(parent.get('lesson_index', 1) or 1)
+    except (TypeError, ValueError):
+        parent_index = 1
+    if int(inherited.get('lesson_depth', 0) or 0) <= 0:
+        inherited['lesson_depth'] = parent_depth + 1
+    if int(inherited.get('lesson_index', 1) or 1) <= 1:
+        inherited['lesson_index'] = parent_index + 1
+
+    inherited_course = course
+    if not inherited_course or inherited_course == '通用课程':
+        inherited_course = parent.get('course') or parent.get('topic') or course
+    return inherited, inherited_course
+
+
 @app.route('/api/interactive-classroom/generate', methods=['POST'])
 def interactive_classroom_generate():
     data = request.json or {}
@@ -2876,6 +2943,7 @@ def interactive_classroom_generate():
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
     request_id = (data.get('request_id') or '').strip()
+    lineage = _resolve_classroom_lineage(data)
     learner_profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
     student_profile = LEARNER_PROFILE_STORAGE.load_classroom_profile(user_id)
     generation_strategy = PROFILE_AGENT.build_generation_strategy(
@@ -2889,6 +2957,9 @@ def interactive_classroom_generate():
         return jsonify({'success': False, 'error': '非法 ppt_job_id'}), 400
     if request_id and not _is_safe_classroom_request_id(request_id):
         return jsonify({'success': False, 'error': '非法 request_id'}), 400
+    if lineage is None:
+        return jsonify({'success': False, 'error': '非法课程关系参数'}), 400
+    lineage, course = _inherit_classroom_lineage(user_id, lineage, course)
 
     if request_id:
         existing = _get_classroom_generation_job(request_id)
@@ -2920,6 +2991,7 @@ def interactive_classroom_generate():
                     ppt_job_id=ppt_job_id,
                     student_profile=student_profile,
                     generation_strategy=generation_strategy,
+                    lineage=lineage,
                     cancel_check=cancel_event.is_set if cancel_event is not None else None,
                     progress_callback=on_progress,
                 )
@@ -2968,6 +3040,7 @@ def interactive_classroom_generate():
             ppt_job_id=ppt_job_id,
             student_profile=student_profile,
             generation_strategy=generation_strategy,
+            lineage=lineage,
             cancel_check=cancel_event.is_set if cancel_event is not None else None,
         )
     except ClassroomGenerationCancelled:
@@ -3425,6 +3498,156 @@ def interactive_classroom_create_practice(classroom_id):
         'classroom_id': practice.get('id'),
         'classroom': practice,
     }), 201
+
+
+def _clean_next_lesson_text(value, max_length=160):
+    return ' '.join(str(value or '').split())[:max_length]
+
+
+def _clean_next_lesson_list(values, max_items=6):
+    if isinstance(values, str):
+        rows = re.split(r'[，、,;/|]+', values)
+    elif isinstance(values, list):
+        rows = values
+    else:
+        rows = []
+    result = []
+    for row in rows:
+        text = _clean_next_lesson_text(row, 80)
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _build_next_lesson_plan(classroom, report, overrides):
+    topic = _clean_next_lesson_text(classroom.get('topic'), 120) or '本节课程'
+    course = _clean_next_lesson_text(classroom.get('course'), 120) or topic
+    weak_points = _clean_next_lesson_list(report.get('weak_points', []), 5)
+    strong_points = _clean_next_lesson_list(report.get('strong_points', []), 5)
+    learned_points = _clean_next_lesson_list(report.get('learned_points', []), 6)
+    next_recommendation = _clean_next_lesson_text(
+        report.get('next_recommendation'),
+        220,
+    )
+
+    default_topic = (
+        f"{'、'.join(weak_points[:2])}补强与应用"
+        if weak_points
+        else f"{topic}进阶应用"
+    )
+    next_topic = (
+        _clean_next_lesson_text(overrides.get('topic'), 120)
+        or default_topic
+    )
+    learning_goal = (
+        _clean_next_lesson_text(overrides.get('learning_goal'), 180)
+        or (
+            f"巩固{'、'.join(weak_points[:3])}，并能迁移到新的课堂任务中。"
+            if weak_points
+            else "在已掌握内容基础上进入下一阶段任务，完成更综合的理解和应用。"
+        )
+    )
+    focus_points = (
+        _clean_next_lesson_list(overrides.get('focus_points'), 6)
+        or weak_points[:4]
+        or _clean_next_lesson_list([next_topic], 1)
+    )
+    review_points = (
+        _clean_next_lesson_list(overrides.get('review_points'), 6)
+        or [
+            f"上一课《{topic}》的核心内容",
+            *learned_points[:3],
+            *strong_points[:2],
+        ]
+    )
+    review_points = _clean_next_lesson_list(review_points, 6)
+
+    rationale_parts = []
+    if weak_points:
+        rationale_parts.append(f"报告显示需要优先补强：{'、'.join(weak_points[:3])}。")
+    if strong_points:
+        rationale_parts.append(f"可利用已掌握的{'、'.join(strong_points[:2])}做迁移。")
+    if next_recommendation:
+        rationale_parts.append(next_recommendation)
+    rationale = ' '.join(rationale_parts) or '根据本节课堂表现，建议进入下一阶段学习。'
+    source_id = _clean_next_lesson_text(classroom.get('id'), 128)
+    course_root_id = _clean_next_lesson_text(classroom.get('course_root_id'), 128) or source_id
+    try:
+        lesson_index = int(classroom.get('lesson_index', 1) or 1) + 1
+    except (TypeError, ValueError):
+        lesson_index = 2
+    try:
+        lesson_depth = int(classroom.get('lesson_depth', 0) or 0) + 1
+    except (TypeError, ValueError):
+        lesson_depth = 1
+
+    ppt_notes = '\n'.join([
+        '【连续课堂上下文】',
+        f'上一课主题：{topic}',
+        f'上一课得分：{report.get("score", 0)}%',
+        f'上一课回顾：{"；".join(review_points)}',
+        f'薄弱点：{"、".join(weak_points) or "暂无明显薄弱点"}',
+        f'强项：{"、".join(strong_points) or "暂无稳定强项"}',
+        '',
+        '【下一堂课生成要求】',
+        f'本课主题：{next_topic}',
+        f'本课目标：{learning_goal}',
+        f'本课重点：{"、".join(focus_points)}',
+        f'衔接理由：{rationale}',
+        '请在 PPT 前 1-2 页简要总结上一堂课讲了什么与学生表现，再进入本节新内容。',
+        '新内容需要自然承接薄弱点和已掌握内容，避免直接展示画像字段。',
+    ])
+
+    return {
+        'topic': next_topic,
+        'course': course,
+        'learning_goal': learning_goal,
+        'review_points': review_points,
+        'focus_points': focus_points,
+        'weak_points': weak_points,
+        'strong_points': strong_points,
+        'rationale': rationale,
+        'ppt_notes': ppt_notes,
+        'source_classroom_id': classroom.get('id', ''),
+        'source_topic': topic,
+        'source_ppt_job_id': (classroom.get('source') or {}).get('job_id', ''),
+        'course_root_id': course_root_id,
+        'parent_classroom_id': source_id,
+        'lesson_depth': lesson_depth,
+        'lesson_index': lesson_index,
+        'lesson_kind': 'next_lesson',
+    }
+
+
+@app.route('/api/interactive-classroom/<classroom_id>/next-lesson-plan', methods=['POST'])
+def interactive_classroom_next_lesson_plan(classroom_id):
+    user_id = get_request_user_id()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
+    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    if classroom is None:
+        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+
+    report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
+    if report is None:
+        answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+        events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+        course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
+        report = build_classroom_report(
+            classroom,
+            answers,
+            events,
+            course_profile=course_profile,
+        )
+        CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+
+    data = request.json or {}
+    plan = _build_next_lesson_plan(classroom, report, data)
+    return jsonify({'success': True, 'plan': plan})
 
 
 # ---- P7: 学习事件 API ----

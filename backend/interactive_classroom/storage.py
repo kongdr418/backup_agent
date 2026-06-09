@@ -21,6 +21,13 @@ def _safe_id(value: str, field_name: str) -> str:
     return value
 
 
+def _safe_int(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 class ClassroomStorage:
     def __init__(self, backend_dir: str) -> None:
         self.backend_dir = backend_dir
@@ -184,6 +191,11 @@ class ClassroomStorage:
                         "title": c.get("title", ""),
                         "topic": c.get("topic", ""),
                         "course": c.get("course", ""),
+                        "course_root_id": c.get("course_root_id") or c.get("id", classroom_id),
+                        "parent_classroom_id": c.get("parent_classroom_id", ""),
+                        "lesson_depth": _safe_int(c.get("lesson_depth", 0), 0),
+                        "lesson_index": _safe_int(c.get("lesson_index", 1), 1),
+                        "lesson_kind": c.get("lesson_kind", "root"),
                         "scene_count": len(c.get("scenes", [])),
                         "created_at": c.get("created_at", ""),
                         "updated_at": c.get("updated_at", ""),
