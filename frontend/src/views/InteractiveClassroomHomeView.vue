@@ -134,10 +134,21 @@
           <Clock3 class="list-icon" />
           <h2>历史课堂</h2>
         </div>
-        <button class="ghost-btn" :disabled="loadingList" @click="loadList">
-          <RefreshCw class="mini-icon" :class="{ spinning: loadingList }" />
-          刷新
-        </button>
+        <div class="list-head-actions">
+          <button class="ghost-btn" :disabled="loadingList" @click="loadList">
+            <RefreshCw class="mini-icon" :class="{ spinning: loadingList }" />
+            刷新
+          </button>
+          <button
+            v-if="classrooms.length > 0"
+            class="ghost-btn danger"
+            :disabled="loadingList"
+            @click="askClearAll"
+          >
+            <Trash2 class="mini-icon" />
+            清空全部
+          </button>
+        </div>
       </div>
 
       <div v-if="classroomGroups.length === 0" class="empty">暂无课堂记录</div>
@@ -253,6 +264,7 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import {
+  clearAllClassrooms,
   deleteInteractiveClassroom,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
@@ -649,8 +661,8 @@ async function openReport(item: InteractiveClassroomListItem) {
   reportLoading.value = true
   try {
     const report = await getInteractiveClassroomReport(item.id)
-    if (report.answered_quiz_count < 3) {
-      message.warning('完成至少 3 次随堂测验后才能查看学习报告')
+    if (report.quiz_scene_count > 0 && report.answered_quiz_count < report.quiz_scene_count) {
+      message.warning('完成所有随堂测验后才能查看学习报告')
       return
     }
     router.push(`/interactive-classroom/${item.id}?scene=report`)
@@ -674,6 +686,24 @@ function deleteClassroom(item: InteractiveClassroomListItem) {
         await loadList()
       } catch (err) {
         message.error(err instanceof Error ? err.message : '删除失败')
+      }
+    },
+  })
+}
+
+function askClearAll() {
+  dialog.warning({
+    title: '清空全部',
+    content: '将删除全部历史课堂记录，操作不可恢复。',
+    positiveText: '清空',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await clearAllClassrooms()
+        message.success('已清空')
+        await loadList()
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : '清空失败')
       }
     },
   })
@@ -1314,6 +1344,12 @@ onBeforeUnmount(() => {
   color: var(--ink-primary);
 }
 
+.list-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .ghost-btn {
   height: 40px;
   border: 1px solid var(--line);
@@ -1327,6 +1363,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-weight: 600;
   box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.ghost-btn.danger:hover:not(:disabled) {
+  border-color: rgba(184, 74, 43, 0.35);
+  color: var(--terra);
+  background: rgba(245, 232, 226, 0.56);
 }
 
 .empty {
@@ -1719,6 +1762,11 @@ onBeforeUnmount(() => {
 
   .list-head {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .list-head-actions {
+    width: 100%;
     flex-direction: column;
   }
 

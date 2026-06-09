@@ -88,6 +88,20 @@ class ClassroomStorage:
         shutil.rmtree(abs_dir)
         return True
 
+    def delete_all_classrooms(self, user_id: str) -> int:
+        user_id = _safe_id(user_id, "user_id")
+        root = os.path.join(self.memory_root, user_id, "interactive_classrooms")
+        if not os.path.exists(root):
+            return 0
+        count = 0
+        for classroom_id in os.listdir(root):
+            cdir = os.path.join(root, classroom_id)
+            if not os.path.isdir(cdir):
+                continue
+            shutil.rmtree(cdir)
+            count += 1
+        return count
+
     def save_answers(
         self,
         user_id: str,

@@ -17,6 +17,7 @@
           :disabled="store.isGenerating"
           @generate="onGenerate(); drawerOpen = false"
           @cancel="store.cancel()"
+          @clear-draft="clearPptDraft"
         />
       </div>
     </div>
@@ -33,6 +34,7 @@
           :disabled="store.isGenerating"
           @generate="onGenerate"
           @cancel="store.cancel()"
+          @clear-draft="clearPptDraft"
         />
       </div>
     </aside>
@@ -166,6 +168,7 @@ import { useSettingStore } from '@/stores/settingStore'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
 import { clearNextLessonDraft, loadNextLessonDraft, type StoredNextLessonDraft } from '@/utils/classroomNextLessonDraft'
+import { resetPptDraftFields } from '@/utils/pptParams'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
@@ -577,7 +580,22 @@ function createClassroomRequestId() {
 
 function onReset() {
   store.resetGen()
+  clearPptDraft({ silent: true })
   activeIdx.value = 0
+}
+
+function clearPptDraft(options: { silent?: boolean } = {}) {
+  store.params = resetPptDraftFields(store.params)
+  clearNextLessonDraft()
+  classroomLineage.value = {}
+  classroomCourse.value = ''
+  lastAppliedClassroomDraft.value = ''
+  if (isClassroomSourceRoute.value) {
+    void router.replace({ path: route.path, query: {} })
+  }
+  if (!options.silent) {
+    message.success('已清空课程主题和备注')
+  }
 }
 
 async function openHistory() {

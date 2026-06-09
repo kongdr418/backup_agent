@@ -3240,6 +3240,16 @@ def interactive_classroom_delete(classroom_id):
     return jsonify({'success': True})
 
 
+@app.route('/api/interactive-classroom/clear', methods=['POST'])
+def interactive_classroom_clear():
+    user_id = get_request_user_id()
+    data = request.json or {}
+    if not data.get('confirm'):
+        return jsonify({'success': False, 'error': '需要 confirm: true'}), 400
+    count = CLASSROOM_STORAGE.delete_all_classrooms(user_id)
+    return jsonify({'success': True, 'deleted': count})
+
+
 @app.route('/api/interactive-classroom/<classroom_id>/answer', methods=['POST'])
 def interactive_classroom_answer(classroom_id):
     user_id = get_request_user_id()

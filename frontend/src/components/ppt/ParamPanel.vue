@@ -3,9 +3,21 @@
     <div class="param-content">
       <!-- Topic -->
       <section class="param-section">
-        <label class="param-label">
-          课程主题 <span class="text-rose-500">*</span>
-        </label>
+        <div class="param-label-row">
+          <label class="param-label">
+            课程主题 <span class="text-rose-500">*</span>
+          </label>
+          <button
+            v-if="hasDraftText && !disabled"
+            class="clear-draft-btn"
+            type="button"
+            title="清空课程主题和备注"
+            @click="$emit('clear-draft')"
+          >
+            <RotateCcw class="w-3.5 h-3.5" />
+            清空
+          </button>
+        </div>
         <n-input
           v-model:value="local.topic"
           type="textarea"
@@ -203,6 +215,7 @@ import {
   ChevronRight,
   Wand2,
   Square,
+  RotateCcw,
 } from 'lucide-vue-next'
 import StyleCard from './StyleCard.vue'
 import type { PptGenerateParams } from '@/types'
@@ -217,12 +230,15 @@ const emit = defineEmits<{
   'update:modelValue': [value: PptGenerateParams]
   generate: []
   cancel: []
+  'clear-draft': []
 }>()
 
 const local = reactive<PptGenerateParams>({ ...props.modelValue })
 if (local.repair_enabled == null) {
   local.repair_enabled = false
 }
+
+const hasDraftText = computed(() => !!local.topic?.trim() || !!local.notes?.trim())
 
 watch(
   () => props.modelValue,
@@ -327,6 +343,40 @@ const canSubmit = computed(
   color: rgb(var(--ink-1-rgb));
   margin-bottom: 8px;
   letter-spacing: 0.01em;
+}
+
+.param-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.param-label-row .param-label {
+  margin-bottom: 0;
+}
+
+.clear-draft-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 6px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.clear-draft-btn:hover {
+  border-color: rgb(var(--line-strong-rgb));
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
 }
 
 .param-row {
