@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from ppt_engine.agents.content_planner import plan_content
+from ppt_engine.agents.content_planner import _split_manuscript_pages, plan_content
 from ppt_engine.agents.design_strategist import create_design_spec
 from ppt_engine.agents.svg_executor import generate_svg_pages
 from ppt_engine.config import DESIGN_STYLES, WORKSPACES_DIR, get_deepseek_api_key, VISUAL_CRITIC_ENABLED, VISUAL_CRITIC_MODEL, DEEP_RESEARCH_ENABLED, DEEP_RESEARCH_QUALITY_THRESHOLD, DEEP_RESEARCH_MAX_ATTEMPTS
@@ -146,6 +146,7 @@ class PPTPipeline:
             "language": language,
             "style": style,
             "model": model,
+            "requested_num_slides": num_slides,
             "created_at": timestamp,
         }
         (project_dir / "metadata.json").write_text(
@@ -187,7 +188,7 @@ class PPTPipeline:
                 )
             (project_dir / "manuscript.md").write_text(manuscript, encoding="utf-8")
 
-            slide_count = len([p for p in manuscript.split("---") if p.strip()])
+            slide_count = len(_split_manuscript_pages(manuscript))
             yield PipelineEvent(
                 "content_planning", "complete",
                 f"课程规划完成: {slide_count} 页幻灯片",
