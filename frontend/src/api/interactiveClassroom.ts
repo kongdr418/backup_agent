@@ -314,6 +314,14 @@ export async function deleteInteractiveClassroom(classroomId: string) {
   return res.data
 }
 
+export async function clearAllClassrooms() {
+  const res = await client.post<{ success: boolean; deleted: number }>(
+    '/api/interactive-classroom/clear',
+    { confirm: true },
+  )
+  return res.data
+}
+
 export async function submitInteractiveClassroomAnswer(
   classroomId: string,
   sceneId: string,
