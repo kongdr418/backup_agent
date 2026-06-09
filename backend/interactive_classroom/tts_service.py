@@ -56,9 +56,9 @@ class ClassroomTTSService:
 
 # ---------- 并行批 ----------
 
-# 默认并发上限：edge-tts 内部已经做并发，按这个数 4 已经很快；
-# openai/glm 受 RPM 限制可降到 2。
-DEFAULT_TTS_MAX_CONCURRENCY = 4
+# 默认并发上限：课堂生成批量合成时最多同时发起 10 路；
+# 若某个 provider 有严格 RPM 限制，可在调用侧下调 max_concurrency。
+DEFAULT_TTS_MAX_CONCURRENCY = 10
 
 # 单个 action 合成结果类型
 # (action_id, filename_or_empty, error_or_none)
@@ -83,7 +83,7 @@ async def synthesize_actions_parallel_with_progress(
 ) -> list[TTSParallelItem]:
     """并发合成所有 action 的 TTS，写到 output_dir。
 
-    - 并发上限默认 4
+    - 并发上限默认 10
     - 失败容忍：单个 action 失败不影响其他（on_action_done 收到 error）
     - 取消：cancel_check 返回 True 时，未开始的任务被早退；已开始的任务等
       gather 统一取消；抛 ClassroomGenerationCancelled
@@ -131,4 +131,3 @@ async def synthesize_actions_parallel_with_progress(
                 t.cancel()
 
     return list(tracked_results)
-
