@@ -19,7 +19,7 @@ from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
-from interactive_classroom.report_service import build_classroom_report
+from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path
 from interactive_classroom.event_service import (
     create_quiz_submitted_event,
     create_short_answer_scored_event,
@@ -3376,18 +3376,31 @@ def interactive_classroom_report(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
+    _backfill_practice_created_events(user_id, classroom)
     answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
     events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
     profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
     course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
     course_id = build_course_id(course_name)
     course_profile = profile.get('courses', {}).get(course_id, {})
-    report = build_classroom_report(
-        classroom,
-        answers,
-        events,
-        course_profile=course_profile,
-    )
+    if answers.get('scenes'):
+        report = build_classroom_report(
+            classroom,
+            answers,
+            events,
+            course_profile=course_profile,
+        )
+    else:
+        cached_report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
+        if cached_report is not None:
+            report = refresh_report_learning_path(cached_report, events)
+        else:
+            report = build_classroom_report(
+                classroom,
+                answers,
+                events,
+                course_profile=course_profile,
+            )
     proposals = _analyze_classroom_profile_updates(
         user_id,
         classroom,
@@ -3404,6 +3417,47 @@ def interactive_classroom_report(classroom_id):
         report.get('recommended_tasks', []),
     )
     return jsonify({'success': True, 'report': report})
+
+
+def _backfill_practice_created_events(user_id: str, classroom: dict) -> None:
+    classroom_id = classroom.get('id', '')
+    if not classroom_id:
+        return
+    existing_task_ids = {
+        str((event.get('payload') or {}).get('task_id') or '')
+        for event in CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+        if event.get('type') == 'recommended_task_completed'
+        and isinstance(event.get('payload'), dict)
+        and (event.get('payload') or {}).get('result', {}).get('status') == 'practice_created'
+    }
+    for row in CLASSROOM_STORAGE.list_classrooms(user_id):
+        if row.get('parent_classroom_id') != classroom_id:
+            continue
+        if row.get('lesson_kind') not in {'practice', 'challenge_practice'}:
+            continue
+        child = CLASSROOM_STORAGE.load_classroom(user_id, row.get('id', ''))
+        if not isinstance(child, dict):
+            continue
+        source = child.get('source')
+        if not isinstance(source, dict) or source.get('type') != 'recommended_practice':
+            continue
+        task_id = (source.get('recommendation_task_id') or '').strip()
+        if not task_id or task_id in existing_task_ids:
+            continue
+        event = create_recommended_task_completed_event(
+            user_id=user_id,
+            classroom_id=classroom_id,
+            course_id=classroom.get('course') or classroom.get('topic') or '',
+            task_id=task_id,
+            task_type=(source.get('recommendation_task_type') or '').strip(),
+            knowledge_points=child.get('knowledge_points', []),
+            result={
+                'status': 'practice_created',
+                'practice_classroom_id': child.get('id', ''),
+            },
+        )
+        record_event(CLASSROOM_STORAGE, event)
+        existing_task_ids.add(task_id)
 
 
 def _analyze_classroom_profile_updates(
@@ -3521,6 +3575,40 @@ def interactive_classroom_create_practice(classroom_id):
         )
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
+    completion_event = create_recommended_task_completed_event(
+        user_id=user_id,
+        classroom_id=classroom_id,
+        course_id=classroom.get('course') or classroom.get('topic') or '',
+        task_id=task_id,
+        task_type=task_type,
+        knowledge_points=practice.get('knowledge_points', []),
+        result={
+            'status': 'practice_created',
+            'practice_classroom_id': practice.get('id', ''),
+        },
+    )
+    record_event(CLASSROOM_STORAGE, completion_event)
+    answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
+    events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
+    course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
+    if answers.get('scenes'):
+        report = build_classroom_report(
+            classroom,
+            answers,
+            events,
+            course_profile=course_profile,
+        )
+    else:
+        report = refresh_report_learning_path(report, events)
+    CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
+    LEARNER_PROFILE_STORAGE.record_recommendations(
+        user_id,
+        classroom_id,
+        build_course_id(course_name),
+        report.get('recommended_tasks', []),
+    )
     return jsonify({
         'success': True,
         'classroom_id': practice.get('id'),

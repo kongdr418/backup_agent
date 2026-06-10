@@ -165,7 +165,7 @@
             <span class="course-folder-copy">
               <strong>{{ group.title }}</strong>
               <span>
-                {{ group.lessons.length }} 节课
+                {{ classroomUnitCountLabel(group.lessons.length) }}
                 <template v-if="group.latest"> · 最近：{{ group.latest.topic }}</template>
               </span>
             </span>
@@ -187,7 +187,9 @@
               </button>
               <button class="item-main" @click="openClassroom(item.id)">
                 <div class="item-title">
-                  <span class="lesson-badge">第 {{ item.lesson_index || 1 }} 课</span>
+                  <span class="lesson-badge" :class="{ practice: item.lesson_kind === 'practice' || item.lesson_kind === 'challenge_practice' }">
+                    {{ classroomUnitLabel(item) }}
+                  </span>
                   {{ item.title }}
                 </div>
                 <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
@@ -287,6 +289,7 @@ import {
   buildLearnerProfileSummary,
   createEmptyLearnerProfile,
 } from '@/utils/learnerProfile'
+import { classroomUnitCountLabel, classroomUnitLabel } from '@/utils/classroomLessonDisplay'
 
 const router = useRouter()
 const message = useMessage()
@@ -1574,6 +1577,11 @@ onBeforeUnmount(() => {
   color: var(--ink-secondary);
   font-size: 12px;
   font-weight: 700;
+}
+
+.lesson-badge.practice {
+  background: rgba(45, 80, 22, 0.10);
+  color: var(--forest);
 }
 
 .item-meta {

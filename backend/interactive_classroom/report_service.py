@@ -178,6 +178,197 @@ def _build_recommended_tasks(
     ]
 
 
+def _build_learning_path(
+    status: str,
+    score: int,
+    weak_points: list[str],
+    strong_points: list[str],
+    recommended_tasks: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    task_by_type = {
+        str(task.get("type")): task
+        for task in recommended_tasks
+        if isinstance(task, dict)
+    }
+    weak_summary = "、".join(weak_points[:3])
+    strong_summary = "、".join(strong_points[:3])
+
+    def task_ref(task_type: str) -> dict[str, Any]:
+        task = task_by_type.get(task_type) or {}
+        return {
+            "task_id": task.get("id", ""),
+            "action_label": task.get("action_label", ""),
+            "knowledge_points": task.get("knowledge_points", []),
+            "target_scene_ids": task.get("target_scene_ids", []),
+        }
+
+    task_events: dict[str, dict[str, Any]] = {}
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "recommended_task_completed":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        task_id = str(payload.get("task_id") or "")
+        if task_id:
+            task_events[task_id] = payload
+
+    def task_state(
+        task_id: str,
+        default_status: str,
+        default_metric: str,
+        default_action_label: str = "",
+    ) -> dict[str, str]:
+        payload = task_events.get(task_id)
+        if not payload:
+            return {
+                "status": default_status,
+                "metric": default_metric,
+                "generated_classroom_id": "",
+                "action_label": default_action_label,
+            }
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        generated_classroom_id = str(result.get("practice_classroom_id") or "")
+        if result.get("status") == "practice_created":
+            return {
+                "status": "completed",
+                "metric": "已生成",
+                "generated_classroom_id": generated_classroom_id,
+                "action_label": "查看练习" if generated_classroom_id else default_action_label,
+            }
+        return {
+            "status": "completed",
+            "metric": "已完成",
+            "generated_classroom_id": generated_classroom_id,
+            "action_label": "查看练习" if generated_classroom_id else default_action_label,
+        }
+
+    if status == "not_started":
+        complete_task = task_ref("complete_quizzes")
+        return [
+            {
+                "id": "path_diagnose",
+                "type": "diagnose",
+                "agent_name": "诊断 Agent",
+                "title": "完成课堂诊断",
+                "description": "先完成随堂测验，系统会用真实答题记录识别薄弱点并生成后续路径。",
+                "status": "active",
+                "metric": "待诊断",
+                **complete_task,
+            },
+            {
+                "id": "path_plan",
+                "type": "plan",
+                "agent_name": "路径规划 Agent",
+                "title": "生成个性化学习路径",
+                "description": "诊断完成后会自动给出复习、练习和下一课衔接任务。",
+                "status": "locked",
+                "metric": "",
+                "task_id": "",
+                "action_label": "",
+                "knowledge_points": [],
+                "target_scene_ids": [],
+            },
+        ]
+
+    diagnose_status = "completed"
+    review_task = task_ref("review_weak_points")
+    practice_task = task_ref("practice_weak_points")
+    next_task = task_ref("next_lesson")
+    challenge_task = task_ref("challenge_practice")
+    review_state = task_state(
+        str(review_task.get("task_id", "")),
+        "active" if weak_points else "completed",
+        "补弱",
+        str(review_task.get("action_label") or ""),
+    )
+    practice_state = task_state(
+        str(practice_task.get("task_id", "")),
+        "pending" if weak_points else "active",
+        "练习",
+        str(practice_task.get("action_label") or ""),
+    )
+    if practice_state["status"] == "completed" and review_state["status"] == "active":
+        review_state = {
+            **review_state,
+            "status": "completed",
+            "metric": "已完成",
+        }
+    next_status = "pending" if weak_points else "active"
+    if practice_state["status"] == "completed":
+        next_status = "active"
+
+    if not weak_points:
+        review_task = {
+            "task_id": "",
+            "action_label": "",
+            "knowledge_points": strong_points[:3],
+            "target_scene_ids": [],
+        }
+        practice_task = challenge_task
+
+    return [
+        {
+            "id": "path_diagnose",
+            "type": "diagnose",
+            "agent_name": "评估 Agent",
+            "title": "诊断本节掌握度",
+            "description": (
+                f"综合得分 {score}%，识别到薄弱点：{weak_summary}。"
+                if weak_points
+                else f"综合得分 {score}%，本节暂无明显薄弱点。"
+            ),
+            "status": diagnose_status,
+            "metric": f"{score}%",
+            "task_id": "",
+            "action_label": "",
+            "knowledge_points": weak_points[:3] or strong_points[:3],
+            "target_scene_ids": [],
+        },
+        {
+            "id": "path_review",
+            "type": "review",
+            "agent_name": "路径规划 Agent",
+            "title": "复听关键讲解",
+            "description": (
+                f"优先回到 {weak_summary} 的讲解页，把理解断点补齐。"
+                if weak_points
+                else f"保持 {strong_summary or '本节核心知识'} 的稳定掌握。"
+            ),
+            "status": review_state["status"],
+            "metric": review_state["metric"],
+            **review_task,
+        },
+        {
+            "id": "path_practice",
+            "type": "practice",
+            "agent_name": "资源生成 Agent",
+            "title": "生成补强练习",
+            "description": (
+                "围绕薄弱点生成同类练习，用新的题目验证是否真正掌握。"
+                if weak_points
+                else "尝试综合挑战题，检查迁移应用能力。"
+            ),
+            "status": practice_state["status"],
+            "metric": practice_state["metric"],
+            **practice_task,
+            "generated_classroom_id": practice_state["generated_classroom_id"],
+            "action_label": practice_state["action_label"] or practice_task.get("action_label", ""),
+        },
+        {
+            "id": "path_next_lesson",
+            "type": "next_lesson",
+            "agent_name": "课程衔接 Agent",
+            "title": "规划下一堂课",
+            "description": "根据本节表现自动生成下一课主题、目标和 PPT 生成备注，形成连续学习链路。",
+            "status": next_status,
+            "metric": "再规划",
+            **next_task,
+        },
+    ]
+
+
 def build_classroom_report(
     classroom: dict[str, Any],
     answers_record: dict[str, Any],
@@ -274,6 +465,14 @@ def build_classroom_report(
         point_scene_ids,
         course_profile,
     )
+    learning_path = _build_learning_path(
+        status,
+        score,
+        weak_points,
+        strong_points,
+        recommended_tasks,
+        events,
+    )
 
     return {
         "classroom_id": classroom.get("id", ""),
@@ -294,6 +493,35 @@ def build_classroom_report(
         "strong_points": strong_points,
         "next_recommendation": next_recommendation,
         "recommended_tasks": recommended_tasks,
+        "learning_path": learning_path,
         "event_count": len(events or []),
         "course_trend": (course_profile or {}).get("recent_trend", "stable"),
     }
+
+
+def refresh_report_learning_path(
+    report: dict[str, Any],
+    events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    refreshed = dict(report)
+    refreshed["learning_path"] = _build_learning_path(
+        str(refreshed.get("status") or ""),
+        int(round(float(refreshed.get("score", 0) or 0))),
+        [
+            str(value).strip()
+            for value in refreshed.get("weak_points", [])
+            if str(value).strip()
+        ],
+        [
+            str(value).strip()
+            for value in refreshed.get("strong_points", [])
+            if str(value).strip()
+        ],
+        [
+            task
+            for task in refreshed.get("recommended_tasks", [])
+            if isinstance(task, dict)
+        ],
+        events,
+    )
+    return refreshed
