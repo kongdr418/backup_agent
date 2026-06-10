@@ -440,6 +440,69 @@ def _classroom_close_subscribers(request_id: str) -> None:
                 pass
 
 
+def _classroom_from_generation_preview(user_id: str, request_id: str) -> dict | None:
+    if not _is_safe_classroom_request_id(request_id):
+        return None
+    job = _get_classroom_generation_job(request_id)
+    if not job or job.get('status') not in {'running', 'done'}:
+        return None
+
+    scenes_by_id: dict[str, dict] = {}
+    for event in job.get('progress_events') or []:
+        if not isinstance(event, dict):
+            continue
+        scene = event.get('scene_payload')
+        if not isinstance(scene, dict):
+            continue
+        scene_id = str(scene.get('id') or '').strip()
+        if scene_id:
+            scenes_by_id[scene_id] = scene
+
+    scenes = sorted(
+        scenes_by_id.values(),
+        key=lambda row: int(row.get('order') or 0) if str(row.get('order') or '').isdigit() else 999999,
+    )
+    if not scenes:
+        return None
+
+    topic = str(job.get('topic') or '生成中课堂').strip() or '生成中课堂'
+    return {
+        'id': request_id,
+        'user_id': user_id,
+        'title': f'{topic}（生成中）',
+        'topic': topic,
+        'course': '',
+        'status': 'generating',
+        'created_at': job.get('started_at') or _classroom_generation_now(),
+        'updated_at': job.get('updated_at') or _classroom_generation_now(),
+        'tts': {},
+        'student_profile': {},
+        'source': {'type': 'generation_preview', 'request_id': request_id},
+        'agents': [],
+        'knowledge_points': [topic],
+        'scenes': scenes,
+    }
+
+
+def _resolve_discussion_classroom(user_id: str, classroom_id: str) -> tuple[dict | None, tuple[dict, int] | None]:
+    classroom_id = (classroom_id or '').strip()
+    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+        return None, ({'success': False, 'error': '非法 classroom_id'}, 400)
+
+    if _is_safe_classroom_request_id(classroom_id):
+        preview_classroom = _classroom_from_generation_preview(user_id, classroom_id)
+        if preview_classroom is not None:
+            return preview_classroom, None
+
+    try:
+        classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
+    except ValueError:
+        return None, ({'success': False, 'error': '非法 classroom_id'}, 400)
+    if classroom is None:
+        return None, ({'success': False, 'error': '课堂不存在'}, 404)
+    return classroom, None
+
+
 def _build_classroom_tts_config(data=None, classroom=None):
     data = data or {}
     classroom_tts = (classroom or {}).get('tts', {})
@@ -4089,8 +4152,6 @@ def interactive_classroom_list_events(classroom_id):
 @app.route('/api/interactive-classroom/<classroom_id>/discuss', methods=['POST'])
 def interactive_classroom_discuss(classroom_id):
     user_id = get_request_user_id()
-    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
-        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
 
     data = request.json or {}
     played_scene_ids = data.get('played_scene_ids') or []
@@ -4116,9 +4177,10 @@ def interactive_classroom_discuss(classroom_id):
     if not normalized_messages:
         return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
 
-    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
-    if classroom is None:
-        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    classroom, error_response = _resolve_discussion_classroom(user_id, classroom_id)
+    if error_response is not None:
+        payload, status = error_response
+        return jsonify(payload), status
 
     llm_config = _resolve_content_llm_request_config(data)
 
@@ -4169,8 +4231,6 @@ def interactive_classroom_discuss_stream(classroom_id):
     data: {"chunk": "..."}\\n\\n ... data: {"done": true}\\n\\n
     """
     user_id = get_request_user_id()
-    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
-        return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
 
     data = request.json or {}
     played_scene_ids = data.get('played_scene_ids') or []
@@ -4196,9 +4256,10 @@ def interactive_classroom_discuss_stream(classroom_id):
     if not normalized_messages:
         return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
 
-    classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
-    if classroom is None:
-        return jsonify({'success': False, 'error': '课堂不存在'}), 404
+    classroom, error_response = _resolve_discussion_classroom(user_id, classroom_id)
+    if error_response is not None:
+        payload, status = error_response
+        return jsonify(payload), status
 
     llm_config = _resolve_content_llm_request_config(data)
 
