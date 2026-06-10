@@ -5,9 +5,12 @@
 """
 import os
 import json
+import logging
 from collections.abc import Iterator
 
 import requests as req
+
+logger = logging.getLogger(__name__)
 
 _content_model: str = 'deepseek-chat'
 _content_api_key: str | None = None
@@ -86,7 +89,21 @@ def content_llm_call(
             max_tokens=max_tokens,
             timeout=120,
         )
-        return response.choices[0].message.content or ''
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content if (choice and choice.message) else None
+        if not content:
+            finish_reason = getattr(choice, "finish_reason", None) if choice else None
+            usage = getattr(response, "usage", None)
+            prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+            logger.warning(
+                "[content_llm_call] LLM returned empty content: model=%s "
+                "finish_reason=%s prompt_chars=%s usage=%s",
+                model,
+                finish_reason,
+                prompt_chars,
+                usage,
+            )
+        return content or ''
 
 
 def _anthropic_call(base_url: str, api_key: str, model: str, messages: list,
