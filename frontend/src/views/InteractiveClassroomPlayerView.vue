@@ -7,7 +7,7 @@
       </button>
       <div class="scene-list-head">
         <div class="scene-list-title">课堂场景</div>
-        <div class="scene-list-meta">{{ currentIndex + 1 }} / {{ orderedScenes.length }}</div>
+        <div class="scene-list-meta">{{ currentIndex + 1 }} / {{ displaySceneTotal }}</div>
       </div>
 
       <button
@@ -23,6 +23,27 @@
           <span class="scene-type">{{ sceneTypeLabel(scene.type) }}</span>
         </span>
       </button>
+
+      <button
+        v-for="scene in lockedPreviewScenes"
+        :key="scene.id"
+        class="scene-btn scene-btn-generating locked"
+        type="button"
+        disabled
+      >
+        <span class="scene-index locked-index">
+          <Lock class="locked-icon" />
+        </span>
+        <span class="scene-copy">
+          <span class="scene-title">{{ scene.title }}</span>
+          <span class="scene-type">正在生成语音与页面</span>
+        </span>
+      </button>
+
+      <div v-if="previewTailStatus" class="scene-generation-status">
+        <span class="status-dot" />
+        <span>{{ previewTailStatus }}</span>
+      </div>
     </aside>
 
     <main class="stage">
@@ -135,10 +156,10 @@
           </div>
 
           <div class="quiz-actions">
-            <button class="primary-btn" :disabled="submitting || !allAnswered" @click="submitQuiz">
+            <button class="primary-btn" :disabled="isGeneratingPreview || submitting || !allAnswered" @click="submitQuiz">
               {{ submitting ? '提交中...' : '提交答案' }}
             </button>
-            <button class="secondary-btn" :disabled="submitting" @click="resetQuiz">重做</button>
+            <button class="secondary-btn" :disabled="isGeneratingPreview || submitting" @click="resetQuiz">重做</button>
             <button class="secondary-btn" :disabled="!currentQuizResult" @click="goNext">下一页</button>
           </div>
 
@@ -394,6 +415,85 @@
     />
   </div>
 
+  <div v-else-if="isGeneratingPreview" class="player generating-player">
+    <aside class="scene-list">
+      <button class="back-btn" type="button" title="返回智慧课堂" @click="goBackToList">
+        <ArrowLeft class="back-icon" />
+        <span>返回智慧课堂</span>
+      </button>
+      <div class="scene-list-head">
+        <div class="scene-list-title">课堂场景</div>
+        <div class="scene-list-meta">生成中</div>
+      </div>
+
+      <button
+        v-for="scene in initialLockedPreviewScenes"
+        :key="scene.id"
+        class="scene-btn scene-btn-generating locked"
+        type="button"
+        disabled
+      >
+        <span class="scene-index locked-index">
+          <Lock class="locked-icon" />
+        </span>
+        <span class="scene-copy">
+          <span class="scene-title">{{ scene.title }}</span>
+          <span class="scene-type">等待解锁</span>
+        </span>
+      </button>
+    </aside>
+
+    <main class="stage loading-stage">
+      <section class="classroom-loading-hero">
+        <div class="loading-orbit">
+          <Sparkles class="loading-orbit-icon" />
+        </div>
+        <div class="loading-copy">
+          <span>智慧课堂生成中</span>
+          <h2>正在准备第一段可播放内容</h2>
+          <p>页面和语音会成对解锁，你可以在左侧看到后续课堂节点的生成队列。</p>
+        </div>
+        <div class="loading-steps">
+          <div class="loading-step active">
+            <i />
+            <span>读取课件结构</span>
+          </div>
+          <div class="loading-step active">
+            <i />
+            <span>生成讲解与配音</span>
+          </div>
+          <div class="loading-step">
+            <i />
+            <span>解锁第一页</span>
+          </div>
+        </div>
+      </section>
+      <section class="stage-skeleton">
+        <div class="stage-skeleton-slide">
+          <div class="skeleton-line wide" />
+          <div class="skeleton-line medium" />
+          <div class="skeleton-line short" />
+        </div>
+        <div class="stage-skeleton-narrator">
+          <div class="skeleton-avatar" />
+          <div class="skeleton-copy">
+            <div class="skeleton-line medium" />
+            <div class="skeleton-line wide" />
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="discussion-loading">
+      <div class="discussion-loading-title">课堂讨论</div>
+      <div class="discussion-loading-card">
+        <div class="skeleton-line medium" />
+        <div class="skeleton-line wide" />
+        <div class="skeleton-line short" />
+      </div>
+    </aside>
+  </div>
+
   <div v-else class="loading">加载课堂中...</div>
 </template>
 
@@ -401,13 +501,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
-import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Lock, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
   createClassroomPractice,
   discussInteractiveClassroom,
   discussInteractiveClassroomStream,
   getNextLessonPlan,
+  isClassroomTerminalEvent,
+  streamInteractiveClassroomGeneration,
   type ClassroomLearningPathStage,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
@@ -435,6 +537,7 @@ import { emitSceneReviewed, emitRecommendedTaskOpened, emitRecommendedTaskComple
 import { saveNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
+import { buildLockedPreviewScenes, mergePreviewScene } from '@/utils/classroomPreviewScenes'
 import {
   activeHighlightCue,
   activeHighlightMode,
@@ -444,6 +547,7 @@ import {
   type HighlightCue,
   type HighlightTarget,
 } from '@/utils/classroomHighlight'
+import { clearPersistedClassroomGeneration } from '@/utils/classroomGenerationState'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
 import { useSettingStore } from '@/stores/settingStore'
@@ -459,6 +563,9 @@ const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
 let classroomLoadVersion = 0
+const previewExpectedSceneTotal = ref(0)
+const previewExpectedSlideTotal = ref(0)
+const previewGenerationStage = ref('')
 const discussionRef = ref<InstanceType<typeof DiscussionSidebar> | null>(null)
 const submitting = ref(false)
 const runningTaskId = ref('')
@@ -497,6 +604,9 @@ const svgMetrics = ref<{
   viewWidth: number
   viewHeight: number
 } | null>(null)
+let previewAbortCtrl: AbortController | null = null
+
+const isGeneratingPreview = computed(() => route.query.generating === '1' && Boolean(route.query.request_id))
 
 function onAudioLoaded() {
   audioDuration.value = audioRef.value?.duration || 0
@@ -588,7 +698,36 @@ const reportScene = computed<InteractiveClassroomScene>(() => ({
   actions: [],
 }))
 
-const orderedScenes = computed(() => [...baseScenes.value, reportScene.value])
+const orderedScenes = computed(() => (isGeneratingPreview.value ? [...baseScenes.value] : [...baseScenes.value, reportScene.value]))
+
+const lockedPreviewScenes = computed(() => {
+  if (!isGeneratingPreview.value) return []
+  return buildLockedPreviewScenes(
+    baseScenes.value.length,
+    previewExpectedSceneTotal.value,
+    previewExpectedSlideTotal.value || previewExpectedSceneTotal.value,
+  )
+})
+
+const initialLockedPreviewScenes = computed(() => {
+  if (lockedPreviewScenes.value.length) return lockedPreviewScenes.value
+  return buildLockedPreviewScenes(0, 5)
+})
+
+const displaySceneTotal = computed(() => (
+  isGeneratingPreview.value
+    ? Math.max(orderedScenes.value.length + lockedPreviewScenes.value.length, orderedScenes.value.length)
+    : orderedScenes.value.length
+))
+
+const previewTailStatus = computed(() => {
+  if (!isGeneratingPreview.value) return ''
+  if (lockedPreviewScenes.value.length) return ''
+  if (previewGenerationStage.value === 'insert_quizzes') return '正在生成随堂测验'
+  if (previewGenerationStage.value === 'build_scenes' && baseScenes.value.length > 0) return '正在整理知识结构'
+  if (previewGenerationStage.value === 'save') return '正在保存课堂'
+  return ''
+})
 
 const currentScene = computed(() => orderedScenes.value[currentIndex.value] || null)
 const playedSceneIds = computed(() => {
@@ -677,11 +816,13 @@ const answeredSceneIds = computed(() => {
 })
 
 const isClassroomComplete = computed(() => {
+  if (isGeneratingPreview.value) return false
   if (quizSceneIds.value.length === 0) return true
   return answeredQuizCount.value === quizSceneIds.value.length
 })
 
 const canOpenReportScene = computed(() => {
+  if (isGeneratingPreview.value) return false
   if (quizSceneIds.value.length === 0) return true
   return answeredQuizCount.value === quizSceneIds.value.length
 })
@@ -1327,12 +1468,24 @@ async function showReportAfterClassroomEnd() {
 }
 
 async function loadClassroom() {
+  if (isGeneratingPreview.value) {
+    await loadGeneratingClassroom()
+    return
+  }
   const classroomId = String(route.params.classroomId || '')
   if (!classroomId) return
+  if (classroom.value?.id === classroomId && classroom.value.status !== 'generating') {
+    stopGeneratingPreview()
+    return
+  }
+  stopGeneratingPreview()
   const loadVersion = ++classroomLoadVersion
   clearAdvanceTimer()
   classroom.value = null
   currentIndex.value = 0
+  previewExpectedSceneTotal.value = 0
+  previewExpectedSlideTotal.value = 0
+  previewGenerationStage.value = ''
   report.value = null
   nextLessonPlan.value = null
   nextLessonDraft.value = { topic: '', learningGoal: '', focusPoints: '' }
@@ -1375,18 +1528,141 @@ async function loadClassroom() {
   }
 }
 
+function stopGeneratingPreview() {
+  if (previewAbortCtrl) {
+    try {
+      previewAbortCtrl.abort()
+    } catch {
+      /* ignore */
+    }
+    previewAbortCtrl = null
+  }
+}
+
+function buildPreviewClassroom(requestId: string, topic: string): InteractiveClassroomPayload {
+  return {
+    id: requestId,
+    title: `${topic || '生成中课堂'}（生成中）`,
+    topic: topic || '生成中课堂',
+    course: '',
+    status: 'generating',
+    scenes: [],
+    source: { type: 'generation_preview', request_id: requestId },
+  }
+}
+
+function upsertPreviewScene(scene: InteractiveClassroomScene) {
+  if (!classroom.value) return
+  const wasEmpty = !classroom.value.scenes?.length
+  const result = mergePreviewScene(classroom.value.scenes || [], scene, currentIndex.value)
+  classroom.value = {
+    ...classroom.value,
+    scenes: result.scenes,
+  }
+  currentIndex.value = result.currentIndex
+  if (wasEmpty && result.scenes.length === 1) {
+    visitedSceneIds.value = new Set([scene.id])
+  }
+}
+
+async function loadGeneratingClassroom() {
+  const requestId = String(route.query.request_id || '')
+  if (!requestId) return
+  const topic = String(route.query.topic || '生成中课堂')
+  const loadVersion = ++classroomLoadVersion
+  stopGeneratingPreview()
+  clearAdvanceTimer()
+  currentIndex.value = 0
+  previewExpectedSceneTotal.value = 0
+  previewExpectedSlideTotal.value = 0
+  previewGenerationStage.value = ''
+  report.value = null
+  nextLessonPlan.value = null
+  nextLessonDraft.value = { topic: '', learningGoal: '', focusPoints: '' }
+  answersByScene.value = {}
+  quizResultsByScene.value = {}
+  reportAutoShown.value = false
+  classroomCompletedEmitted.value = false
+  visitedSceneIds.value = new Set()
+  discussionMessages.value = []
+  discussionSubmitting.value = false
+  classroom.value = buildPreviewClassroom(requestId, topic)
+  previewAbortCtrl = new AbortController()
+
+  try {
+    for await (const ev of streamInteractiveClassroomGeneration(requestId, previewAbortCtrl.signal)) {
+      if (loadVersion !== classroomLoadVersion) return
+      if (ev.type === 'classroom_progress') {
+        previewGenerationStage.value = ev.stage || previewGenerationStage.value
+        if (ev.scene_total && ev.scene_total > previewExpectedSceneTotal.value) {
+          previewExpectedSceneTotal.value = ev.scene_total
+        }
+        if (ev.expected_scene_total && ev.expected_scene_total > previewExpectedSceneTotal.value) {
+          previewExpectedSceneTotal.value = ev.expected_scene_total
+        }
+        if (ev.expected_slide_total && ev.expected_slide_total > previewExpectedSlideTotal.value) {
+          previewExpectedSlideTotal.value = ev.expected_slide_total
+        }
+      }
+      if (ev.type === 'classroom_progress' && ev.scene_payload) {
+        upsertPreviewScene(ev.scene_payload)
+      }
+      if (ev.type === 'classroom_done') {
+        const activeSceneId = currentScene.value?.id || ''
+        const finalClassroom = await getInteractiveClassroom(ev.classroom_id)
+        if (loadVersion !== classroomLoadVersion) return
+        classroom.value = finalClassroom
+        previewExpectedSceneTotal.value = 0
+        previewExpectedSlideTotal.value = 0
+        previewGenerationStage.value = ''
+        if (activeSceneId) {
+          const nextIndex = [...finalClassroom.scenes]
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+            .findIndex((scene) => scene.id === activeSceneId)
+          if (nextIndex >= 0) currentIndex.value = nextIndex
+        }
+        stopGeneratingPreview()
+        clearPersistedClassroomGeneration()
+        await router.replace({
+          name: 'interactive-classroom-player',
+          params: { classroomId: ev.classroom_id },
+        })
+        return
+      }
+      if (ev.type === 'classroom_cancelled') {
+        message.info('课堂生成已停止')
+        clearPersistedClassroomGeneration()
+        await router.replace({ name: 'interactive-classroom-home' })
+        return
+      }
+      if (ev.type === 'classroom_error') {
+        message.error(ev.error || '课堂生成失败')
+        clearPersistedClassroomGeneration()
+        await router.replace({ name: 'interactive-classroom-home' })
+        return
+      }
+      if (isClassroomTerminalEvent(ev)) return
+    }
+  } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return
+    const text = err instanceof Error ? err.message : '生成进度连接失败'
+    message.error(text)
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 onBeforeUnmount(() => {
   classroomLoadVersion += 1
+  stopGeneratingPreview()
   clearAdvanceTimer()
   window.removeEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 watch(
-  () => route.params.classroomId,
+  () => [route.params.classroomId, route.query.request_id, route.query.generating],
   () => {
     loadClassroom().catch(() => undefined)
   },
@@ -1459,6 +1735,7 @@ watch(
   () => [currentScene.value?.id, currentAudioUrl.value, autoPlayEnabled.value, currentQuizResult.value?.score],
   async () => {
     clearAdvanceTimer()
+    if (isGeneratingPreview.value) return
     if (!autoPlayEnabled.value) return
 
     const isQuiz = currentScene.value?.type === 'quiz'
@@ -1488,12 +1765,17 @@ watch(
 )
 
 function formatSceneTitle(scene: InteractiveClassroomScene): string {
-  const rawTitle = scene.title || ''
+  const cleanTitleText = (value: string) => value
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const rawTitle = cleanTitleText(scene.title || '')
   // 跳过默认占位标题：page 1、slide 1、第 1 页、1 等
   if (rawTitle && !/^(page|slide|p|s)\s*\d+$/i.test(rawTitle) && !/^第\s*\d+\s*页?$/.test(rawTitle) && !/^\d+$/.test(rawTitle)) {
     return rawTitle
   }
-  const speech = scene.actions?.find((a) => a.type === 'speech')?.text || ''
+  const speech = cleanTitleText(scene.actions?.find((a) => a.type === 'speech')?.text || '')
   if (speech) {
     const clean = speech.replace(/^这一页的主题是[“\"]/, '').replace(/[”\"]。.*/, '').trim()
     if (clean.length >= 2 && clean.length <= 20) return clean
@@ -1501,7 +1783,7 @@ function formatSceneTitle(scene: InteractiveClassroomScene): string {
     if (firstSentence.length >= 2 && firstSentence.length <= 20) return firstSentence
     if (firstSentence.length > 20) return firstSentence.slice(0, 18) + '...'
   }
-  const kp = scene.knowledge_points?.[0]
+  const kp = cleanTitleText(scene.knowledge_points?.[0] || '')
   if (kp && kp.length >= 2 && kp.length <= 20) return kp
   if (kp && kp.length > 20) return kp.slice(0, 18) + '...'
   return rawTitle || '课堂内容'
@@ -1739,8 +2021,25 @@ async function runTask(task: ClassroomRecommendedTask) {
   opacity: 0.55;
 }
 
+.scene-btn:disabled {
+  cursor: not-allowed;
+}
+
 .scene-btn.locked:hover {
   background: transparent;
+}
+
+.scene-btn-generating {
+  border-color: rgba(15, 23, 42, 0.06);
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.025), rgba(15, 23, 42, 0.055), rgba(15, 23, 42, 0.025));
+  background-size: 180% 100%;
+  animation: locked-row-sheen 1.8s ease-in-out infinite;
+}
+
+.scene-btn-generating.locked:hover {
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.025), rgba(15, 23, 42, 0.055), rgba(15, 23, 42, 0.025));
 }
 
 .scene-index {
@@ -1753,6 +2052,15 @@ async function runTask(task: ClassroomRecommendedTask) {
   background: rgb(var(--bg-base-rgb));
   color: rgb(var(--ink-2-rgb));
   font-size: 12px;
+}
+
+.locked-index {
+  color: rgb(var(--ink-3-rgb));
+}
+
+.locked-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .scene-copy {
@@ -1774,11 +2082,253 @@ async function runTask(task: ClassroomRecommendedTask) {
   color: rgb(var(--ink-3-rgb));
 }
 
+.scene-generation-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 4px 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #2D5016;
+  box-shadow: 0 0 0 4px rgba(45, 80, 22, 0.10);
+  animation: status-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes locked-row-sheen {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .stage {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+.generating-player {
+  background:
+    linear-gradient(135deg, rgba(45, 80, 22, 0.035), transparent 28%),
+    linear-gradient(315deg, rgba(15, 23, 42, 0.035), transparent 32%),
+    rgb(var(--bg-base-rgb));
+}
+
+.loading-stage {
+  padding: 28px;
+  gap: 18px;
+  overflow: auto;
+}
+
+.classroom-loading-hero {
+  min-height: 260px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(45, 80, 22, 0.10), transparent 32%),
+    linear-gradient(135deg, rgb(var(--bg-surface-rgb)), rgb(var(--bg-base-rgb)));
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 220px;
+  gap: 22px;
+  align-items: center;
+  padding: 28px;
+}
+
+.loading-orbit {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  border: 1px solid rgba(45, 80, 22, 0.18);
+  background: rgba(45, 80, 22, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.loading-orbit::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  border: 1px solid rgba(45, 80, 22, 0.12);
+  animation: loading-ring 1.6s ease-in-out infinite;
+}
+
+.loading-orbit-icon {
+  width: 28px;
+  height: 28px;
+  color: #2D5016;
+}
+
+.loading-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.loading-copy span {
+  color: #2D5016;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.loading-copy h2 {
+  margin: 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.loading-copy p {
+  margin: 0;
+  max-width: 560px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.loading-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.loading-step {
+  min-height: 38px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 0 12px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.loading-step i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--line-rgb));
+}
+
+.loading-step.active i {
+  background: #2D5016;
+  box-shadow: 0 0 0 4px rgba(45, 80, 22, 0.10);
+}
+
+.stage-skeleton {
+  display: grid;
+  gap: 14px;
+}
+
+.stage-skeleton-slide,
+.stage-skeleton-narrator,
+.discussion-loading-card {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.stage-skeleton-slide {
+  aspect-ratio: 16 / 7.6;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+}
+
+.stage-skeleton-narrator {
+  min-height: 118px;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+}
+
+.skeleton-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: rgba(45, 80, 22, 0.10);
+}
+
+.skeleton-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.11), rgba(15, 23, 42, 0.06));
+  background-size: 180% 100%;
+  animation: locked-row-sheen 1.8s ease-in-out infinite;
+}
+
+.skeleton-line.wide {
+  width: min(520px, 78%);
+}
+
+.skeleton-line.medium {
+  width: min(360px, 62%);
+}
+
+.skeleton-line.short {
+  width: min(220px, 42%);
+}
+
+.discussion-loading {
+  border-left: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  padding: 22px;
+}
+
+.discussion-loading-title {
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.discussion-loading-card {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  border-style: dashed;
+}
+
+@keyframes loading-ring {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
 }
 
 .stage-header {

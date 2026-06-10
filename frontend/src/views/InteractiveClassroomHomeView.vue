@@ -335,7 +335,7 @@ stream.onDone = async (classroomId) => {
   finishGeneration()
   message.success(activeSuccessMessage.value)
   await loadList()
-  router.push(`/interactive-classroom/${classroomId}`)
+  router.replace(`/interactive-classroom/${classroomId}`)
 }
 stream.onCancelled = () => {
   finishGeneration()
@@ -591,8 +591,15 @@ async function beginClassroomGeneration(
     ...body,
     request_id: requestId,
   })
-  // 启动 SSE 流（不再轮询）
-  void stream.start(requestId)
+  await router.push({
+    name: 'interactive-classroom-player',
+    params: { classroomId: 'generating' },
+    query: {
+      request_id: requestId,
+      topic: body.topic,
+      generating: '1',
+    },
+  })
 }
 
 function finishGeneration() {
@@ -621,8 +628,15 @@ function restorePersistedGeneration() {
   activeSuccessMessage.value = '课堂已生成'
   loading.value = true
   startElapsedTicker(persisted.startedAt)
-  // 直接连 SSE：服务器会先发 start，再发当前累计进度或 terminal
-  void stream.start(persisted.requestId)
+  router.push({
+    name: 'interactive-classroom-player',
+    params: { classroomId: 'generating' },
+    query: {
+      request_id: persisted.requestId,
+      topic: persisted.topic,
+      generating: '1',
+    },
+  }).catch(() => undefined)
 }
 
 function createClassroomRequestId() {

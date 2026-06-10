@@ -129,6 +129,19 @@ export interface InteractiveClassroomGenerationStatus {
   status: 'running' | 'cancelling' | 'cancelled' | 'done' | 'error' | string
   started_at?: string
   updated_at?: string
+  elapsed_seconds?: number
+  stage?: string
+  stage_label?: string
+  stage_index?: number
+  stage_total?: number
+  current_step_done?: number
+  current_step_total?: number
+  scene_index?: number
+  scene_total?: number
+  scenes_generated?: number
+  total_scenes?: number
+  last_scene?: { id: string; type: string; title: string; order: number }
+  progress_event_count?: number
   classroom_id?: string
   classroom?: InteractiveClassroomPayload
   error?: string
@@ -446,7 +459,10 @@ export type ClassroomStreamEvent =
       stage_label: string
       scene_index: number
       scene_total: number
+      expected_scene_total?: number
+      expected_slide_total?: number
       scene?: { id: string; type: string; title: string; order: number }
+      scene_payload?: InteractiveClassroomScene
     }
   | {
       type: 'classroom_done'
