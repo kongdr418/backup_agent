@@ -77,6 +77,12 @@ class ClassroomPracticeService:
             task_type=task_type,
             generation_strategy=generation_strategy,
         )
+        source_id = source_classroom.get("id", "")
+        parent_depth = int(source_classroom.get("lesson_depth", 0) or 0)
+        parent_index = int(source_classroom.get("lesson_index", 1) or 1)
+        course_root_id = (
+            source_classroom.get("course_root_id") or source_id
+        )
         classroom = InteractiveClassroom(
             id=classroom_id,
             user_id=user_id,
@@ -93,9 +99,14 @@ class ClassroomPracticeService:
             tts={},
             student_profile={},
             generation_strategy=generation_strategy,
+            course_root_id=course_root_id,
+            parent_classroom_id=source_id,
+            lesson_depth=parent_depth + 1,
+            lesson_index=parent_index + 1,
+            lesson_kind="practice",
             source={
                 "type": "recommended_practice",
-                "parent_classroom_id": source_classroom.get("id", ""),
+                "parent_classroom_id": source_id,
                 "recommendation_task_id": task_id,
                 "recommendation_task_type": task_type,
             },
