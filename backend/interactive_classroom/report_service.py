@@ -186,6 +186,8 @@ def _build_learning_path(
     strong_points: list[str],
     recommended_tasks: list[dict[str, Any]],
     events: list[dict[str, Any]] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
 ) -> list[dict[str, Any]]:
     task_by_type = {
         str(task.get("type")): task
@@ -215,6 +217,15 @@ def _build_learning_path(
         if task_id:
             task_events[task_id] = payload
 
+    def _classroom_exists(classroom_id: str) -> bool:
+        """检查 classroom 是否还存在（未被删除）。"""
+        if not classroom_id or not storage or not user_id:
+            return False
+        try:
+            return storage.load_classroom(user_id, classroom_id) is not None
+        except Exception:
+            return False
+
     def task_state(
         task_id: str,
         default_status: str,
@@ -231,18 +242,20 @@ def _build_learning_path(
             }
         result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
         generated_classroom_id = str(result.get("practice_classroom_id") or "")
+        # 检查生成的 classroom 是否还存在（可能已被删除）
+        classroom_still_exists = _classroom_exists(generated_classroom_id)
         if result.get("status") == "practice_created":
             return {
-                "status": "completed",
-                "metric": "已生成",
-                "generated_classroom_id": generated_classroom_id,
-                "action_label": "查看练习" if generated_classroom_id else default_action_label,
+                "status": "completed" if classroom_still_exists else default_status,
+                "metric": "已生成" if classroom_still_exists else default_metric,
+                "generated_classroom_id": generated_classroom_id if classroom_still_exists else "",
+                "action_label": "查看练习" if classroom_still_exists else default_action_label,
             }
         return {
-            "status": "completed",
-            "metric": "已完成",
-            "generated_classroom_id": generated_classroom_id,
-            "action_label": "查看练习" if generated_classroom_id else default_action_label,
+            "status": "completed" if classroom_still_exists else default_status,
+            "metric": "已完成" if classroom_still_exists else default_metric,
+            "generated_classroom_id": generated_classroom_id if classroom_still_exists else "",
+            "action_label": "查看练习" if classroom_still_exists else default_action_label,
         }
 
     if status == "not_started":
@@ -375,6 +388,8 @@ def build_classroom_report(
     answers_record: dict[str, Any],
     events: list[dict[str, Any]] | None = None,
     course_profile: dict[str, Any] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
 ) -> dict[str, Any]:
     scenes = answers_record.get("scenes", {})
     quiz_scene_count = sum(1 for scene in classroom.get("scenes", []) if scene.get("type") == "quiz")
@@ -476,6 +491,8 @@ def build_classroom_report(
         strong_points,
         recommended_tasks,
         events,
+        storage,
+        user_id,
     )
 
     return {
@@ -506,6 +523,8 @@ def build_classroom_report(
 def refresh_report_learning_path(
     report: dict[str, Any],
     events: list[dict[str, Any]] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
 ) -> dict[str, Any]:
     refreshed = dict(report)
     refreshed["learning_path"] = _build_learning_path(
@@ -527,5 +546,7 @@ def refresh_report_learning_path(
             if isinstance(task, dict)
         ],
         events,
+        storage,
+        user_id,
     )
     return refreshed

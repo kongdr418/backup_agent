@@ -3389,17 +3389,21 @@ def interactive_classroom_report(classroom_id):
             answers,
             events,
             course_profile=course_profile,
+            storage=CLASSROOM_STORAGE,
+            user_id=user_id,
         )
     else:
         cached_report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
         if cached_report is not None:
-            report = refresh_report_learning_path(cached_report, events)
+            report = refresh_report_learning_path(cached_report, events, CLASSROOM_STORAGE, user_id)
         else:
             report = build_classroom_report(
                 classroom,
                 answers,
                 events,
                 course_profile=course_profile,
+                storage=CLASSROOM_STORAGE,
+                user_id=user_id,
             )
     proposals = _analyze_classroom_profile_updates(
         user_id,
@@ -3556,6 +3560,8 @@ def interactive_classroom_create_practice(classroom_id):
             answers,
             events,
             course_profile=course_profile,
+            storage=CLASSROOM_STORAGE,
+            user_id=user_id,
         )
         CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
 
@@ -3599,9 +3605,11 @@ def interactive_classroom_create_practice(classroom_id):
             answers,
             events,
             course_profile=course_profile,
+            storage=CLASSROOM_STORAGE,
+            user_id=user_id,
         )
     else:
-        report = refresh_report_learning_path(report, events)
+        report = refresh_report_learning_path(report, events, CLASSROOM_STORAGE, user_id)
     CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
     LEARNER_PROFILE_STORAGE.record_recommendations(
         user_id,
@@ -3758,6 +3766,8 @@ def interactive_classroom_next_lesson_plan(classroom_id):
             answers,
             events,
             course_profile=course_profile,
+            storage=CLASSROOM_STORAGE,
+            user_id=user_id,
         )
         CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
 
@@ -3888,6 +3898,8 @@ def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
             answers,
             events,
             course_profile=course_profile,
+            storage=CLASSROOM_STORAGE,
+            user_id=user_id,
         )
         proposals = _analyze_classroom_profile_updates(
             user_id,
