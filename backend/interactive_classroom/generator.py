@@ -101,6 +101,8 @@ def _clean_text(value: str) -> str:
 
 def _clean_quiz_text(value: str) -> str:
     value = unescape(value)
+    # 剥离内部 scene ID（如 scene_slide_002、scene_quiz_001）
+    value = re.sub(r"\bscene_(?:slide|quiz|mindmap)_\d+\b", "", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value
 
@@ -147,6 +149,13 @@ def _clean_knowledge_point(value: str) -> str:
     # 反复剥前缀，最长 4 次（page N 关键点：xxx 关键点：xxx 这种叠层）
     for _ in range(4):
         prev = text
+        # 去掉 scene_slide_002 / scene_quiz_001 等内部 ID
+        text = re.sub(
+            r"^\s*scene_(?:slide|quiz|mindmap)_\d+[\s_\-:：、]*",
+            "",
+            text,
+            flags=re.I,
+        )
         # 去掉开头的 page/slide + 可选分隔 + 数字（中文数字 / 阿拉伯数字）+ 可选分隔
         text = re.sub(
             r"^\s*(page|slide)\s*[\d_一-鿿]+[\s_\-:：、]*",
@@ -571,11 +580,53 @@ QUIZ_SOURCE_SKIP_KEYWORDS = (
     "qa",
 )
 
+# 开场/封面/目录页关键词 — 用于检测不应出题的非知识内容页
+# 注意：只保留明确的开场/封面/目录关键词，避免"学习目标""课程大纲"等
+# 可能出现在内容页知识点中的词导致误杀
+INTRO_SLIDE_KEYWORDS = (
+    # 封面/标题页（高置信度）
+    "课程介绍", "课程简介", "课程目录",
+    # 目录/大纲页
+    "目录", "内容概览", "章节概览",
+    "agenda", "contents", "outline",
+    # 通用开场
+    "自我介绍", "讲师介绍", "欢迎", "开场",
+    "welcome", "introduction", "intro",
+)
 
-def _is_quiz_source_scene(scene: ClassroomScene) -> bool:
+
+def _is_intro_slide(scene: ClassroomScene, *, is_first_slide: bool = False) -> bool:
+    """检测开场/封面/目录页，这些页面不应生成测验题。"""
+    title = (scene.title or "").strip()
+    title_lower = title.lower()
+    points = [p.strip() for p in scene.knowledge_points if p.strip()]
+    combined = f"{title_lower} {' '.join(points).lower()}"
+
+    # Signal A: 标题命中关键词 → 直接判定为开场页
+    for kw in INTRO_SLIDE_KEYWORDS:
+        if kw in title_lower:
+            return True
+
+    # Signal B: 标题较短(≤15字符) + (标题+知识点)命中关键词 → 判定为开场页
+    # 避免长标题内容页（如"Python 模块导入详解"）被误杀
+    if len(title) <= 15:
+        for kw in INTRO_SLIDE_KEYWORDS:
+            if kw in combined:
+                return True
+
+    # Signal C: 首页 + 完全无知识点 → 判定为开场页（纯封面/装饰页）
+    if is_first_slide and len(points) == 0:
+        return True
+
+    return False
+
+
+def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False) -> bool:
     text = " ".join([scene.title, *scene.knowledge_points]).lower()
     if not text.strip():
-        return True
+        return False  # 空标题+空知识点的页面不是有效的出题源
+    if _is_intro_slide(scene, is_first_slide=is_first_slide):
+        return False
     return not any(keyword in text for keyword in QUIZ_SOURCE_SKIP_KEYWORDS)
 
 
@@ -943,13 +994,21 @@ class InteractiveClassroomGenerator:
         qid_prefix: str = "q",
     ) -> list[dict[str, Any]]:
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
-        titles = [scene.title for scene in slide_scenes if scene.title]
+        # 过滤开场/目录页，避免生成无意义题目
+        eligible_scenes = [
+            s for i, s in enumerate(slide_scenes)
+            if not _is_intro_slide(s, is_first_slide=(i == 0))
+        ]
+        if not eligible_scenes:
+            # 兜底：如果全部被过滤，跳过第一页使用剩余页面
+            eligible_scenes = slide_scenes[1:] if len(slide_scenes) > 1 else slide_scenes
+        titles = [scene.title for scene in eligible_scenes if scene.title]
         all_points: list[str] = []
-        for scene in slide_scenes:
+        for scene in eligible_scenes:
             all_points.extend([point for point in scene.knowledge_points if point and point != scene.title])
 
         questions: list[dict[str, Any]] = []
-        for idx, scene in enumerate(slide_scenes[:3], start=1):
+        for idx, scene in enumerate(eligible_scenes[:3], start=1):
             other_titles = [title for title in titles if title != scene.title]
             questions.append(
                 _question(
@@ -1045,7 +1104,6 @@ class InteractiveClassroomGenerator:
             texts = [str(t).strip() for t in slide.get("extracted_text", []) if str(t).strip()]
             context_lines.append(
                 f"{idx}. 页面标题：{title}\n"
-                f"   覆盖 slide_id：{slide.get('scene_id', '')}\n"
                 f"   关键点：{'；'.join(points[:6]) or '无'}\n"
                 f"   页面文本：{'；'.join(texts[:10]) or '无'}"
             )
@@ -1078,9 +1136,10 @@ class InteractiveClassroomGenerator:
 
 ## 出题要求
 1. 题目必须直接来自上面的页面标题、关键点或页面文本，不能泛泛问主题定义。
+1b. **跳过开场/目录类页面**：如果某些页面的标题是课程名称、目录、欢迎语、自我介绍、学习目标概述等开场性质的内容，不要基于这些页面出题。只围绕有实质知识点的页面出题。
 2. 单选题为主，可少量多选题；每题 4 个选项，干扰项要像真实学生会混淆的错误理解。
    **多选题识别强约束**：如果题干含「以下哪些」「下列哪些」「哪些选项」「哪些是」「多选」等表述，**必须**把 `type` 设为「多选题」并给 `answer` 多个字母（如 "A,C"）。否则前端 UI 会按单选渲染，题干和交互对不上。
-3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面或关键点。
+3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面编号（如"第 2 页"）或关键点。不要使用任何内部 ID。
 4. 每题必须给出 knowledge_point，优先使用对应页面标题或关键点。
 5. 不要生成填空题、代码输出题。
 6. 如果有学生画像，题目难度、选项干扰方式和解析语言要匹配画像。
@@ -1626,13 +1685,19 @@ class InteractiveClassroomGenerator:
         # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
         # 密度：每 3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final 测验
         # 实际 mid 数 = max(0, (N-1)//3)，加 1 个 final
-        _n = len([s for s in slide_scenes if _is_quiz_source_scene(s)])
+        _n = len([s for i, s in enumerate(slide_scenes) if _is_quiz_source_scene(s, is_first_slide=(i == 0))])
         quiz_count_estimate = max(0, (_n - 1) // 3) + 1
 
         result: list[ClassroomScene] = []
         quiz_index = 1
         pending_slides: list[ClassroomScene] = []
-        quiz_source_slides = [scene for scene in slide_scenes if _is_quiz_source_scene(scene)]
+        quiz_source_slides = [
+            scene for i, scene in enumerate(slide_scenes)
+            if _is_quiz_source_scene(scene, is_first_slide=(i == 0))
+        ]
+        # 兜底：如果所有页面都被过滤为开场页，回退使用全部 slide（避免完全无测验）
+        if not quiz_source_slides and slide_scenes:
+            quiz_source_slides = list(slide_scenes)
         quiz_source_ids = {scene.id for scene in quiz_source_slides}
         total_quiz_source_slides = len(quiz_source_slides)
         quiz_source_index = 0

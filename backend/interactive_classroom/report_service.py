@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -213,7 +214,10 @@ def build_classroom_report(
         quiz_scene = quiz_scene_map.get(scene_id, {})
         covered_scene_ids = quiz_scene.get("content", {}).get("covered_scene_ids", [])
         for result in evaluation.get("results", []):
-            point_name = result.get("knowledge_point") or "综合理解"
+            raw_point = (result.get("knowledge_point") or "").strip()
+            # 剥离内部 scene ID（兼容旧数据中残留的 scene_slide_002 等）
+            raw_point = re.sub(r"\bscene_(?:slide|quiz|mindmap)_\d+\b", "", raw_point).strip()
+            point_name = raw_point or "综合理解"
             points = int(result.get("points", 1) or 1)
             is_correct = bool(result.get("correct"))
             # 简答题（short_answer）走 0-100 分数，earned_points 是小数；
