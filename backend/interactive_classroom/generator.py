@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from html import unescape
 from typing import Any, Callable
@@ -26,6 +26,7 @@ class ClassroomGenerationCancelled(Exception):
 CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[dict[str, Any]], None]
 DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY = 10
+DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY = 4
 
 
 def _emit_progress(
@@ -839,7 +840,7 @@ class InteractiveClassroomGenerator:
 
         max_workers = min(DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY, len(svg_files))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-slide") as executor:
-            futures = [
+            future_to_index = {
                 executor.submit(
                     self._build_single_slide_scene_from_svg,
                     idx,
@@ -850,22 +851,27 @@ class InteractiveClassroomGenerator:
                     ppt_job_id,
                     student_profile,
                     cancel_check,
-                )
+                ): idx
                 for idx, fname in enumerate(svg_files, start=1)
-            ]
+            }
 
-            for idx, future in enumerate(futures, start=1):
+            completed = 0
+            scenes_by_index: dict[int, ClassroomScene] = {}
+            for future in as_completed(future_to_index):
                 _raise_if_cancelled(cancel_check)
+                idx = future_to_index[future]
                 scene = future.result()
-                scenes.append(scene)
+                scenes_by_index[idx] = scene
+                completed += 1
                 _emit_progress(
                     progress_callback,
                     stage="build_scenes",
                     stage_index=1,
-                    scene_index=idx,
+                    scene_index=completed,
                     scene_total=len(svg_files),
                     scene=scene,
                 )
+            scenes = [scenes_by_index[idx] for idx in sorted(scenes_by_index)]
         return scenes
 
     def _build_single_slide_scene_from_svg(
@@ -1688,7 +1694,8 @@ class InteractiveClassroomGenerator:
         _n = len([s for i, s in enumerate(slide_scenes) if _is_quiz_source_scene(s, is_first_slide=(i == 0))])
         quiz_count_estimate = max(0, (_n - 1) // 3) + 1
 
-        result: list[ClassroomScene] = []
+        result_plan: list[tuple[str, ClassroomScene | int]] = []
+        quiz_jobs: list[dict[str, Any]] = []
         quiz_index = 1
         pending_slides: list[ClassroomScene] = []
         quiz_source_slides = [
@@ -1713,7 +1720,7 @@ class InteractiveClassroomGenerator:
 
         for scene in slide_scenes:
             _raise_if_cancelled(cancel_check)
-            result.append(scene)
+            result_plan.append(("slide", scene))
             if scene.id not in quiz_source_ids:
                 continue
 
@@ -1729,29 +1736,63 @@ class InteractiveClassroomGenerator:
                 # P1-3 调优：每 3 个测验页出 1 道简答题（quiz_index 3/6/9/...）
                 # 配合"默认不强制"prompt，理论 ~33% 测验含简答。
                 require_short_answer = (quiz_index % 3 == 0)
-                quiz_scene = self._build_quiz_scene(
-                    quiz_index=quiz_index,
+                quiz_jobs.append(
+                    {
+                        "quiz_index": quiz_index,
+                        "scenes": list(pending_slides),
+                        "max_questions": 2 if not is_last else 3,
+                        "require_short_answer": require_short_answer,
+                    }
+                )
+                result_plan.append(("quiz", quiz_index))
+                quiz_index += 1
+                pending_slides = []
+
+        if not quiz_jobs:
+            return [item for kind, item in result_plan if kind == "slide" and isinstance(item, ClassroomScene)]
+
+        quiz_by_index: dict[int, ClassroomScene] = {}
+        max_workers = min(DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY, len(quiz_jobs))
+        if self.llm_quiz_enabled:
+            self._get_quiz_generator()
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-quiz") as executor:
+            future_to_job = {
+                executor.submit(
+                    self._build_quiz_scene,
+                    quiz_index=job["quiz_index"],
                     order=0,
                     topic=topic,
-                    scenes=pending_slides,
-                    max_questions=2 if not is_last else 3,
+                    scenes=job["scenes"],
+                    max_questions=job["max_questions"],
                     student_profile=student_profile,
                     cancel_check=cancel_check,
                     progress_callback=progress_callback,
-                    require_short_answer=require_short_answer,
-                )
-                result.append(quiz_scene)
+                    require_short_answer=job["require_short_answer"],
+                ): job
+                for job in quiz_jobs
+            }
+            for done_idx, future in enumerate(as_completed(future_to_job), start=1):
+                _raise_if_cancelled(cancel_check)
+                job = future_to_job[future]
+                quiz_scene = future.result()
+                quiz_by_index[int(job["quiz_index"])] = quiz_scene
                 _emit_progress(
                     progress_callback,
                     stage="insert_quizzes",
                     stage_index=2,
-                    scene_index=quiz_index,
-                    scene_total=max(quiz_count_estimate, 1),
+                    scene_index=done_idx,
+                    scene_total=len(quiz_jobs),
                     scene=quiz_scene,
                 )
-                quiz_index += 1
-                pending_slides = []
 
+        result: list[ClassroomScene] = []
+        for kind, item in result_plan:
+            if kind == "slide" and isinstance(item, ClassroomScene):
+                result.append(item)
+            elif kind == "quiz":
+                quiz_scene = quiz_by_index.get(int(item))
+                if quiz_scene is not None:
+                    result.append(quiz_scene)
         return result
 
     def generate(
@@ -1807,23 +1848,34 @@ class InteractiveClassroomGenerator:
             )
 
         _raise_if_cancelled(cancel_check)
-        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check, progress_callback)
-
-        # 阶段 2.5：在末尾追加一个 mindmap 场景（知识结构回顾）
-        # 仅当有 >= 2 个 slide 场景时才有意义
-        if sum(1 for s in scenes if s.type == "slide") >= 2:
-            mindmap_scene = self._build_mindmap_scene(
-                topic, scenes, normalized_profile, cancel_check
-            )
-            if mindmap_scene is not None:
-                _emit_progress(
-                    progress_callback,
-                    stage="build_scenes",
-                    stage_index=1,
-                    scene_index=len(scenes),
-                    scene_total=len(scenes) + 1,
+        slide_count = sum(1 for s in scenes if s.type == "slide")
+        if slide_count >= 2:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="classroom-mindmap") as executor:
+                mindmap_future = executor.submit(
+                    self._build_mindmap_scene,
+                    topic,
+                    list(scenes),
+                    normalized_profile,
+                    cancel_check,
                 )
-                scenes.append(mindmap_scene)
+                scenes = self._insert_quiz_scenes(
+                    topic, scenes, normalized_profile, cancel_check, progress_callback
+                )
+                _raise_if_cancelled(cancel_check)
+                mindmap_scene = mindmap_future.result()
+                if mindmap_scene is not None:
+                    _emit_progress(
+                        progress_callback,
+                        stage="build_scenes",
+                        stage_index=1,
+                        scene_index=len(scenes),
+                        scene_total=len(scenes) + 1,
+                    )
+                    scenes.append(mindmap_scene)
+        else:
+            scenes = self._insert_quiz_scenes(
+                topic, scenes, normalized_profile, cancel_check, progress_callback
+            )
 
         for idx, scene in enumerate(scenes, start=1):
             _raise_if_cancelled(cancel_check)
