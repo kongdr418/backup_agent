@@ -112,7 +112,10 @@ async def llm_grade_short_answer(
                 {"role": "user", "content": user},
             ],
             temperature=0.2,
-            max_tokens=600,
+            # reasoning 模型（如 mimo-v2.5）会用掉绝大部分 token 预算
+            # 在"思考"上。600 token 不够（实测 reasoning_tokens=599 时
+            # content 被截断为空）。提到 1500 留余量给 JSON 输出。
+            max_tokens=1500,
             model=cfg.get("content_model", ""),
             api_key=cfg.get("content_api_key", ""),
             base_url=cfg.get("content_base_url", ""),
