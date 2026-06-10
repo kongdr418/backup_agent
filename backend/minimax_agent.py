@@ -905,7 +905,7 @@ class MiniMaxAgent:
         yield self._init_progress('lecture', '即将生成讲义', topic, 'md')
 
         # 构建提示词
-        prompt = self.lecture_generator.generate_lecture_prompt(topic)
+        prompt = self.lecture_generator.generate_lecture_prompt(topic, self.user_id)
 
         try:
             # 调用 AI 生成讲义
@@ -1050,7 +1050,7 @@ class MiniMaxAgent:
         """使用 AI 生成习题集"""
         yield self._init_progress('exercise', '即将生成习题集', topic, output_format)
 
-        for update in self.exercise_generator.generate_exercise_stream(topic, output_format):
+        for update in self.exercise_generator.generate_exercise_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'exercise', topic, output_format)
@@ -1091,7 +1091,7 @@ class MiniMaxAgent:
         """使用 AI 生成课堂测验"""
         yield self._init_progress('quiz', '即将生成课堂测验', topic, output_format)
 
-        for update in self.quiz_generator.generate_quiz_stream(topic, output_format):
+        for update in self.quiz_generator.generate_quiz_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'quiz', topic, output_format)
@@ -1117,7 +1117,7 @@ class MiniMaxAgent:
         """使用 AI 生成知识卡片"""
         yield self._init_progress('card', '即将生成知识卡片', topic, output_format)
 
-        for update in self.knowledge_card_generator.generate_card_stream(topic, output_format):
+        for update in self.knowledge_card_generator.generate_card_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'card', topic, output_format)
@@ -1143,7 +1143,7 @@ class MiniMaxAgent:
         """使用 AI 生成思维导图"""
         yield self._init_progress('mindmap', '即将生成思维导图', topic, 'md')
 
-        for update in self.mindmap_generator.generate_mindmap_stream(topic):
+        for update in self.mindmap_generator.generate_mindmap_stream(topic, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 # 读取文件内容供前端预览

@@ -1091,6 +1091,25 @@ function syncDiscussionPersistence() {
   savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
 }
 
+/**
+ * 生成预览阶段用 requestId 作为 classroom ID，最终课堂用实际 classroomId。
+ * localStorage 键包含 classroom ID，因此需要把预览阶段的讨论数据
+ * 从旧键迁移到新键，否则刷新后讨论记录会丢失。
+ */
+function migrateDiscussionStorage(
+  fromClassroomId: string,
+  toClassroomId: string,
+  finalScenes: InteractiveClassroomScene[],
+) {
+  for (const scene of finalScenes) {
+    const persisted = loadPersistedDiscussionMessages(fromClassroomId, scene.id)
+    if (persisted && persisted.length > 0) {
+      savePersistedDiscussionMessages(toClassroomId, scene.id, persisted)
+    }
+    clearPersistedDiscussionMessages(fromClassroomId, scene.id)
+  }
+}
+
 function clearDiscussionHistory() {
   if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
   discussionMessages.value = []
@@ -1609,8 +1628,18 @@ async function loadGeneratingClassroom() {
       }
       if (ev.type === 'classroom_done') {
         const activeSceneId = currentScene.value?.id || ''
+        const previewClassroomId = classroom.value?.id || ''
         const finalClassroom = await getInteractiveClassroom(ev.classroom_id)
         if (loadVersion !== classroomLoadVersion) return
+
+        // 生成预览阶段的 classroom ID（requestId）与最终课堂 ID 不同，
+        // localStorage 键包含 classroom ID，需要把预览阶段的讨论数据迁移过去，
+        // 否则刷新后讨论记录会丢失。
+        if (previewClassroomId && previewClassroomId !== ev.classroom_id) {
+          syncDiscussionPersistence()
+          migrateDiscussionStorage(previewClassroomId, ev.classroom_id, finalClassroom.scenes || [])
+        }
+
         classroom.value = finalClassroom
         previewExpectedSceneTotal.value = 0
         previewExpectedSlideTotal.value = 0
