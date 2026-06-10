@@ -17,6 +17,16 @@ class InteractiveClassroomCancelRegistryTest(unittest.TestCase):
         with backend_app.CLASSROOM_GENERATION_CANCELS_LOCK:
             backend_app.CLASSROOM_GENERATION_CANCELS.clear()
             backend_app.CLASSROOM_GENERATION_JOBS.clear()
+        for request_id in (
+            "job-1",
+            "job-2",
+            "job-progress",
+            "job-replay",
+            "job-disk",
+        ):
+            path = backend_app._classroom_generation_job_path(request_id)  # noqa: SLF001
+            if path and os.path.exists(path):
+                os.remove(path)
 
     def test_cancel_unknown_request_id_does_not_leave_registry_entry(self) -> None:
         cancelled = backend_app._cancel_classroom_generation("missing-request")  # noqa: SLF001
@@ -52,6 +62,67 @@ class InteractiveClassroomCancelRegistryTest(unittest.TestCase):
 
         self.assertTrue(cancelled)
         self.assertEqual("cancelling", job["status"])
+
+    def test_progress_event_updates_generation_job_snapshot(self) -> None:
+        backend_app._mark_classroom_generation_running("job-progress", "Python 入门")  # noqa: SLF001
+
+        backend_app._classroom_emit(  # noqa: SLF001
+            "job-progress",
+            {
+                "type": "classroom_progress",
+                "stage": "build_scenes",
+                "stage_label": "组织课堂",
+                "stage_index": 1,
+                "stage_total": 5,
+                "scene_index": 3,
+                "scene_total": 10,
+                "scene": {
+                    "id": "scene_slide_003",
+                    "type": "slide",
+                    "title": "第三页",
+                    "order": 3,
+                },
+            },
+        )
+
+        job = backend_app._get_classroom_generation_job("job-progress")  # noqa: SLF001
+
+        self.assertEqual("running", job["status"])
+        self.assertEqual("build_scenes", job["stage"])
+        self.assertEqual("组织课堂", job["stage_label"])
+        self.assertEqual(3, job["scenes_generated"])
+        self.assertEqual(10, job["total_scenes"])
+        self.assertEqual("scene_slide_003", job["last_scene"]["id"])
+        self.assertIsInstance(job["elapsed_seconds"], int)
+
+    def test_running_job_replays_recorded_progress_events_to_new_subscribers(self) -> None:
+        backend_app._mark_classroom_generation_running("job-replay", "Python 入门")  # noqa: SLF001
+        event = {
+            "type": "classroom_progress",
+            "stage": "insert_quizzes",
+            "stage_label": "生成互动",
+            "stage_index": 2,
+            "stage_total": 5,
+            "scene_index": 1,
+            "scene_total": 2,
+        }
+
+        backend_app._classroom_emit("job-replay", event)  # noqa: SLF001
+
+        replayed = backend_app._get_classroom_generation_progress_events("job-replay")  # noqa: SLF001
+        self.assertEqual([event], replayed)
+
+    def test_job_status_can_be_reloaded_from_disk_when_memory_is_empty(self) -> None:
+        backend_app._mark_classroom_generation_running("job-disk", "Python 入门")  # noqa: SLF001
+        backend_app._mark_classroom_generation_done("job-disk", "cls_disk", {"id": "cls_disk", "scenes": []})  # noqa: SLF001
+
+        with backend_app.CLASSROOM_GENERATION_CANCELS_LOCK:
+            backend_app.CLASSROOM_GENERATION_JOBS.clear()
+
+        job = backend_app._get_classroom_generation_job("job-disk")  # noqa: SLF001
+
+        self.assertEqual("done", job["status"])
+        self.assertEqual("cls_disk", job["classroom_id"])
 
 
 if __name__ == "__main__":

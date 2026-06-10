@@ -11,11 +11,17 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.generator import (
+    ClassroomGenerationCancelled,
+    InteractiveClassroomGenerator,
+    _emit_ordered_ready_scenes,
+    _emit_progress,
+    _synthesize_scene_speech_actions,
+)
 from interactive_classroom.generator import _derive_slide_title
 from interactive_classroom.quiz_service import evaluate_quiz_scene
 from interactive_classroom.report_service import build_classroom_report
-from interactive_classroom.schema import ClassroomScene
+from interactive_classroom.schema import ClassroomAction, ClassroomScene
 from interactive_classroom.storage import ClassroomStorage
 
 
@@ -91,6 +97,156 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         )
 
         self.assertEqual("课程总结", title)
+
+    def test_derives_slide_title_without_markdown_heading_marks(self) -> None:
+        title = _derive_slide_title(
+            idx=1,
+            filename="01.svg",
+            svg_texts=["世界地理"],
+            manuscript_note="# 世界地理\n本节课我们将从宏观角度认识地球。",
+        )
+
+        self.assertEqual("世界地理 本节课我们将从宏观角度认识地球", title)
+
+    def test_progress_event_includes_renderable_scene_payload(self) -> None:
+        events: list[dict] = []
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            knowledge_points=["七大洲"],
+            content={"format": "markdown", "markdown": "## 世界地理"},
+            actions=[],
+        )
+
+        _emit_progress(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            scene_index=1,
+            scene_total=10,
+            scene=scene,
+        )
+
+        self.assertEqual("scene_slide_001", events[0]["scene"]["id"])
+        self.assertEqual("世界地理", events[0]["scene_payload"]["title"])
+        self.assertEqual("## 世界地理", events[0]["scene_payload"]["content"]["markdown"])
+
+    def test_emits_ready_slide_scenes_in_original_order_only(self) -> None:
+        events: list[dict] = []
+        ready = {
+            2: _slide(2, "第二页", ["B"]),
+        }
+
+        next_index = _emit_ordered_ready_scenes(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            ready_scenes=ready,
+            next_emit_index=1,
+            scene_total=3,
+        )
+
+        self.assertEqual(1, next_index)
+        self.assertEqual([], events)
+
+        ready[1] = _slide(1, "第一页", ["A"])
+        ready[3] = _slide(3, "第三页", ["C"])
+        next_index = _emit_ordered_ready_scenes(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            ready_scenes=ready,
+            next_emit_index=next_index,
+            scene_total=3,
+        )
+
+        self.assertEqual(4, next_index)
+        self.assertEqual(["scene_slide_001", "scene_slide_002", "scene_slide_003"], [
+            event["scene_payload"]["id"] for event in events
+        ])
+
+    def test_quiz_progress_event_uses_final_order(self) -> None:
+        events: list[dict] = []
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+        ]
+
+        self.generator._insert_quiz_scenes(  # noqa: SLF001
+            "测试主题",
+            scenes,
+            progress_callback=events.append,
+        )
+
+        quiz_events = [
+            event for event in events
+            if event.get("scene_payload", {}).get("type") == "quiz"
+        ]
+        self.assertTrue(quiz_events)
+        self.assertGreater(quiz_events[0]["scene_payload"]["order"], 0)
+
+    def test_tts_progress_can_update_scene_payload_with_audio_url(self) -> None:
+        events: list[dict] = []
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            actions=[],
+        )
+        scene.actions.append(
+            ClassroomAction(
+                id="act_slide_001",
+                type="speech",
+                text="欢迎进入课堂",
+                audio_url="/api/interactive-classroom/cls_001/audio/act_slide_001.mp3",
+            )
+        )
+
+        _emit_progress(
+            events.append,
+            stage="synthesize_tts",
+            stage_index=3,
+            scene_index=1,
+            scene_total=1,
+            scene=scene,
+        )
+
+        self.assertEqual(
+            "/api/interactive-classroom/cls_001/audio/act_slide_001.mp3",
+            events[0]["scene_payload"]["actions"][0]["audio_url"],
+        )
+
+    def test_synthesizes_single_slide_before_streaming_scene(self) -> None:
+        class StubTTS:
+            def synthesize_action(self, action_id, text, output_dir):  # noqa: ANN001
+                self.called_with = (action_id, text, output_dir)
+                return f"{action_id}.wav"
+
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            actions=[ClassroomAction(id="act_slide_001", type="speech", text="欢迎进入课堂")],
+        )
+        service = StubTTS()
+
+        _synthesize_scene_speech_actions(
+            service=service,  # type: ignore[arg-type]
+            scene=scene,
+            audio_dir="/tmp/classroom-audio",
+            classroom_id="cls_001",
+        )
+
+        self.assertEqual(("act_slide_001", "欢迎进入课堂", "/tmp/classroom-audio"), service.called_with)
+        self.assertEqual(
+            "/api/interactive-classroom/cls_001/audio/act_slide_001.wav",
+            scene.actions[0].audio_url,
+        )
 
     def test_student_profile_guides_quiz_prompt_without_leaking_to_speech(self) -> None:
         profile = {

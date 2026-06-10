@@ -97,6 +97,7 @@ CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
 CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
 CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
 CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
+CLASSROOM_GENERATION_JOBS_DIR = os.path.join(BACKEND_DIR, 'memory', 'classroom_generation_jobs')
 
 # SSE 订阅者：每个连上的前端对应一个 queue.Queue；生成线程把事件 fan-out 给所有订阅者
 import queue  # noqa: E402
@@ -139,6 +140,58 @@ def _classroom_generation_now() -> str:
     return datetime.now().isoformat(timespec='seconds')
 
 
+def _classroom_generation_job_path(request_id: str) -> str:
+    if not _is_safe_classroom_request_id(request_id):
+        return ''
+    return os.path.join(CLASSROOM_GENERATION_JOBS_DIR, f'{request_id}.json')
+
+
+def _write_classroom_generation_job_file(request_id: str, job: dict) -> None:
+    path = _classroom_generation_job_path(request_id)
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temp_path = f'{path}.tmp'
+        with open(temp_path, 'w', encoding='utf-8') as file:
+            json.dump(job, file, ensure_ascii=False, indent=2)
+        os.replace(temp_path, path)
+    except Exception:
+        request_logger.warning(
+            f'[INTERACTIVE-CLASSROOM] 写入生成任务快照失败 request_id={request_id}',
+            exc_info=True,
+        )
+
+
+def _read_classroom_generation_job_file(request_id: str) -> dict | None:
+    path = _classroom_generation_job_path(request_id)
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as file:
+            payload = json.load(file)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        request_logger.warning(
+            f'[INTERACTIVE-CLASSROOM] 读取生成任务快照失败 request_id={request_id}',
+            exc_info=True,
+        )
+    return None
+
+
+def _classroom_generation_elapsed_seconds(job: dict, now: datetime | None = None) -> int:
+    started_at = job.get('started_at')
+    if not started_at:
+        return 0
+    try:
+        start = datetime.fromisoformat(started_at)
+        current = now or datetime.now()
+        return max(0, int((current - start).total_seconds()))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _prune_classroom_generation_jobs_locked(max_jobs: int = 80) -> None:
     if len(CLASSROOM_GENERATION_JOBS) <= max_jobs:
         return
@@ -165,8 +218,12 @@ def _mark_classroom_generation_running(request_id: str, topic: str) -> dict | No
             'status': 'running',
             'started_at': current.get('started_at') or now,
             'updated_at': now,
+            'progress_events': current.get('progress_events') or [],
+            'progress_event_count': current.get('progress_event_count') or 0,
+            'elapsed_seconds': current.get('elapsed_seconds') or 0,
         }
         CLASSROOM_GENERATION_JOBS[request_id] = job
+        _write_classroom_generation_job_file(request_id, job)
         _prune_classroom_generation_jobs_locked()
         return dict(job)
 
@@ -183,9 +240,13 @@ def _mark_classroom_generation_done(request_id: str, classroom_id: str, classroo
             'status': 'done',
             'classroom_id': classroom_id,
             'classroom': classroom,
+            'scenes_generated': len(classroom.get('scenes', [])),
+            'total_scenes': len(classroom.get('scenes', [])),
             'updated_at': now,
         }
+        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
         CLASSROOM_GENERATION_JOBS[request_id] = job
+        _write_classroom_generation_job_file(request_id, job)
         _prune_classroom_generation_jobs_locked()
         return dict(job)
 
@@ -203,7 +264,9 @@ def _mark_classroom_generation_cancelled(request_id: str) -> dict | None:
             'updated_at': now,
             'error': '课堂生成已停止',
         }
+        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
         CLASSROOM_GENERATION_JOBS[request_id] = job
+        _write_classroom_generation_job_file(request_id, job)
         _prune_classroom_generation_jobs_locked()
         return dict(job)
 
@@ -221,7 +284,9 @@ def _mark_classroom_generation_error(request_id: str, error: str) -> dict | None
             'updated_at': now,
             'error': error,
         }
+        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
         CLASSROOM_GENERATION_JOBS[request_id] = job
+        _write_classroom_generation_job_file(request_id, job)
         _prune_classroom_generation_jobs_locked()
         return dict(job)
 
@@ -231,7 +296,79 @@ def _get_classroom_generation_job(request_id: str) -> dict | None:
         return None
     with CLASSROOM_GENERATION_CANCELS_LOCK:
         job = CLASSROOM_GENERATION_JOBS.get(request_id)
-        return dict(job) if job else None
+        if job:
+            return dict(job)
+        disk_job = _read_classroom_generation_job_file(request_id)
+        if disk_job:
+            CLASSROOM_GENERATION_JOBS[request_id] = disk_job
+            return dict(disk_job)
+        return None
+
+
+def _get_classroom_generation_progress_events(request_id: str) -> list[dict]:
+    if not request_id:
+        return []
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        job = CLASSROOM_GENERATION_JOBS.get(request_id) or {}
+        return [
+            dict(event)
+            for event in job.get('progress_events', [])
+            if isinstance(event, dict)
+        ]
+
+
+def _record_classroom_generation_progress(request_id: str, event: dict) -> None:
+    if not request_id or event.get('type') != 'classroom_progress':
+        return
+    now_text = _classroom_generation_now()
+    try:
+        now_dt = datetime.fromisoformat(now_text)
+    except ValueError:
+        now_dt = datetime.now()
+    with CLASSROOM_GENERATION_CANCELS_LOCK:
+        current = CLASSROOM_GENERATION_JOBS.get(request_id)
+        if not current:
+            return
+        progress_events = [
+            dict(row)
+            for row in current.get('progress_events', [])
+            if isinstance(row, dict)
+        ]
+        progress_events.append(dict(event))
+        progress_events = progress_events[-80:]
+
+        scene = event.get('scene') if isinstance(event.get('scene'), dict) else None
+        generated_scene_count = int(current.get('scenes_generated') or 0)
+        if scene:
+            generated_scene_count = max(generated_scene_count, int(event.get('scene_index') or 0))
+
+        job = {
+            **current,
+            'status': current.get('status') or 'running',
+            'stage': event.get('stage') or '',
+            'stage_label': event.get('stage_label') or '',
+            'stage_index': int(event.get('stage_index') or 0),
+            'stage_total': int(event.get('stage_total') or 0),
+            'current_step_done': int(event.get('scene_index') or 0),
+            'current_step_total': int(event.get('scene_total') or 0),
+            'scene_index': int(event.get('scene_index') or 0),
+            'scene_total': int(event.get('scene_total') or 0),
+            'scenes_generated': generated_scene_count,
+            'progress_events': progress_events,
+            'progress_event_count': int(current.get('progress_event_count') or 0) + 1,
+            'updated_at': now_text,
+        }
+        if scene:
+            job['last_scene'] = dict(scene)
+            job['total_scenes'] = max(
+                int(current.get('total_scenes') or 0),
+                int(event.get('scene_total') or 0),
+            )
+        elif 'total_scenes' not in job:
+            job['total_scenes'] = int(current.get('total_scenes') or 0)
+        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, now_dt)
+        CLASSROOM_GENERATION_JOBS[request_id] = job
+        _write_classroom_generation_job_file(request_id, job)
 
 
 def _finish_classroom_generation(request_id: str) -> None:
@@ -254,6 +391,7 @@ def _cancel_classroom_generation(request_id: str) -> bool:
                 'status': 'cancelling',
                 'updated_at': _classroom_generation_now(),
             }
+            _write_classroom_generation_job_file(request_id, CLASSROOM_GENERATION_JOBS[request_id])
         return True
 
 
@@ -280,6 +418,7 @@ def _classroom_unsubscribe(request_id: str, q: queue.Queue) -> None:
 
 def _classroom_emit(request_id: str, event: dict) -> None:
     """由生成线程调用：把事件 fan-out 到所有 SSE 订阅者。"""
+    _record_classroom_generation_progress(request_id, event)
     with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
         subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id, [])
         for q in subs:
@@ -3165,6 +3304,9 @@ def interactive_classroom_generate_stream(request_id):
         if terminal is not None:
             yield _serialize(terminal)
             return
+
+        for progress_event in _get_classroom_generation_progress_events(request_id):
+            yield _serialize(progress_event)
 
         # 任务仍在跑：订阅事件流
         nonlocal queue_sub
