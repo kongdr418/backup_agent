@@ -216,67 +216,48 @@
               </div>
             </section>
 
-            <section v-if="reportRecommendedTasks.length" class="report-block">
-              <div class="report-label">下一步学习任务</div>
-              <div class="task-list">
-                <article v-for="task in reportRecommendedTasks" :key="task.id" class="task-row">
-                  <div class="task-priority" :class="task.priority">{{ taskPriorityLabel(task.priority) }}</div>
-                  <div class="task-copy">
-                    <div class="task-title">{{ task.title }}</div>
-                    <p>{{ task.description }}</p>
-                    <p v-if="task.reason" class="task-reason">依据：{{ task.reason }}</p>
-                    <div v-if="task.knowledge_points.length" class="tag-row">
-                      <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
+            <section v-if="reportLearningPath.length" class="report-block learning-path-block">
+              <div class="learning-path-head">
+                <div>
+                  <div class="report-label">个性化学习路径</div>
+                  <p>系统根据答题证据、知识点掌握度和画像策略，规划本节后的连续学习动作。</p>
+                </div>
+                <span class="path-loop-label">诊断 → 规划 → 生成 → 评估</span>
+              </div>
+              <div class="learning-path-list">
+                <article
+                  v-for="(stage, idx) in reportLearningPath"
+                  :key="stage.id"
+                  class="learning-path-stage"
+                  :class="stage.status"
+                >
+                  <div class="path-node">
+                    <span>{{ idx + 1 }}</span>
+                  </div>
+                  <div class="path-stage-copy">
+                    <div class="path-stage-meta">
+                      <strong>{{ stage.agent_name }}</strong>
+                      <em>{{ learningPathStatusLabel(stage.status) }}</em>
+                      <span v-if="stage.metric">{{ stage.metric }}</span>
+                    </div>
+                    <h4>{{ stage.title }}</h4>
+                    <p>{{ stage.description }}</p>
+                    <div v-if="stage.knowledge_points.length" class="tag-row">
+                      <span v-for="point in stage.knowledge_points" :key="`${stage.id}-${point}`" class="tag task-point">{{ point }}</span>
                     </div>
                   </div>
                   <button
-                    class="task-action"
-                    :disabled="!canRunTask(task) || runningTaskId === task.id"
-                    @click="runTask(task)"
+                    v-if="canRunLearningPathStage(stage)"
+                    class="task-action path-action"
+                    :disabled="isLearningPathStageRunning(stage)"
+                    @click="runLearningPathStage(stage)"
                   >
-                    {{ taskButtonLabel(task) }}
+                    {{ learningPathButtonLabel(stage) }}
                   </button>
                 </article>
               </div>
             </section>
 
-            <section class="report-block next-lesson-block">
-              <div class="next-lesson-head">
-                <div>
-                  <div class="report-label">生成下一堂课</div>
-                  <p>基于本节学习报告生成下一课 PPT，开头会先回顾上一课，再进入新内容。</p>
-                </div>
-                <button
-                  class="task-action next-lesson-refresh"
-                  :disabled="nextLessonLoading"
-                  @click="loadNextLessonPlan()"
-                >
-                  {{ nextLessonLoading ? '生成中...' : '刷新建议' }}
-                </button>
-              </div>
-              <div v-if="nextLessonLoading && !nextLessonPlan" class="next-lesson-empty">
-                正在生成下一课建议...
-              </div>
-              <div v-else class="next-lesson-form">
-                <label>
-                  <span>下一课主题</span>
-                  <input v-model.trim="nextLessonDraft.topic" placeholder="例如：K 近邻算法" />
-                </label>
-                <label>
-                  <span>学习目标</span>
-                  <textarea v-model.trim="nextLessonDraft.learningGoal" rows="2" placeholder="这堂课希望学生学会什么" />
-                </label>
-                <label>
-                  <span>重点知识点</span>
-                  <textarea v-model.trim="nextLessonDraft.focusPoints" rows="2" placeholder="用顿号或换行分隔" />
-                </label>
-                <p v-if="nextLessonPlan?.rationale" class="task-reason">依据：{{ nextLessonPlan.rationale }}</p>
-                <button class="next-lesson-primary" :disabled="nextLessonLoading || !nextLessonDraft.topic" @click="openNextLessonInPptStudio">
-                  <Sparkles :size="16" />
-                  生成下一课 PPT
-                </button>
-              </div>
-            </section>
           </div>
         </div>
       </section>
@@ -427,6 +408,7 @@ import {
   discussInteractiveClassroom,
   discussInteractiveClassroomStream,
   getNextLessonPlan,
+  type ClassroomLearningPathStage,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
   getInteractiveClassroom,
@@ -449,7 +431,7 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
-import { emitSceneReviewed, emitRecommendedTaskOpened, emitClassroomCompleted } from '@/utils/classroomEvents'
+import { emitSceneReviewed, emitRecommendedTaskOpened, emitRecommendedTaskCompleted, emitClassroomCompleted } from '@/utils/classroomEvents'
 import { saveNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
@@ -670,6 +652,14 @@ const reportKnowledgeRows = computed(() => {
 })
 
 const reportRecommendedTasks = computed(() => report.value?.recommended_tasks || [])
+const reportLearningPath = computed(() => report.value?.learning_path || [])
+const reportTaskById = computed(() => {
+  const rows = new Map<string, ClassroomRecommendedTask>()
+  for (const task of reportRecommendedTasks.value) {
+    rows.set(task.id, task)
+  }
+  return rows
+})
 
 const quizSceneIds = computed(() =>
   baseScenes.value.filter((scene) => scene.type === 'quiz').map((scene) => scene.id),
@@ -1530,6 +1520,52 @@ function taskPriorityLabel(priority: string) {
   return '拓展'
 }
 
+function learningPathStatusLabel(status: string) {
+  if (status === 'active') return '进行中'
+  if (status === 'pending') return '待执行'
+  if (status === 'completed') return '已完成'
+  if (status === 'locked') return '待解锁'
+  if (status === 'needs_attention') return '需关注'
+  return status || '待执行'
+}
+
+function learningPathActionTask(stage: ClassroomLearningPathStage) {
+  if (!stage.task_id) return null
+  return reportTaskById.value.get(stage.task_id) || null
+}
+
+function canRunLearningPathStage(stage: ClassroomLearningPathStage) {
+  return Boolean(stage.generated_classroom_id || stage.type === 'next_lesson' || learningPathActionTask(stage))
+}
+
+function learningPathButtonLabel(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') return stage.action_label || '规划下一课'
+  if (stage.generated_classroom_id) return stage.action_label || '查看练习'
+  const task = learningPathActionTask(stage)
+  return task ? taskButtonLabel(task) : stage.action_label || '查看'
+}
+
+function isLearningPathStageRunning(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') return nextLessonLoading.value
+  return Boolean(stage.task_id && runningTaskId.value === stage.task_id)
+}
+
+async function runLearningPathStage(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') {
+    await openNextLessonInPptStudio()
+    return
+  }
+  if (stage.generated_classroom_id) {
+    await router.push({
+      name: 'interactive-classroom-player',
+      params: { classroomId: stage.generated_classroom_id },
+    })
+    return
+  }
+  const task = learningPathActionTask(stage)
+  if (task) await runTask(task)
+}
+
 function getTaskAction(task: ClassroomRecommendedTask) {
   return resolveReportTaskAction(task, {
     orderedScenes: orderedScenes.value.map((scene) => ({ id: scene.id, type: scene.type })),
@@ -1571,6 +1607,16 @@ async function runTask(task: ClassroomRecommendedTask) {
     const targetIndex = orderedScenes.value.findIndex((scene) => scene.id === action.sceneId)
     if (targetIndex >= 0) {
       selectScene(targetIndex)
+      if (task.type === 'review_weak_points' && classroom.value) {
+        await emitRecommendedTaskCompleted(
+          classroom.value.id,
+          task.id,
+          task.type,
+          task.knowledge_points,
+          { status: 'reviewed' },
+        )
+        await loadReport(true)
+      }
       return
     }
     message.warning('目标课堂场景不存在')
@@ -2421,6 +2467,174 @@ async function runTask(task: ClassroomRecommendedTask) {
   background: rgb(16 185 129);
 }
 
+.learning-path-block {
+  gap: 12px;
+}
+
+.learning-path-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.learning-path-head p {
+  margin: 5px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.path-loop-label {
+  flex: 0 0 auto;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.learning-path-list {
+  position: relative;
+  display: grid;
+  gap: 10px;
+}
+
+.learning-path-list::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 17px;
+  width: 1px;
+  background: rgb(var(--line-rgb));
+}
+
+.learning-path-stage {
+  position: relative;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.learning-path-stage.active,
+.learning-path-stage.needs_attention {
+  border-color: rgb(var(--nav-classroom-rgb) / 0.42);
+  box-shadow: inset 3px 0 0 rgb(var(--nav-classroom-rgb));
+}
+
+.learning-path-stage.completed {
+  border-color: rgb(45 80 22 / 0.20);
+  background: rgb(var(--bg-surface-rgb));
+  box-shadow: inset 3px 0 0 rgb(45 80 22 / 0.55);
+}
+
+.path-node {
+  position: relative;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-base-rgb));
+  display: grid;
+  place-items: center;
+}
+
+.path-node span {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.learning-path-stage.completed .path-node {
+  border-color: rgb(45 80 22 / 0.22);
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.learning-path-stage.completed .path-node span {
+  background: rgb(45 80 22);
+  color: white;
+}
+
+.learning-path-stage.pending .path-node span,
+.learning-path-stage.locked .path-node span {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-3-rgb));
+}
+
+.path-stage-copy {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.path-stage-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.path-stage-meta strong {
+  color: rgb(var(--ink-2-rgb));
+}
+
+.path-stage-meta em,
+.path-stage-meta span {
+  font-style: normal;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgb(var(--bg-subtle-rgb));
+}
+
+.learning-path-stage.completed .path-stage-meta em,
+.learning-path-stage.completed .path-stage-meta span {
+  color: rgb(45 80 22);
+  background: rgb(45 80 22 / 0.08);
+}
+
+.learning-path-stage.active .path-stage-meta em,
+.learning-path-stage.active .path-stage-meta span,
+.learning-path-stage.needs_attention .path-stage-meta em,
+.learning-path-stage.needs_attention .path-stage-meta span {
+  color: rgb(var(--nav-classroom-rgb));
+  background: rgb(var(--nav-classroom-rgb) / 0.08);
+}
+
+.path-stage-copy h4 {
+  margin: 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.path-stage-copy p {
+  margin: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.path-action {
+  align-self: center;
+}
+
 .task-list {
   display: grid;
   gap: 10px;
@@ -2882,9 +3096,19 @@ async function runTask(task: ClassroomRecommendedTask) {
   .report-grid,
   .report-columns,
   .report-hero,
+  .learning-path-head,
+  .learning-path-stage,
   .task-row,
   .mastery-row {
     grid-template-columns: 1fr;
+  }
+
+  .learning-path-head {
+    display: grid;
+  }
+
+  .path-loop-label {
+    width: fit-content;
   }
 
   .task-action {

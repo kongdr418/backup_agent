@@ -296,6 +296,15 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertIn("scene_slide_004", report["recommended_tasks"][0]["target_scene_ids"])
         self.assertEqual("practice_weak_points", report["recommended_tasks"][1]["type"])
         self.assertEqual("high", report["recommended_tasks"][0]["priority"])
+        self.assertEqual(
+            ["diagnose", "review", "practice", "next_lesson"],
+            [stage["type"] for stage in report["learning_path"]],
+        )
+        self.assertEqual("评估 Agent", report["learning_path"][0]["agent_name"])
+        self.assertEqual("路径规划 Agent", report["learning_path"][1]["agent_name"])
+        self.assertEqual(report["recommended_tasks"][0]["id"], report["learning_path"][1]["task_id"])
+        self.assertEqual(report["recommended_tasks"][1]["id"], report["learning_path"][2]["task_id"])
+        self.assertEqual("active", report["learning_path"][1]["status"])
 
     def test_generate_stops_when_cancel_check_is_set_before_save(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

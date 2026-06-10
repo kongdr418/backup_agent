@@ -12,6 +12,7 @@ if BACKEND_DIR not in sys.path:
 
 import app as backend_app
 from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.storage import ClassroomStorage
 from learner_profile.storage import LearnerProfileStorage
 
@@ -26,13 +27,24 @@ class InteractiveClassroomNextLessonTest(unittest.TestCase):
         )
         self.original_classroom_storage = backend_app.CLASSROOM_STORAGE
         self.original_profile_storage = backend_app.LEARNER_PROFILE_STORAGE
+        self.original_practice_service = backend_app.CLASSROOM_PRACTICE_SERVICE
         backend_app.CLASSROOM_STORAGE = self.storage
         backend_app.LEARNER_PROFILE_STORAGE = self.profile_storage
+        practice_generator = InteractiveClassroomGenerator(
+            backend_dir=self.tempdir.name,
+            storage=self.storage,
+            llm_quiz_enabled=False,
+        )
+        backend_app.CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
+            self.storage,
+            practice_generator,
+        )
         self.client = backend_app.app.test_client()
 
     def tearDown(self) -> None:
         backend_app.CLASSROOM_STORAGE = self.original_classroom_storage
         backend_app.LEARNER_PROFILE_STORAGE = self.original_profile_storage
+        backend_app.CLASSROOM_PRACTICE_SERVICE = self.original_practice_service
         self.tempdir.cleanup()
 
     def test_next_lesson_plan_uses_report_and_allows_user_overrides(self) -> None:
@@ -171,6 +183,206 @@ class InteractiveClassroomNextLessonTest(unittest.TestCase):
         self.assertEqual("深度学习", classroom["course"])
         self.assertEqual(1, classroom["lesson_depth"])
         self.assertEqual(2, classroom["lesson_index"])
+
+    def test_create_practice_refreshes_parent_report_path_status(self) -> None:
+        self.storage.save_classroom(
+            "user_1",
+            "cls_source",
+            {
+                "id": "cls_source",
+                "title": "Java 面向对象课堂",
+                "topic": "Java 面向对象",
+                "course": "Java 程序设计",
+                "status": "ready",
+                "created_at": "2026-06-09T09:00:00",
+                "updated_at": "2026-06-09T09:00:00",
+                "tts": {},
+                "course_root_id": "cls_source",
+                "parent_classroom_id": "",
+                "lesson_depth": 0,
+                "lesson_index": 1,
+                "lesson_kind": "root",
+                "source": {},
+                "knowledge_points": ["封装"],
+                "scenes": [],
+            },
+        )
+        self.storage.save_report(
+            "user_1",
+            "cls_source",
+            {
+                "classroom_id": "cls_source",
+                "topic": "Java 面向对象",
+                "score": 60,
+                "weak_points": ["封装"],
+                "strong_points": [],
+                "learned_points": ["封装"],
+                "next_recommendation": "建议补强封装。",
+                "knowledge_summary": {"封装": {"mastery": 50}},
+                "recommended_tasks": [
+                    {
+                        "id": "task_practice_weak_points",
+                        "type": "practice_weak_points",
+                        "title": "完成补强练习",
+                        "description": "围绕薄弱点再做一轮同类题。",
+                        "priority": "high",
+                        "knowledge_points": ["封装"],
+                        "target_scene_ids": [],
+                        "action_label": "生成练习",
+                        "reason": "本次课堂报告首次识别到这些薄弱点。",
+                        "evidence_ids": [],
+                    }
+                ],
+            },
+        )
+
+        response = self.client.post(
+            "/api/interactive-classroom/cls_source/practice",
+            query_string={"user_id": "user_1"},
+            json={
+                "task_id": "task_practice_weak_points",
+                "task_type": "practice_weak_points",
+            },
+        )
+
+        self.assertEqual(201, response.status_code)
+        practice_id = response.get_json()["classroom_id"]
+        events = self.storage.load_events("user_1", "cls_source")
+        self.assertTrue(
+            any(
+                event.get("type") == "recommended_task_completed"
+                and event.get("payload", {}).get("task_id") == "task_practice_weak_points"
+                and event.get("payload", {}).get("result", {}).get("status") == "practice_created"
+                for event in events
+            )
+        )
+        report = self.storage.load_report("user_1", "cls_source")
+        practice_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "practice"
+        )
+        self.assertEqual("completed", practice_stage["status"])
+        self.assertEqual("已生成", practice_stage["metric"])
+        self.assertEqual(practice_id, practice_stage["generated_classroom_id"])
+        self.assertEqual("查看练习", practice_stage["action_label"])
+        review_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "review"
+        )
+        next_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "next_lesson"
+        )
+        diagnose_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "diagnose"
+        )
+        self.assertEqual("completed", diagnose_stage["status"])
+        self.assertEqual("completed", review_stage["status"])
+        self.assertEqual("active", next_stage["status"])
+
+    def test_report_backfills_existing_practice_child_as_generated(self) -> None:
+        self.storage.save_classroom(
+            "user_1",
+            "cls_source",
+            {
+                "id": "cls_source",
+                "title": "Java 面向对象课堂",
+                "topic": "Java 面向对象",
+                "course": "Java 程序设计",
+                "status": "ready",
+                "created_at": "2026-06-09T09:00:00",
+                "updated_at": "2026-06-09T09:00:00",
+                "tts": {},
+                "course_root_id": "cls_source",
+                "parent_classroom_id": "",
+                "lesson_depth": 0,
+                "lesson_index": 1,
+                "lesson_kind": "root",
+                "source": {},
+                "knowledge_points": ["封装"],
+                "scenes": [],
+            },
+        )
+        self.storage.save_classroom(
+            "user_1",
+            "cls_practice",
+            {
+                "id": "cls_practice",
+                "title": "Java 面向对象补强练习",
+                "topic": "Java 面向对象",
+                "course": "Java 程序设计",
+                "status": "ready",
+                "created_at": "2026-06-09T10:00:00",
+                "updated_at": "2026-06-09T10:00:00",
+                "tts": {},
+                "course_root_id": "cls_source",
+                "parent_classroom_id": "cls_source",
+                "lesson_depth": 1,
+                "lesson_index": 2,
+                "lesson_kind": "practice",
+                "source": {
+                    "type": "recommended_practice",
+                    "parent_classroom_id": "cls_source",
+                    "recommendation_task_id": "task_practice_weak_points",
+                    "recommendation_task_type": "practice_weak_points",
+                },
+                "knowledge_points": ["封装"],
+                "scenes": [],
+            },
+        )
+        self.storage.save_report(
+            "user_1",
+            "cls_source",
+            {
+                "classroom_id": "cls_source",
+                "status": "needs_review",
+                "topic": "Java 面向对象",
+                "score": 60,
+                "weak_points": ["封装"],
+                "strong_points": [],
+                "learned_points": ["封装"],
+                "next_recommendation": "建议补强封装。",
+                "knowledge_summary": {"封装": {"mastery": 50}},
+                "recommended_tasks": [
+                    {
+                        "id": "task_practice_weak_points",
+                        "type": "practice_weak_points",
+                        "title": "完成补强练习",
+                        "description": "围绕薄弱点再做一轮同类题。",
+                        "priority": "high",
+                        "knowledge_points": ["封装"],
+                        "target_scene_ids": [],
+                        "action_label": "生成练习",
+                        "reason": "本次课堂报告首次识别到这些薄弱点。",
+                        "evidence_ids": [],
+                    }
+                ],
+            },
+        )
+
+        response = self.client.get(
+            "/api/interactive-classroom/cls_source/report",
+            query_string={"user_id": "user_1"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        report = response.get_json()["report"]
+        practice_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "practice"
+        )
+        self.assertEqual("completed", practice_stage["status"])
+        self.assertEqual("已生成", practice_stage["metric"])
+        self.assertEqual("cls_practice", practice_stage["generated_classroom_id"])
+        self.assertEqual("查看练习", practice_stage["action_label"])
+        review_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "review"
+        )
+        next_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "next_lesson"
+        )
+        diagnose_stage = next(
+            stage for stage in report["learning_path"] if stage["type"] == "diagnose"
+        )
+        self.assertEqual("completed", diagnose_stage["status"])
+        self.assertEqual("completed", review_stage["status"])
+        self.assertEqual("active", next_stage["status"])
 
 
 if __name__ == "__main__":

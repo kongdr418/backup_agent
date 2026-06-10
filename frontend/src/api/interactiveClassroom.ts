@@ -171,6 +171,21 @@ export interface ClassroomRecommendedTask {
   evidence_ids?: string[]
 }
 
+export interface ClassroomLearningPathStage {
+  id: string
+  type: 'diagnose' | 'plan' | 'review' | 'practice' | 'next_lesson' | string
+  agent_name: string
+  title: string
+  description: string
+  status: 'active' | 'pending' | 'completed' | 'locked' | 'needs_attention' | string
+  metric?: string
+  task_id?: string
+  action_label?: string
+  generated_classroom_id?: string
+  knowledge_points: string[]
+  target_scene_ids: string[]
+}
+
 export interface ClassroomReport {
   classroom_id: string
   title: string
@@ -197,6 +212,7 @@ export interface ClassroomReport {
   strong_points: string[]
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
+  learning_path?: ClassroomLearningPathStage[]
   event_count?: number
   course_trend?: string
   profile_update_count?: number
