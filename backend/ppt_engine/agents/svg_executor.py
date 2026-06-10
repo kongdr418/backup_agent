@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 MAX_REPAIR_ATTEMPTS = 2
 MAX_SVG_EXTRACTION_ATTEMPTS = 2
-SVG_INITIAL_LLM_TIMEOUT_SECONDS = 50
+SVG_INITIAL_LLM_TIMEOUT_SECONDS = 60  # 70 调回 60，70 没改善超时率且失败等待翻倍
 SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS = 90
 
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
@@ -271,7 +271,8 @@ async def _generate_single_page(
             conversation,
             model,
             temperature=0.3,
-            max_tokens=16384,
+            # 翻倍：reasoning 模型（如 mimo-v2.5）需要 reasoning + SVG 输出双预算
+            max_tokens=32768,
             timeout_seconds=SVG_INITIAL_LLM_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -326,7 +327,8 @@ async def _generate_single_page(
                 retry_conversation,
                 model,
                 temperature=0.2,
-                max_tokens=8192,
+                # 翻倍：reasoning 模型（如 mimo-v2.5）需要 reasoning + SVG 输出双预算
+                max_tokens=16384,
                 timeout_seconds=SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -398,7 +400,7 @@ async def _generate_single_page(
         repair_temp = max(0.1, 0.3 - 0.1 * (attempt - 1))
         repair_start = time.monotonic()
         response = await llm.chat(
-            repair_conversation, model, temperature=repair_temp, max_tokens=16384
+            repair_conversation, model, temperature=repair_temp, max_tokens=32768
         )
         logger.info(
             "[PPT-PERF] stage=svg_generation page=%s/%s step=repair_llm attempt=%s elapsed=%.2fs chars=%s",

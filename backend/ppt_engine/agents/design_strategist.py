@@ -10,7 +10,7 @@ from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
 from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_strategy_guidance
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "design_strategist.md"
-DESIGN_SPEC_MAX_TOKENS = 24576
+DESIGN_SPEC_MAX_TOKENS = 49152  # 翻倍：reasoning 模型（如 mimo-v2.5）需要 reasoning + 输出双预算
 MAX_DESIGN_SPEC_ATTEMPTS = 4
 
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
