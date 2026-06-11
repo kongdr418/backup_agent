@@ -52,6 +52,7 @@ import {
   Video,
   GraduationCap,
   FolderOpen,
+  BookMarked,
   Settings,
   User,
 } from 'lucide-vue-next'
@@ -63,7 +64,7 @@ type NavItem = {
   path: string
   label: string
   icon: unknown
-  hue: 'dashboard' | 'chat' | 'ppt' | 'video' | 'classroom' | 'library' | 'memory' | 'settings'
+  hue: 'dashboard' | 'chat' | 'ppt' | 'video' | 'classroom' | 'library' | 'memory' | 'settings' | 'study'
 }
 
 const nav: NavItem[] = [
@@ -72,6 +73,7 @@ const nav: NavItem[] = [
   { path: '/ppt-studio', label: 'PPT 工作台', icon: Presentation, hue: 'ppt' },
   { path: '/video-studio', label: '微课', icon: Video, hue: 'video' },
   { path: '/interactive-classroom', label: '智慧课堂', icon: GraduationCap, hue: 'classroom' },
+  { path: '/study-tools', label: '学习工具', icon: BookMarked, hue: 'study' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
   // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
 ]
@@ -92,6 +94,7 @@ const INDICATOR_COLORS: Record<string, string> = {
   '/ppt-studio': 'var(--nav-ppt)',
   '/video-studio': 'var(--nav-video)',
   '/interactive-classroom': 'var(--nav-classroom)',
+  '/study-tools': 'var(--nav-study)',
   '/library': 'var(--nav-library)',
   '/memory': 'var(--nav-memory)',
 }
@@ -266,6 +269,7 @@ defineExpose({})
 .hue-library { --hue-active: var(--nav-library); }
 .hue-memory { --hue-active: var(--nav-memory); }
 .hue-settings { --hue-active: var(--nav-settings); }
+.hue-study { --hue-active: var(--nav-study); }
 
 /* Right actions */
 .right-stack {

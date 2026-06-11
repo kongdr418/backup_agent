@@ -66,6 +66,16 @@ backend/generated_classrooms/
 # Reference project (not part of this repo)
 OpenMAIC/
 
+# Study tools runtime data (per-user mistake/flashcard state — local only)
+backend/study_tools/users/
+backend/study_tools/__pycache__/
+
+# Playwright MCP cache (local only)
+.playwright-mcp/
+
+# Root-level screenshots / popovers (debug artifacts)
+/attachment-*.png
+
 
 # Generated videos (local output)
 backend/generated_videos/

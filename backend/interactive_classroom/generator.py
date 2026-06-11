@@ -1452,7 +1452,7 @@ class InteractiveClassroomGenerator:
             scenes=source_scenes,
             max_questions=4,
             student_profile=profile,
-            require_short_answer=task_type == "challenge_practice",
+            require_short_answer=False,
         )
         scene.title = (
             f"挑战练习：{'、'.join(clean_points[:3])}"
@@ -1661,9 +1661,11 @@ class InteractiveClassroomGenerator:
             enough_for_final_quiz = is_last and pending_slides
 
             if enough_for_mid_quiz or enough_for_final_quiz:
-                # P1-3 调优：每 3 个测验页出 1 道简答题（quiz_index 3/6/9/...）
-                # 配合"默认不强制"prompt，理论 ~33% 测验含简答。
-                require_short_answer = (quiz_index % 3 == 0)
+                # 课堂主流程固定为全单选/多选 ——
+                # 之前 P1-3 强制每 3 场出 1 道简答，但简答由 LLM 评分（80 分阈值），
+                # 答错的题不能 100% 进错题本，破坏了"答错自动入错题本"的核心体验。
+                # 见 commit a8cf6ea 的回退说明。
+                require_short_answer = False
                 quiz_scene = self._build_quiz_scene(
                     quiz_index=quiz_index,
                     order=0,

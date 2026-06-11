@@ -14,7 +14,16 @@ from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from learner_profile.storage import LearnerProfileStorage
-from learner_profile.profile_agent import ProfileAgent, build_course_id
+from learner_profile.profile_agent import ProfileAgent, build_course_id, build_knowledge_point_id
+from study_tools import StudyToolsStorage
+from study_tools.storage import (
+    ALLOWED_IMAGE_EXTS,
+    ALLOWED_IMAGE_MIMES,
+    MAX_ATTACHMENTS_PER_MISTAKE,
+    _guess_image_ext,
+    _SAFE_ID,
+    _SAFE_ATT_ID,
+)
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.practice_service import ClassroomPracticeService
@@ -46,6 +55,7 @@ import sys
 from deep_translator import GoogleTranslator
 import threading
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
 # ==================== 日志配置 ====================
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(name)s - %(message)s'
@@ -87,6 +97,7 @@ def get_memory_manager():
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
+STUDY_TOOLS_STORAGE = StudyToolsStorage(BACKEND_DIR)
 PROFILE_AGENT = ProfileAgent()
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
@@ -416,6 +427,8 @@ def _user_output_dir(base_dir: str, user_id: str) -> str:
 
 app = Flask(__name__)
 CORS(app)
+# 全局请求体上限,避免恶意大文件把服务拖垮
+app.config.setdefault("MAX_CONTENT_LENGTH", 50 * 1024 * 1024)  # 50 MB
 
 app_logger.info('=' * 60)
 app_logger.info('MiniMax Agent Web 应用启动中...')
@@ -2180,6 +2193,655 @@ def search_memory_api():
     return jsonify({'results': results})
 
 
+# ==================== 学习工具 API (错题本 + 闪卡) ====================
+
+def _push_mistake_evidence(user_id, mistake, *, observed_score, reason):
+    """将错题相关事件推到 learner_profile.evidence_buffer。
+    必须同时有 course_id 与 knowledge_point_id 才推送。
+    """
+    course_id = (mistake.get('course_id') or '').strip()
+    kp_id = (mistake.get('knowledge_point_id') or '').strip() if mistake.get('knowledge_point_id') else ''
+    if not course_id or not kp_id:
+        return
+    source_id = f"mk_{mistake.get('id')}_{reason}"
+    try:
+        LEARNER_PROFILE_STORAGE.accumulate_evidence(user_id, [{
+            'course_id': course_id,
+            'course_name': mistake.get('course_name') or '',
+            'knowledge_point_id': kp_id,
+            'knowledge_point_name': mistake.get('knowledge_point_name') or '',
+            'source_id': source_id,
+            'observed_score': observed_score,
+            'observed_at': mistake.get('updated_at') or mistake.get('first_added_at'),
+            'reason': reason,
+        }])
+    except Exception as exc:
+        request_logger.warning('[STUDY-TOOLS] push mistake evidence 失败: %s', exc)
+
+
+def _push_flashcard_evidence(user_id, card, grade):
+    course_id = (card.get('course_id') or '').strip()
+    kp_id = (card.get('knowledge_point_id') or '').strip() if card.get('knowledge_point_id') else ''
+    if not course_id or not kp_id:
+        return
+    observed_score = (80 + grade * 4) if grade >= 3 else (grade * 15)
+    reason = 'flashcard_review_pass' if grade >= 3 else 'flashcard_review_fail'
+    source_id = f"fc_{card.get('id')}_{card.get('last_reviewed_at') or ''}"
+    try:
+        LEARNER_PROFILE_STORAGE.accumulate_evidence(user_id, [{
+            'course_id': course_id,
+            'course_name': card.get('course_name') or '',
+            'knowledge_point_id': kp_id,
+            'knowledge_point_name': card.get('knowledge_point_name') or '',
+            'source_id': source_id,
+            'observed_score': observed_score,
+            'observed_at': card.get('last_reviewed_at'),
+            'reason': reason,
+        }])
+    except Exception as exc:
+        request_logger.warning('[STUDY-TOOLS] push flashcard evidence 失败: %s', exc)
+
+
+def _sync_classroom_mistakes(
+    user_id: str,
+    classroom: dict,
+    scene: dict,
+    eval_result: dict,
+) -> dict:
+    """把课堂答错的题目自动写入错题本。
+
+    - 仅写错题;答对的跳过。
+    - source_evidence_id 形如 'cls_<cid>_<sid>_<qid>',保证同一题重复答错不会重复入册。
+    - course_id / knowledge_point_id 用稳定哈希生成,这样后续"标记掌握"推 evidence 能挂得上。
+    - 失败不影响答题主流程,异常会被吞掉并打 warn 日志。
+    """
+    try:
+        classroom_id = str(classroom.get('id', '') or '')
+        scene_id = str(scene.get('id', '') or '')
+        course_name = str(classroom.get('course') or classroom.get('topic') or '通用课程').strip() or '通用课程'
+        course_id = build_course_id(course_name)
+
+        # 用 scene.questions 查表,补上 question 文本(stem 字段)
+        questions = scene.get('content', {}).get('questions', []) or []
+        q_by_id: dict[str, dict[str, Any]] = {}
+        for q in questions:
+            if isinstance(q, dict) and q.get('id'):
+                q_by_id[str(q['id'])] = q
+
+        items: list[dict[str, Any]] = []
+        for r in eval_result.get('results', []) or []:
+            if not isinstance(r, dict):
+                continue
+            # 答对 → 跳过
+            if r.get('correct') is True:
+                continue
+
+            qid = str(r.get('question_id', '') or '').strip()
+            if not qid:
+                continue
+
+            # 取题目全文(优先 questions 表,其次 result 字段)
+            q = q_by_id.get(qid, {})
+            stem = str(
+                q.get('question')
+                or q.get('stem')
+                or r.get('stem')
+                or qid
+            ).strip()
+            if not stem:
+                continue
+
+            your_answer = r.get('your_answer')
+            if isinstance(your_answer, list):
+                your_text = ' / '.join(str(x).strip() for x in your_answer if str(x).strip())
+            else:
+                your_text = str(your_answer or '').strip()
+
+            correct_answer = r.get('correct_answer')
+            if isinstance(correct_answer, list):
+                correct_text = ' / '.join(str(x).strip() for x in correct_answer if str(x).strip())
+            else:
+                correct_text = str(correct_answer or '').strip()
+
+            analysis = str(r.get('analysis') or q.get('analysis') or '').strip()
+
+            kp_name = str(r.get('knowledge_point') or q.get('knowledge_point') or '').strip()
+            kp_id = build_knowledge_point_id(kp_name, course_name) if kp_name else ''
+
+            # 简答题的 analysis/feedback 写到 analysis 字段,学生能看到 LLM 的反馈
+            feedback = str(r.get('feedback') or '').strip()
+            if feedback:
+                analysis = (analysis + '\n\n[评分反馈] ' + feedback).strip() if analysis else feedback
+
+            # 课堂原题类型 + 选项：错题本按原题型渲染（单选→radio/多选→checkbox/简答→textarea）
+            # 不传 question_type 时 storage 会回退到 short_answer，UX 上"全部变问答题"的根因。
+            question_type = str(q.get('type') or '').strip().lower() or None
+            raw_options = q.get('options') or []
+            options_payload: list[Any] = []
+            if isinstance(raw_options, list):
+                for opt in raw_options:
+                    if isinstance(opt, dict):
+                        label = str(opt.get('label') or '').strip()
+                        if label:
+                            options_payload.append(label)
+                    else:
+                        text = str(opt or '').strip()
+                        if text:
+                            options_payload.append(text)
+
+            items.append({
+                'stem': stem[:4000],
+                'question_type': question_type,
+                'options': options_payload or None,
+                'correct_answer': correct_text[:2000],
+                'user_answer': your_text[:2000] or None,
+                'analysis': analysis[:4000],
+                'course_name': course_name,
+                'course_id': course_id,
+                'knowledge_point_name': kp_name,
+                'knowledge_point_id': kp_id or None,
+                'source': 'classroom',
+                'source_evidence_id': f'cls_{classroom_id}_{scene_id}_{qid}',
+                'source_ref': {
+                    'classroom_id': classroom_id,
+                    'question_id': qid,
+                },
+                'tags': ['课堂同步'],
+            })
+
+        if not items:
+            return {'added': 0, 'deduped': 0}
+
+        result = STUDY_TOOLS_STORAGE.bulk_add_mistakes(user_id, items)
+        # 每条新增的错题推 evidence(负向)
+        for added in result.get('added', []):
+            _push_mistake_evidence(user_id, added, observed_score=30, reason='wrong_answer')
+        return {
+            'added': int(result.get('added_count', 0) or 0),
+            'deduped': int(result.get('deduped_count', 0) or 0),
+        }
+    except Exception as exc:
+        request_logger.warning('[CLASSROOM] 错题同步失败(不影响答题): %s', exc)
+        return {'added': 0, 'deduped': 0, 'error': str(exc)}
+
+
+def _parse_tri_state(arg):
+    if arg is None:
+        return None
+    val = str(arg).strip().lower()
+    if val in ('true', '1', 'yes'):
+        return True
+    if val in ('false', '0', 'no'):
+        return False
+    return None
+
+
+# ─── 错题本 ───
+
+@app.route('/api/study-tools/mistakes', methods=['GET'])
+def study_tools_list_mistakes():
+    user_id = get_request_user_id()
+    try:
+        page = int(request.args.get('page') or 1)
+        page_size = int(request.args.get('page_size') or 50)
+    except (TypeError, ValueError):
+        page, page_size = 1, 50
+    result = STUDY_TOOLS_STORAGE.list_mistakes(
+        user_id,
+        course_id=request.args.get('course_id') or None,
+        knowledge_point_id=request.args.get('knowledge_point_id') or None,
+        mastered=_parse_tri_state(request.args.get('mastered')),
+        source=request.args.get('source') or None,
+        collection_id=request.args.get('collection_id') or None,
+        query=request.args.get('q') or None,
+        page=page,
+        page_size=page_size,
+    )
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/study-tools/mistakes', methods=['POST'])
+def study_tools_add_mistake():
+    user_id = get_request_user_id()
+    # 同时支持 application/json(旧路径)与 multipart/form-data(带图片附件)
+    is_multipart = (request.content_type or '').startswith('multipart/')
+    if is_multipart:
+        raw = request.form.get('payload') or '{}'
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'payload 不是合法 JSON'}), 400
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'error': 'payload 必须是对象'}), 400
+    else:
+        data = request.get_json(silent=True) or {}
+    if not (data.get('stem') or '').strip():
+        return jsonify({'success': False, 'error': '题干不能为空'}), 400
+    if not (data.get('correct_answer') or '').strip():
+        return jsonify({'success': False, 'error': '正确答案不能为空'}), 400
+    data['source'] = data.get('source') or 'manual'
+    item = STUDY_TOOLS_STORAGE.add_mistake(user_id, data)
+    _push_mistake_evidence(user_id, item, observed_score=30, reason='wrong_answer')
+    # 解析 multipart 中的 files 并落盘
+    if is_multipart:
+        file_objs = request.files.getlist('files')
+        files_for_save: list[tuple[str, bytes, str | None]] = []
+        for f in file_objs:
+            if not f or not f.filename:
+                continue
+            safe_name = secure_filename(f.filename) or f.filename
+            try:
+                content = f.read()
+            except Exception:
+                continue
+            if not content:
+                continue
+            files_for_save.append((safe_name, content, f.mimetype))
+        if files_for_save:
+            saved = STUDY_TOOLS_STORAGE.add_attachments(user_id, item['id'], files_for_save)
+            if saved:
+                item = STUDY_TOOLS_STORAGE.get_mistake(user_id, item['id']) or item
+    return jsonify({'success': True, 'item': item}), 201
+
+
+@app.route('/api/study-tools/mistakes/bulk', methods=['POST'])
+def study_tools_bulk_add_mistakes():
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    items = data.get('items') or []
+    if not isinstance(items, list):
+        return jsonify({'success': False, 'error': 'items 必须是数组'}), 400
+    result = STUDY_TOOLS_STORAGE.bulk_add_mistakes(user_id, items)
+    for added in result.get('added', []):
+        _push_mistake_evidence(user_id, added, observed_score=30, reason='wrong_answer')
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>', methods=['GET'])
+def study_tools_get_mistake(mistake_id):
+    user_id = get_request_user_id()
+    item = STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id)
+    if not item:
+        return jsonify({'success': False, 'error': '错题不存在'}), 404
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>', methods=['PATCH'])
+def study_tools_update_mistake(mistake_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    data.pop('user_id', None)
+    existing = STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id)
+    if not existing:
+        return jsonify({'success': False, 'error': '错题不存在'}), 404
+    was_mastered = bool(existing.get('mastered'))
+    item = STUDY_TOOLS_STORAGE.update_mistake(user_id, mistake_id, data)
+    if not item:
+        return jsonify({'success': False, 'error': '更新失败'}), 500
+    if (not was_mastered) and item.get('mastered'):
+        _push_mistake_evidence(user_id, item, observed_score=85, reason='mistake_mastered')
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>', methods=['DELETE'])
+def study_tools_delete_mistake(mistake_id):
+    user_id = get_request_user_id()
+    ok = STUDY_TOOLS_STORAGE.delete_mistake(user_id, mistake_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '错题不存在'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>/to-flashcard', methods=['POST'])
+def study_tools_mistake_to_flashcard(mistake_id):
+    user_id = get_request_user_id()
+    mistake = STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id)
+    if not mistake:
+        return jsonify({'success': False, 'error': '错题不存在'}), 404
+    # 闪卡背面只保留"正确答案的文本",不显示字母(A/B/C)也不附加 analysis。
+    #   - 单选 correct_answer="B", options=["A. 1", "B. 2", "C. 3", "D. 4"] → back="2"
+    #   - 多选 correct_answer="A / C" → back="1 / 3"
+    #   - 简答 correct_answer="函数定义是..." (无 options) → back=原文本
+    # 想看完整解析请去错题本(mistake.analysis 字段仍在)。
+    payload = {
+        'source': 'mistake',
+        'source_id': mistake_id,
+        'front': mistake.get('stem') or '',
+        'back': _build_mistake_card_back(
+            mistake.get('correct_answer') or '',
+            mistake.get('options') or [],
+        ),
+        'course_id': mistake.get('course_id') or '',
+        'course_name': mistake.get('course_name') or '',
+        'knowledge_point_id': mistake.get('knowledge_point_id'),
+        'knowledge_point_name': mistake.get('knowledge_point_name') or '',
+        'tags': mistake.get('tags') or [],
+    }
+    card = STUDY_TOOLS_STORAGE.add_flashcard(user_id, payload)
+    return jsonify({'success': True, 'item': card}), 201
+
+
+_OPTION_LETTER_PREFIX = re.compile(r'^\(?([A-H])[\.、\s)]')
+
+
+def _strip_option_prefix(label: str) -> str:
+    """去掉选项 label 的字母前缀:'A. 5+5=10' / '(A) 5+5=10' / 'A、5+5=10' → '5+5=10'"""
+    return _OPTION_LETTER_PREFIX.sub('', str(label or '')).strip()
+
+
+def _parse_correct_letters(correct: str) -> list[str]:
+    """'B' / 'A / C' / 'A,C' / ['A','C'] → ['A', 'C']"""
+    text = str(correct or '').strip()
+    if not text:
+        return []
+    parts = re.split(r'[\s/,,，、|]+', text)
+    out: list[str] = []
+    for p in parts:
+        p = p.strip().upper()
+        if p and len(p) == 1 and p.isalpha() and p not in out:
+            out.append(p)
+    return out
+
+
+def _build_mistake_card_back(correct_answer: str, options) -> str:
+    """把字母答案转成选项文本;无 options(简答)或解析不出字母时退回原文。
+
+    双路匹配:1) label 带 'A. ' 前缀 → 按字母查;2) label 不带前缀(LLM 不严谨) →
+    按 A/B/C/D 顺序回退到 options 数组的索引位置。两条路都拿不到时退回原文。
+    """
+    if not options:
+        return str(correct_answer or '').strip()
+    options = [str(o or '').strip() for o in options if str(o or '').strip()]
+    by_letter: dict[str, str] = {}
+    for opt in options:
+        m = _OPTION_LETTER_PREFIX.match(opt)
+        if m:
+            by_letter[m.group(1).upper()] = _strip_option_prefix(opt)
+    letters = _parse_correct_letters(correct_answer)
+    if not letters:
+        return str(correct_answer or '').strip()
+    parts: list[str] = []
+    for i, letter in enumerate(letters):
+        if letter in by_letter:
+            parts.append(by_letter[letter])
+        else:
+            # Fallback: 按字母顺序 (A=0, B=1, ...) 找 options 索引
+            idx = ord(letter) - ord('A')
+            if 0 <= idx < len(options):
+                # 索引到的话顺便把 'A. ' 前缀剥掉,保持文本干净
+                parts.append(_strip_option_prefix(options[idx]))
+    if not parts:
+        return str(correct_answer or '').strip()
+    return ' / '.join(parts)
+
+
+# ─── 错题图片附件 ───
+
+@app.route('/api/study-tools/mistakes/<mistake_id>/attachments', methods=['POST'])
+def study_tools_add_mistake_attachments(mistake_id):
+    user_id = get_request_user_id()
+    if not mistake_id or not _SAFE_ID.fullmatch(mistake_id):
+        return jsonify({'success': False, 'error': '非法 mistake_id'}), 400
+    if not STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id):
+        return jsonify({'success': False, 'error': '错题不存在'}), 404
+
+    file_objs = request.files.getlist('files')
+    if not file_objs:
+        return jsonify({'success': False, 'error': '没有上传文件'}), 400
+
+    existing = STUDY_TOOLS_STORAGE.list_attachments(user_id, mistake_id)
+    remaining = max(0, MAX_ATTACHMENTS_PER_MISTAKE - len(existing))
+    if remaining == 0:
+        return jsonify({'success': False, 'error': f'附件数量已达上限({MAX_ATTACHMENTS_PER_MISTAKE})'}), 400
+
+    files_for_save: list[tuple[str, bytes, str | None]] = []
+    rejected: list[str] = []
+    for f in file_objs[:remaining]:
+        if not f or not f.filename:
+            continue
+        safe_name = secure_filename(f.filename) or f.filename
+        try:
+            content = f.read()
+        except Exception:
+            continue
+        if not content:
+            continue
+        # 二次过滤:扩展名与 mime 必须都在白名单内
+        ext = _guess_image_ext(safe_name, f.mimetype)
+        mime = (f.mimetype or '').lower().split(';', 1)[0].strip()
+        if ext is None or (mime and mime not in ALLOWED_IMAGE_MIMES):
+            rejected.append(safe_name)
+            continue
+        files_for_save.append((safe_name, content, mime or None))
+    if not files_for_save and rejected:
+        return jsonify({'success': False, 'error': '仅支持图片(png/jpg/gif/webp/bmp)', 'rejected': rejected}), 400
+    saved = STUDY_TOOLS_STORAGE.add_attachments(user_id, mistake_id, files_for_save)
+    item = STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id)
+    return jsonify({
+        'success': True,
+        'saved': saved,
+        'rejected': rejected,
+        'item': item,
+    }), 201
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>/attachments/<att_id>', methods=['GET'])
+def study_tools_get_mistake_attachment(mistake_id, att_id):
+    user_id = get_request_user_id()
+    if not mistake_id or not _SAFE_ID.fullmatch(mistake_id):
+        return jsonify({'error': '非法 mistake_id'}), 400
+    if not att_id or not _SAFE_ATT_ID.fullmatch(att_id):
+        return jsonify({'error': '非法 attachment_id'}), 400
+    resolved = STUDY_TOOLS_STORAGE.resolve_attachment(user_id, mistake_id, att_id)
+    if not resolved:
+        return jsonify({'error': '附件不存在'}), 404
+    # 二次校验:解析后的路径必须仍在用户附件目录内,防止路径穿越
+    abs_path = os.path.abspath(resolved['path'])
+    expected_dir = os.path.abspath(
+        os.path.join(STUDY_TOOLS_STORAGE._user_dir(user_id), 'attachments', mistake_id)
+    )
+    if os.path.commonpath([abs_path, expected_dir]) != expected_dir:
+        return jsonify({'error': '非法路径'}), 403
+    from flask import send_file as flask_send_file
+    return flask_send_file(
+        abs_path,
+        mimetype=resolved['mime'],
+        as_attachment=False,
+        download_name=resolved['name'],
+        max_age=3600,
+    )
+
+
+@app.route('/api/study-tools/mistakes/<mistake_id>/attachments/<att_id>', methods=['DELETE'])
+def study_tools_delete_mistake_attachment(mistake_id, att_id):
+    user_id = get_request_user_id()
+    if not mistake_id or not _SAFE_ID.fullmatch(mistake_id):
+        return jsonify({'success': False, 'error': '非法 mistake_id'}), 400
+    if not att_id or not _SAFE_ATT_ID.fullmatch(att_id):
+        return jsonify({'success': False, 'error': '非法 attachment_id'}), 400
+    ok = STUDY_TOOLS_STORAGE.remove_attachment(user_id, mistake_id, att_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '附件不存在'}), 404
+    item = STUDY_TOOLS_STORAGE.get_mistake(user_id, mistake_id)
+    return jsonify({'success': True, 'item': item})
+
+
+# ─── 错题集(用户自定义分类) ───
+
+@app.route('/api/study-tools/mistake-collections', methods=['GET'])
+def study_tools_list_collections():
+    user_id = get_request_user_id()
+    result = STUDY_TOOLS_STORAGE.list_collections(user_id)
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/study-tools/mistake-collections', methods=['POST'])
+def study_tools_create_collection():
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': '错题集名称不能为空'}), 400
+    if len(name) > 32:
+        return jsonify({'success': False, 'error': '名称不能超过 32 个字符'}), 400
+    payload = {
+        'name': name,
+        'mistake_ids': data.get('mistake_ids') or [],
+    }
+    result = STUDY_TOOLS_STORAGE.add_collection(user_id, payload, mistake_ids=data.get('mistake_ids'))
+    if isinstance(result, dict) and result.get('_error') == 'duplicate_name':
+        return jsonify({'success': False, 'error': f'已存在同名错题集「{result["name"]}」'}), 400
+    if not result:
+        return jsonify({'success': False, 'error': '创建失败'}), 400
+    return jsonify({'success': True, 'item': result}), 201
+
+
+@app.route('/api/study-tools/mistake-collections/<collection_id>', methods=['PATCH'])
+def study_tools_rename_collection(collection_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': '名称不能为空'}), 400
+    if len(name) > 32:
+        return jsonify({'success': False, 'error': '名称不能超过 32 个字符'}), 400
+    item = STUDY_TOOLS_STORAGE.update_collection(user_id, collection_id, {'name': name})
+    if not item:
+        return jsonify({'success': False, 'error': '错题集不存在'}), 404
+    if isinstance(item, dict) and item.get('_error') == 'duplicate_name':
+        return jsonify({'success': False, 'error': f'已存在同名错题集「{item["name"]}」'}), 400
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/mistake-collections/<collection_id>', methods=['DELETE'])
+def study_tools_delete_collection(collection_id):
+    user_id = get_request_user_id()
+    ok = STUDY_TOOLS_STORAGE.delete_collection(user_id, collection_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '错题集不存在'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/study-tools/mistake-collections/<collection_id>/mistakes', methods=['POST'])
+def study_tools_assign_mistakes(collection_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    ids = data.get('mistake_ids') or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({'success': False, 'error': 'mistake_ids 必须是数组'}), 400
+    result = STUDY_TOOLS_STORAGE.assign_mistakes_to_collection(user_id, collection_id, ids)
+    if isinstance(result, dict) and result.get('_error') == 'collection_not_found':
+        return jsonify({'success': False, 'error': '错题集不存在'}), 404
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/study-tools/mistake-collections/<collection_id>/mistakes/<mistake_id>', methods=['DELETE'])
+def study_tools_remove_mistake_from_collection(collection_id, mistake_id):
+    user_id = get_request_user_id()
+    ok = STUDY_TOOLS_STORAGE.remove_mistake_from_collection(user_id, collection_id, mistake_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '错题未在该集合中'}), 404
+    return jsonify({'success': True})
+
+
+# ─── 闪卡(M2 完整实现,M1 基础接口已就绪) ───
+
+@app.route('/api/study-tools/flashcards', methods=['GET'])
+def study_tools_list_flashcards():
+    user_id = get_request_user_id()
+    try:
+        page = int(request.args.get('page') or 1)
+        page_size = int(request.args.get('page_size') or 50)
+    except (TypeError, ValueError):
+        page, page_size = 1, 50
+    result = STUDY_TOOLS_STORAGE.list_flashcards(
+        user_id,
+        course_id=request.args.get('course_id') or None,
+        knowledge_point_id=request.args.get('knowledge_point_id') or None,
+        source=request.args.get('source') or None,
+        suspended=_parse_tri_state(request.args.get('suspended')),
+        query=request.args.get('q') or None,
+        page=page,
+        page_size=page_size,
+    )
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/study-tools/flashcards', methods=['POST'])
+def study_tools_add_flashcard():
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    if not (data.get('front') or '').strip() or not (data.get('back') or '').strip():
+        return jsonify({'success': False, 'error': '正面和背面不能为空'}), 400
+    data['source'] = data.get('source') or 'manual'
+    item = STUDY_TOOLS_STORAGE.add_flashcard(user_id, data)
+    return jsonify({'success': True, 'item': item}), 201
+
+
+@app.route('/api/study-tools/flashcards/due', methods=['GET'])
+def study_tools_due_flashcards():
+    user_id = get_request_user_id()
+    today = request.args.get('date') or None
+    try:
+        limit = int(request.args.get('limit') or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    items = STUDY_TOOLS_STORAGE.list_due_flashcards(user_id, today=today, limit=limit)
+    return jsonify({'success': True, 'items': items, 'total': len(items)})
+
+
+@app.route('/api/study-tools/flashcards/<card_id>', methods=['GET'])
+def study_tools_get_flashcard(card_id):
+    user_id = get_request_user_id()
+    item = STUDY_TOOLS_STORAGE.get_flashcard(user_id, card_id)
+    if not item:
+        return jsonify({'success': False, 'error': '闪卡不存在'}), 404
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/flashcards/<card_id>', methods=['PATCH'])
+def study_tools_update_flashcard(card_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    data.pop('user_id', None)
+    item = STUDY_TOOLS_STORAGE.update_flashcard(user_id, card_id, data)
+    if not item:
+        return jsonify({'success': False, 'error': '闪卡不存在'}), 404
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/flashcards/<card_id>', methods=['DELETE'])
+def study_tools_delete_flashcard(card_id):
+    user_id = get_request_user_id()
+    ok = STUDY_TOOLS_STORAGE.delete_flashcard(user_id, card_id)
+    if not ok:
+        return jsonify({'success': False, 'error': '闪卡不存在'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/study-tools/flashcards/<card_id>/review', methods=['POST'])
+def study_tools_review_flashcard(card_id):
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    try:
+        grade = int(data.get('grade'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'grade 必须是 0-5 的整数'}), 400
+    if grade < 0 or grade > 5:
+        return jsonify({'success': False, 'error': 'grade 必须在 0-5'}), 400
+    item = STUDY_TOOLS_STORAGE.review_flashcard(user_id, card_id, grade)
+    if not item:
+        return jsonify({'success': False, 'error': '闪卡不存在'}), 404
+    _push_flashcard_evidence(user_id, item, grade)
+    return jsonify({'success': True, 'item': item})
+
+
+@app.route('/api/study-tools/stats', methods=['GET'])
+def study_tools_stats():
+    user_id = get_request_user_id()
+    return jsonify({'success': True, **STUDY_TOOLS_STORAGE.stats(user_id)})
+
+
 # PPT 预览图加载
 @app.route('/api/ppt-preview/<filename>', methods=['GET'])
 def get_ppt_preview(filename):
@@ -3354,6 +4016,9 @@ def interactive_classroom_answer(classroom_id):
         except Exception:
             feedback_action['audio_url'] = ''
 
+    # ---- M4: 错题自动入错题本 ----
+    mistake_sync = _sync_classroom_mistakes(user_id, classroom, scene, eval_result)
+
     return jsonify({
         'success': True,
         'score': eval_result.get('score', 0),
@@ -3363,6 +4028,7 @@ def interactive_classroom_answer(classroom_id):
         'total_points': eval_result.get('total_points', 0),
         'results': eval_result.get('results', []),
         'feedback_action': feedback_action,
+        'mistake_sync': mistake_sync,
     })
 
 

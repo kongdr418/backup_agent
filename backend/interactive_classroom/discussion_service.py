@@ -374,13 +374,22 @@ def build_discussion_messages(
         "罗列多个要点时用 - 无序列表；"
         "必要时可用 > 引用 题目原文/页面关键句。"
     )
+    nl = "\n"
+    pos_line = f"{current_position}{nl}" if current_position else ""
+    quick_line = f"快捷动作：{quick_action}{nl}" if quick_action else ""
+    focus_block = f"请优先围绕当前页面内容回答：{nl}{focus_context}{nl}" if focus_context else ""
+    outline_block = f"整堂课页码与讲稿摘要：{nl}{outline}{nl}" if outline else ""
+    context_block = (
+        f"以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：{nl}{context}{nl}"
+        if context else ""
+    )
     user_prompt = (
-        f"当前讨论触发方式：{trigger_text}\n"
-        f"{f'{current_position}\\n' if current_position else ''}"
-        f"{f'快捷动作：{quick_action}\\n' if quick_action else ''}"
-        f"{f'请优先围绕当前页面内容回答：\\n{focus_context}\\n' if focus_context else ''}"
-        f"{f'整堂课页码与讲稿摘要：\\n{outline}\\n' if outline else ''}"
-        f"{f'以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：\\n{context}\\n' if context else ''}"
+        f"当前讨论触发方式：{trigger_text}{nl}"
+        f"{pos_line}"
+        f"{quick_line}"
+        f"{focus_block}"
+        f"{outline_block}"
+        f"{context_block}"
         "回答约束：\n"
         "1. 如果学生提到“这页”“这一页”“当前这部分”，一律解释当前页，不要让学生再澄清。\n"
         "2. 先用 1 句概括当前页核心内容，再进行解释或举例。\n"
