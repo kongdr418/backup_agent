@@ -164,7 +164,7 @@ const isMobile = ref(window.innerWidth <= 767)
 const placeholder = computed(() =>
   isMobile.value
     ? '输入主题开始生成...'
-    : '描述你想生成的内容，例如：生成讲义：神经网络入门',
+    : '描述你想学习的内容，例如：生成讲义：神经网络入门',
 )
 
 function apply(q: QuickAction) {

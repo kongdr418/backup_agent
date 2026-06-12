@@ -1,6 +1,6 @@
 <template>
   <div class="h-full flex flex-col">
-    <PageHeader title="仪表盘" description="智创空间 · 后端教育内容生成" />
+    <PageHeader title="仪表盘" description="智创空间 · 基于多智能体交互的智慧课堂平台" />
 
     <div class="flex-1 overflow-y-auto">
       <div class="max-w-5xl mx-auto px-6 py-8 space-y-8">
@@ -9,10 +9,10 @@
         <div class="hero-block stagger-children">
           <div class="hero-badge">
             <span class="hero-badge-dot" />
-            AI 内容生成平台
+            多智能体交互智慧课堂
           </div>
-          <h1 class="hero-title">开始你的创作</h1>
-          <p class="hero-sub">从下方模块选择一个，开始生成 PPT、讲义、习题、图文或短视频脚本</p>
+          <h1 class="hero-title">开始你的学习</h1>
+          <p class="hero-sub">从下方模块选择一个，开启多智能体协同的个性化学习资源探索</p>
         </div>
 
         <!-- Main action grid — 3 primary modules -->
@@ -167,7 +167,7 @@ const primary = [
     icon: MessageSquare,
     iconBg: 'bg-forest-pale',
     iconFg: 'text-brand-forest',
-    desc: '生成讲义、习题、思维导图、图文、短视频脚本',
+    desc: '多智能体协同生成讲义、习题、思维导图、图文、微课视频',
   },
   {
     label: 'PPT 工作台',
@@ -175,7 +175,7 @@ const primary = [
     icon: Presentation,
     iconBg: 'bg-ppt-pale',
     iconFg: 'text-purple-600',
-    desc: 'SVG 多 Agent 流水线，生成带备注的专业幻灯片',
+    desc: 'SVG 多 Agent 流水线，生成带讲解脚本的智慧课堂幻灯片',
   },
   {
     label: '文件库',
@@ -183,7 +183,7 @@ const primary = [
     icon: FolderOpen,
     iconBg: 'bg-amber-pale',
     iconFg: 'text-amber-700',
-    desc: '查看和管理所有生成的文件',
+    desc: '查看和管理所有生成的学习资源',
   },
 ]
 

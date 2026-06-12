@@ -1,7 +1,7 @@
 """
-MiniMax Agent - 教师辅助 AI 助手
-使用 MiniMax 大模型 API
-支持 PPT 制作、课程讲义生成等功能
+智创空间 - 多智能体智慧课堂的对话调度 Agent
+使用大模型 API（MiniMax / DeepSeek / Anthropic 等多家适配）。
+负责课堂内对话路由、意图分析与多种学习资源（PPT、讲义、讨论、图文、微课视频）的生成调度。
 """
 
 import requests
@@ -110,8 +110,10 @@ class MiniMaxAgent:
     
     def check_teacher_request(self, message: str):
         """
-        检查是否是教师辅助相关请求
-        支持：制作PPT、预览PPT、列出PPT、生成讲义、列出讲义
+        检查是否是学习资源生成相关请求（PPT、讲义、图文、视频脚本等）。
+
+        方法名保留 `check_teacher_request` 是为了兼容历史调用方与持久化数据，
+        实际语义已切换为"面向学生的学习资源生成意图识别"。
 
         意图分析策略：
         1. 优先精确匹配（命令式指令如"制作PPT：主题"）
@@ -277,7 +279,7 @@ class MiniMaxAgent:
 
     def _intelligent_intent_analysis(self, message: str):
         """
-        智能意图分析：使用 AI 辅助判断复杂/模糊的教师辅助请求
+        智能意图分析：使用 AI 辅助判断复杂/模糊的学习资源生成请求
 
         当用户输入无法被规则匹配时，调用此方法。
         AI 会分析用户是否想要：制作PPT、生成讲义、生成图文内容、生成视频脚本等
@@ -289,7 +291,7 @@ class MiniMaxAgent:
         if not has_keyword:
             return None
 
-        prompt = f"""你是一个教师助手，擅长理解用户的教学内容生成需求。
+        prompt = f"""你是智创空间智慧课堂的意图分析智能体，擅长理解学生生成学习资源的需求。
 
 用户输入：「{message}」
 
@@ -1289,7 +1291,7 @@ class MiniMaxAgent:
         """
         model = model or self.model
 
-        # 首先检查是否是教师辅助相关请求（PPT、讲义等）
+        # 首先检查是否是学习资源生成相关请求（PPT、讲义、图文、视频脚本等）
         teacher_result = self.check_teacher_request(message)
         if teacher_result:
             # 如果是字典（PPT预览数据），直接返回
@@ -1319,7 +1321,7 @@ class MiniMaxAgent:
         if memory_context:
             system_message = {
                 "role": "system",
-                "content": f"你是一个友好、有知识的AI教师助手。你拥有自己的长期记忆库，当用户询问相关问题时，你应该主动引用记忆中的内容来回答案。{memory_context}"
+                "content": f"你是智创空间智慧课堂中的学习智能体，亲切、严谨、以学生为中心。你拥有自己的长期记忆库，当用户询问相关问题时，你应该主动引用记忆中的内容来回答。{memory_context}"
             }
             messages_with_context = [system_message] + self.conversation_history
         else:
@@ -1610,7 +1612,7 @@ class MiniMaxAgent:
         # 确保有 system message
         has_system = any(m.get("role") == "system" for m in messages)
         if not has_system:
-            messages = [{"role": "system", "content": "你是一个友好、有知识的AI教师助手。"}] + messages
+            messages = [{"role": "system", "content": "你是智创空间智慧课堂中的学习智能体，亲切、严谨、以学生为中心。"}] + messages
 
         try:
             if stream:
@@ -1678,7 +1680,7 @@ if __name__ == "__main__":
     agent = MiniMaxAgent(API_KEY)
     
     print("=" * 60)
-    print("🎓 MiniMax Agent - 教师辅助 AI 助手")
+    print("🎓 智创空间 - 多智能体智慧课堂平台 (CLI)")
     print("=" * 60)
     print("通用指令:")
     print("  输入 'quit' 退出")

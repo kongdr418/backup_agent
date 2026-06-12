@@ -1,6 +1,9 @@
 """
-MiniMax Agent Web 应用
+智创空间 - 基于多智能体交互的智慧课堂平台 Web 应用
 Flask 后端服务
+
+面向中国软件杯 A3 赛题"基于大模型的个性化资源生成与学习多智能体系统开发"，
+以学生为中心，通过多智能体协同完成学习画像构建、个性化资源生成与智能辅导。
 """
 
 from dotenv import load_dotenv
@@ -682,7 +685,7 @@ app = Flask(__name__)
 CORS(app)
 
 app_logger.info('=' * 60)
-app_logger.info('MiniMax Agent Web 应用启动中...')
+app_logger.info('智创空间 - 多智能体交互智慧课堂平台启动中...')
 app_logger.info('=' * 60)
 
 # API 密钥 - 从环境变量读取
@@ -753,7 +756,7 @@ def health():
     """健康检查接口"""
     return jsonify({
         'status': 'ok',
-        'service': 'MiniMax Agent API',
+        'service': 'ZhichuangSpace API',
         'version': '1.0.0',
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
@@ -763,9 +766,9 @@ def health():
 def api_info():
     """API 信息接口"""
     return jsonify({
-        'name': 'MiniMax Agent API',
+        'name': 'ZhichuangSpace API',
         'version': '1.0.0',
-        'description': 'AI 教师助手后端服务',
+        'description': '智创空间 - 基于多智能体交互的智慧课堂平台后端服务',
         'endpoints': [
             {'path': '/api/health', 'method': 'GET', 'description': '健康检查'},
             {'path': '/api/info', 'method': 'GET', 'description': 'API 信息'},
@@ -4636,7 +4639,7 @@ def template_preview(template_id):
 
 if __name__ == '__main__':
     app_logger.info('=' * 60)
-    app_logger.info('🤖 MiniMax Agent API 服务启动中...')
+    app_logger.info('🎓 智创空间 - 多智能体智慧课堂平台 API 服务启动中...')
     app_logger.info('=' * 60)
     app_logger.info(f'📅 启动时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
     app_logger.info('🌐 API 地址: http://127.0.0.1:5000')

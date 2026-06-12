@@ -85,7 +85,8 @@ const router = createRouter({
 
 router.afterEach((to) => {
   const title = to.meta.title as string | undefined
-  document.title = title ? `${title} · 智创空间` : '智创空间'
+  const brand = '智创空间 · 多智能体智慧课堂'
+  document.title = title ? `${title} · ${brand}` : brand
 })
 
 export default router

@@ -804,7 +804,7 @@ class InteractiveClassroomGenerator:
             target_lines.append(f"- id: {target.get('id')}｜text: {target.get('text')}")
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
         position = "first" if page_index == 1 else ("last" if page_index == page_total else "middle")
-        return f"""你是智慧课堂的授课脚本设计师。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
+        return f"""你是智创空间智慧课堂的授课脚本设计智能体。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
 
 ## 页面位置
 第 {page_index} / {page_total} 页，position={position}

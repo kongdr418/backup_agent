@@ -299,7 +299,7 @@ class VideoGenerator:
         topic_hint = f"\n课程主题：{topic}" if topic else ""
 
         prompt = (
-            f"你是一位经验丰富的教师，需要为一个PPT课件配上口播讲稿。{topic_hint}\n\n"
+            f"你是智创空间智慧课堂的微课讲解智能体，需要为一个PPT课件配上面向学生的口播讲稿。{topic_hint}\n\n"
             f"下面是这个PPT课件的全部页面信息（JSON 数组，提供完整上下文）：\n\n"
             f"{json.dumps(slides_context, ensure_ascii=False, indent=2)}\n\n"
             f"请仅为以下页码生成讲稿：{missing_indices}\n\n"
@@ -822,7 +822,7 @@ class VideoGenerator:
         ass_path = output_path.parent / "06-subtitles.ass"
         ass_header = (
             "[Script Info]\n"
-            "Title: AI Creator Subtitles\n"
+            "Title: ZhichuangSpace Subtitles\n"
             "ScriptType: v4.00+\n"
             "PlayResX: 1920\n"
             "PlayResY: 1080\n"

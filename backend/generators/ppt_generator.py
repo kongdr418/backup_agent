@@ -1,6 +1,7 @@
 """
 PPT 生成工具
-为 MiniMax Agent 添加制作 PPT 的功能
+为智创空间智慧课堂提供基础 PPT 生成能力（旧主题式流水线，
+新流水线见 `ppt_engine/`）。
 """
 
 import json
@@ -148,7 +149,7 @@ class PPTGenerator:
 const pptx = new PptxGenJS();
 pptx.layout = "LAYOUT_16x9";
 pptx.title = "{self._escape_js(title)}";
-pptx.author = "MiniMax Agent";
+pptx.author = "ZhichuangSpace";
 
 let slide;
 {''.join(slides_js)}
