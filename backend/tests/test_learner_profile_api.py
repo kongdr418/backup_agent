@@ -11,6 +11,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 import app as backend_app
+from learner_profile.storage import PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.storage import LearnerProfileStorage
 
 
@@ -94,6 +95,37 @@ class LearnerProfileApiTest(unittest.TestCase):
 
         self.assertEqual(400, response.status_code)
         self.assertEqual("profile must be an object", response.get_json()["error"])
+
+    def test_ppt_generation_notes_include_learning_strategy_by_default(self) -> None:
+        self.storage.save_profile(
+            "user_1",
+            {
+                "basic": {"learning_stage": "大二", "learning_basis": "有基础"},
+                "preferences": {
+                    "goal": "项目实战",
+                    "content_style": ["案例"],
+                    "preferred_difficulty": "中等",
+                    "tutoring_style": "引导式",
+                },
+            },
+        )
+
+        notes = backend_app._resolve_ppt_generation_notes(
+            {"notes": "请强调实验"},
+            "user_1",
+        )
+
+        self.assertIn("请强调实验", notes)
+        self.assertIn(PPT_LEARNING_STRATEGY_TITLE, notes)
+        self.assertIn("学习目标：项目实战", notes)
+
+    def test_ppt_generation_notes_do_not_duplicate_learning_strategy(self) -> None:
+        notes = backend_app._resolve_ppt_generation_notes(
+            {"notes": f"已有说明\n{PPT_LEARNING_STRATEGY_TITLE}\n学习目标：项目实战"},
+            "user_1",
+        )
+
+        self.assertEqual(1, notes.count(PPT_LEARNING_STRATEGY_TITLE))
 
 
 if __name__ == "__main__":

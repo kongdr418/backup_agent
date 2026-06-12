@@ -13,7 +13,7 @@ import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from video_generator import VideoGenerator
-from learner_profile.storage import LearnerProfileStorage
+from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.profile_agent import ProfileAgent, build_course_id
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
@@ -2437,8 +2437,7 @@ def get_video_audio(filename):
 
 def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     notes = (data.get('notes') or '').strip()
-    source = (data.get('source') or '').strip()
-    if source == 'interactive-classroom':
+    if PPT_LEARNING_STRATEGY_TITLE not in notes:
         learning_strategy = LEARNER_PROFILE_STORAGE.build_ppt_learning_strategy(user_id)
         notes = '\n\n'.join(part for part in [notes, learning_strategy] if part)
     return notes or None
