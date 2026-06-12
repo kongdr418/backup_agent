@@ -607,6 +607,9 @@ const svgMetrics = ref<{
 let previewAbortCtrl: AbortController | null = null
 
 const isGeneratingPreview = computed(() => route.query.generating === '1' && Boolean(route.query.request_id))
+const canRecordLearningEvents = computed(() =>
+  Boolean(classroom.value?.id) && classroom.value?.status !== 'generating' && !isGeneratingPreview.value,
+)
 
 function onAudioLoaded() {
   audioDuration.value = audioRef.value?.duration || 0
@@ -1162,7 +1165,7 @@ function selectScene(idx: number) {
     showReport().catch(() => undefined)
   }
   // P7: 复听 — 用户重新进入已访问过的 slide 场景
-  if (target && target.type === 'slide' && classroom.value) {
+  if (target && target.type === 'slide' && classroom.value && canRecordLearningEvents.value) {
     if (visitedSceneIds.value.has(target.id)) {
       emitSceneReviewed(classroom.value.id, target).catch(() => undefined)
     }
@@ -1749,7 +1752,7 @@ watch(
 watch(
   isClassroomComplete,
   (complete) => {
-    if (complete && !classroomCompletedEmitted.value && classroom.value) {
+    if (complete && !classroomCompletedEmitted.value && classroom.value && canRecordLearningEvents.value) {
       classroomCompletedEmitted.value = true
       emitClassroomCompleted(
         classroom.value.id,

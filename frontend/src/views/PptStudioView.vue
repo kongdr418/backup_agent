@@ -529,8 +529,15 @@ async function onCreateClassroom() {
       content_provider_type: settingStore.getContentProviderType(),
     })
     if (isClassroomSourceRoute.value) clearNextLessonDraft()
-    // 启动 SSE 流
-    void classroomStream.start(requestId)
+    await router.push({
+      name: 'interactive-classroom-player',
+      params: { classroomId: 'generating' },
+      query: {
+        request_id: requestId,
+        topic,
+        generating: '1',
+      },
+    })
   } catch (e) {
     const text = e instanceof Error ? e.message : '课堂生成失败'
     if (text.includes('课堂生成已停止')) {
@@ -567,8 +574,15 @@ function restoreClassroomGeneration() {
   classroomRequestId.value = persisted.requestId
   creatingClassroom.value = true
   startClassroomElapsedTicker(persisted.startedAt)
-  // 直接连 SSE；服务器会先发 classroom_start，done/cancelled/error 立即收敛
-  void classroomStream.start(persisted.requestId)
+  void router.push({
+    name: 'interactive-classroom-player',
+    params: { classroomId: 'generating' },
+    query: {
+      request_id: persisted.requestId,
+      topic: persisted.topic,
+      generating: '1',
+    },
+  })
 }
 
 function createClassroomRequestId() {
