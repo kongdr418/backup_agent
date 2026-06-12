@@ -290,6 +290,10 @@ import {
   createEmptyLearnerProfile,
 } from '@/utils/learnerProfile'
 import { classroomUnitCountLabel, classroomUnitLabel } from '@/utils/classroomLessonDisplay'
+import {
+  buildCoursewareClassroomSeed,
+  getGeneratedPptJobId,
+} from '@/utils/classroomCourseware'
 
 const router = useRouter()
 const message = useMessage()
@@ -312,7 +316,7 @@ const pptSelectOptions = computed<SelectOption[]>(() => [
   { label: '选择已有课件', value: '' },
   ...pptCoursewareOptions.value.map((file) => ({
     label: `${file.name}${file.slide_count ? ` · ${file.slide_count} 页` : ''}`,
-    value: getPptJobId(file),
+    value: getGeneratedPptJobId(file),
   })),
 ])
 
@@ -355,7 +359,7 @@ stream.onError = (err) => {
 const progressPercent = stream.progressPercent
 
 const pptCoursewareOptions = computed(() =>
-  files.value.filter((file) => Boolean(getPptJobId(file))),
+  files.value.filter((file) => Boolean(getGeneratedPptJobId(file))),
 )
 
 const classroomGroups = computed(() => {
@@ -454,11 +458,6 @@ function toggleCourseGroup(rootId: string) {
   }
 }
 
-function getPptJobId(file: GeneratedFile) {
-  if (file.job_id) return file.job_id
-  return file.id.startsWith('svg_ppt_') ? file.id.slice('svg_ppt_'.length) : ''
-}
-
 function goPptStudio() {
   if (!topic.value) {
     message.warning('请先输入主题')
@@ -481,26 +480,23 @@ async function onGenerate() {
     return
   }
 
-  // Topic 兜底：用户没填时，用选中的 PPT 文件名/job_id 拼一个
-  const fallbackTopic = (() => {
-    const jobId = selectedPptJobId.value
-    const matched = files.value.find((f) => getPptJobId(f) === jobId)
-    if (matched?.name) return matched.name.replace(/\.svg$/i, '')
-    if (jobId) return `课堂-${jobId.slice(0, 8)}`
-    return ''
-  })()
-  const finalTopic = (topic.value || '').trim() || fallbackTopic
+  const seed = buildCoursewareClassroomSeed({
+    selectedPptJobId: selectedPptJobId.value,
+    files: files.value,
+    topic: topic.value,
+    course: course.value,
+  })
 
   // 选了 PPT 之后 topic 不是必填；如果实在没法兜底才拦
-  if (!finalTopic) {
+  if (!seed.topic) {
     message.warning('请先输入主题或选择一个课件')
     return
   }
 
   try {
     await beginClassroomGeneration({
-      topic: finalTopic,
-      course: course.value || undefined,
+      topic: seed.topic,
+      course: seed.course || undefined,
       ppt_job_id: selectedPptJobId.value || undefined,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
