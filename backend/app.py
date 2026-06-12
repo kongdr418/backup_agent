@@ -98,6 +98,7 @@ CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
 CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
 CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
 CLASSROOM_GENERATION_JOBS_DIR = os.path.join(BACKEND_DIR, 'memory', 'classroom_generation_jobs')
+CLASSROOM_GENERATION_ORPHAN_TIMEOUT_SECONDS = 90
 
 # SSE 订阅者：每个连上的前端对应一个 queue.Queue；生成线程把事件 fan-out 给所有订阅者
 import queue  # noqa: E402
@@ -190,6 +191,40 @@ def _classroom_generation_elapsed_seconds(job: dict, now: datetime | None = None
         return max(0, int((current - start).total_seconds()))
     except (TypeError, ValueError):
         return 0
+
+
+def _mark_orphaned_classroom_generation_locked(request_id: str, job: dict) -> dict:
+    now = _classroom_generation_now()
+    try:
+        now_dt = datetime.fromisoformat(now)
+    except ValueError:
+        now_dt = datetime.now()
+    next_job = {
+        **job,
+        'request_id': request_id,
+        'status': 'error',
+        'updated_at': now,
+        'error': '课堂生成任务已中断，请重新生成',
+    }
+    next_job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(next_job, now_dt)
+    CLASSROOM_GENERATION_JOBS[request_id] = next_job
+    _write_classroom_generation_job_file(request_id, next_job)
+    return next_job
+
+
+def _normalize_classroom_generation_job_locked(request_id: str, job: dict) -> dict:
+    if job.get('status') not in {'running', 'cancelling'} or request_id in CLASSROOM_GENERATION_CANCELS:
+        return job
+    timestamp = job.get('updated_at') or job.get('started_at')
+    if not timestamp:
+        return job
+    try:
+        age_seconds = (datetime.now() - datetime.fromisoformat(timestamp)).total_seconds()
+    except (TypeError, ValueError):
+        return job
+    if age_seconds >= CLASSROOM_GENERATION_ORPHAN_TIMEOUT_SECONDS:
+        return _mark_orphaned_classroom_generation_locked(request_id, job)
+    return job
 
 
 def _prune_classroom_generation_jobs_locked(max_jobs: int = 80) -> None:
@@ -297,9 +332,12 @@ def _get_classroom_generation_job(request_id: str) -> dict | None:
     with CLASSROOM_GENERATION_CANCELS_LOCK:
         job = CLASSROOM_GENERATION_JOBS.get(request_id)
         if job:
+            job = _normalize_classroom_generation_job_locked(request_id, job)
+            CLASSROOM_GENERATION_JOBS[request_id] = job
             return dict(job)
         disk_job = _read_classroom_generation_job_file(request_id)
         if disk_job:
+            disk_job = _normalize_classroom_generation_job_locked(request_id, disk_job)
             CLASSROOM_GENERATION_JOBS[request_id] = disk_job
             return dict(disk_job)
         return None

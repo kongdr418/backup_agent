@@ -212,10 +212,4 @@ def record_event(
 
     如果 dedupe_key 已存在则跳过写入，返回已有事件。
     """
-    existing = storage.find_event_by_dedupe_key(
-        event.user_id, event.classroom_id, event.dedupe_key
-    )
-    if existing:
-        return existing
-    storage.save_event(event.user_id, event.classroom_id, event)
-    return event
+    return storage.record_event_once(event.user_id, event.classroom_id, event)

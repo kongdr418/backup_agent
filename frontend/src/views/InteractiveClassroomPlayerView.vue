@@ -513,6 +513,7 @@ import {
   type ClassroomLearningPathStage,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
+  getInteractiveClassroomGenerationStatus,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   submitInteractiveClassroomAnswer,
@@ -1675,10 +1676,53 @@ async function loadGeneratingClassroom() {
       }
       if (isClassroomTerminalEvent(ev)) return
     }
+    await settleGeneratingPreview(requestId, loadVersion)
   } catch (err) {
     if (loadVersion !== classroomLoadVersion) return
     const text = err instanceof Error ? err.message : '生成进度连接失败'
-    message.error(text)
+    const settled = await settleGeneratingPreview(requestId, loadVersion, text)
+    if (!settled) message.error(text)
+  }
+}
+
+async function settleGeneratingPreview(
+  requestId: string,
+  loadVersion: number,
+  streamError = '',
+) {
+  try {
+    const job = await getInteractiveClassroomGenerationStatus(requestId)
+    if (loadVersion !== classroomLoadVersion) return true
+    if (job.status === 'done' && job.classroom_id) {
+      clearPersistedClassroomGeneration()
+      await router.replace({
+        name: 'interactive-classroom-player',
+        params: { classroomId: job.classroom_id },
+      })
+      return true
+    }
+    if (job.status === 'cancelled') {
+      message.info('课堂生成已停止')
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    if (job.status === 'error') {
+      message.error(job.error || '课堂生成失败')
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    return false
+  } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return true
+    const text = err instanceof Error ? err.message : streamError
+    if (text.includes('404') || text.includes('生成任务不存在')) {
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    return false
   }
 }
 
