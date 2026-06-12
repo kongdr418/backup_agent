@@ -602,14 +602,25 @@ def resolve_knowledge_evidence(
         if kp_id in seen_ids:
             continue
 
+        # 置信度过低说明是误匹配（如短词子串命中），跳过
+        if best_score < 0.25:
+            continue
+
         matching_evidence: list[dict[str, Any]] = []
         for chunk in evidence_chunks:
+            # 跳过课程结构条目（大纲/课次），只匹配实际内容 chunk
+            chunk_type = chunk.get("chunk_type", "")
+            if chunk_type in ("lesson_outline", "module_outline"):
+                continue
             chunk_text = _normalize_text(chunk.get("text", "") + " " + chunk.get("section", ""))
-            if raw_norm in chunk_text or any(
+            # 短知识点名（<4字符）不做子串匹配，避免"项目"误命中"课程项目整合与展示答辩"
+            text_match = len(raw_norm) >= 4 and raw_norm in chunk_text
+            keyword_match = any(
                 _normalize_text(kw) in raw_norm
                 for kw in chunk.get("keywords", [])
                 if len(kw) >= 2
-            ):
+            )
+            if text_match or keyword_match:
                 matching_evidence.append({
                     "chunk_id": chunk.get("chunk_id", ""),
                     "evidence_label": chunk.get("evidence_label", ""),

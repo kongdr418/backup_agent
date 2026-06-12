@@ -2567,11 +2567,18 @@ def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     topic = (data.get('topic') or '').strip()
 
     # 注入课程知识库上下文
-    knowledge_notes = COURSE_KNOWLEDGE_RETRIEVER.build_ppt_knowledge_notes(
-        user_id=user_id,
-        course=course,
-        topic=topic,
-    )
+    try:
+        knowledge_notes = COURSE_KNOWLEDGE_RETRIEVER.build_ppt_knowledge_notes(
+            user_id=user_id,
+            course=course,
+            topic=topic,
+        )
+    except Exception as exc:
+        request_logger.warning(
+            '[PPT-NOTES] knowledge_retrieval_failed error=%s',
+            type(exc).__name__,
+        )
+        knowledge_notes = ""
     if knowledge_notes:
         notes = '\n\n'.join(part for part in [notes, knowledge_notes] if part)
 
@@ -3328,11 +3335,18 @@ def interactive_classroom_generate():
     _apply_content_llm_config(data)
 
     # 检索课程知识上下文
-    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-        user_id=user_id,
-        course=course,
-        topic=topic,
-    )
+    try:
+        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+            user_id=user_id,
+            course=course,
+            topic=topic,
+        )
+    except Exception as exc:
+        request_logger.warning(
+            '[CLASSROOM-GEN] knowledge_retrieval_failed error=%s',
+            type(exc).__name__,
+        )
+        knowledge_context = None
 
     tts_config = _build_classroom_tts_config(data=data)
 
@@ -3759,22 +3773,36 @@ def interactive_classroom_report(classroom_id):
             )
 
     topic = classroom.get('topic', '')
-    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-        user_id, course_name, topic,
-    )
+    try:
+        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+            user_id, course_name, topic,
+        )
+    except Exception as exc:
+        request_logger.warning(
+            '[REPORT] knowledge_retrieval_failed classroom_id=%s error=%s',
+            classroom_id, type(exc).__name__,
+        )
+        knowledge_context = None
     report['knowledge_evidence'] = resolve_knowledge_evidence(
         report.get('knowledge_summary', {}),
         knowledge_context,
         classroom,
     )
 
-    proposals = _analyze_classroom_profile_updates(
-        user_id,
-        classroom,
-        report,
-        events,
-        knowledge_context=knowledge_context,
-    )
+    try:
+        proposals = _analyze_classroom_profile_updates(
+            user_id,
+            classroom,
+            report,
+            events,
+            knowledge_context=knowledge_context,
+        )
+    except Exception as exc:
+        request_logger.warning(
+            '[REPORT] profile_update_analysis_failed classroom_id=%s error=%s',
+            classroom_id, type(exc).__name__,
+        )
+        proposals = []
     report['profile_update_count'] = len(proposals)
     report['profile_update_ids'] = [row.get('id') for row in proposals if row.get('id')]
     CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
@@ -4176,9 +4204,16 @@ def interactive_classroom_next_lesson_plan(classroom_id):
     data = request.json or {}
     course_name = classroom.get('course') or classroom.get('topic') or ''
     topic = classroom.get('topic', '')
-    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-        user_id, course_name, topic,
-    )
+    try:
+        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+            user_id, course_name, topic,
+        )
+    except Exception as exc:
+        request_logger.warning(
+            '[NEXT-LESSON] knowledge_retrieval_failed classroom_id=%s error=%s',
+            classroom_id, type(exc).__name__,
+        )
+        knowledge_context = None
     plan = _build_next_lesson_plan(classroom, report, data, knowledge_context)
     return jsonify({'success': True, 'plan': plan})
 
@@ -4315,9 +4350,16 @@ def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
             user_id=user_id,
         )
         topic = classroom.get('topic', '')
-        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-            user_id, course_name, topic,
-        )
+        try:
+            knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+                user_id, course_name, topic,
+            )
+        except Exception as exc:
+            request_logger.warning(
+                '[PRACTICE-REPORT] knowledge_retrieval_failed classroom_id=%s error=%s',
+                classroom_id, type(exc).__name__,
+            )
+            knowledge_context = None
         report['knowledge_evidence'] = resolve_knowledge_evidence(
             report.get('knowledge_summary', {}),
             knowledge_context,

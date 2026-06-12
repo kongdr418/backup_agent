@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from .config import EMBEDDING_MODEL_NAME
+from .config import EMBEDDING_MODEL_NAME, HF_MIRROR_ENDPOINT
 
 
 logger = logging.getLogger(__name__)
@@ -19,8 +19,34 @@ class EmbeddingUnavailableError(RuntimeError):
 
 
 def _default_model_factory(model_name: str) -> Any:
+    import os
     from sentence_transformers import SentenceTransformer
 
+    # 1. 优先使用本地缓存，避免任何网络请求
+    try:
+        return SentenceTransformer(model_name, local_files_only=True)
+    except (OSError, FileNotFoundError):
+        logger.info("[BGE] local_cache_miss model=%s, falling back to online", model_name)
+
+    # 2. 本地没有缓存，先尝试国内镜像站
+    if HF_MIRROR_ENDPOINT:
+        original_endpoint = os.environ.get("HF_ENDPOINT")
+        try:
+            os.environ["HF_ENDPOINT"] = HF_MIRROR_ENDPOINT
+            logger.info("[BGE] downloading_from_mirror model=%s endpoint=%s", model_name, HF_MIRROR_ENDPOINT)
+            model = SentenceTransformer(model_name)
+            return model
+        except Exception as exc:
+            logger.warning("[BGE] mirror_download_failed model=%s error=%s", model_name, type(exc).__name__)
+        finally:
+            # 恢复原始环境变量
+            if original_endpoint is None:
+                os.environ.pop("HF_ENDPOINT", None)
+            else:
+                os.environ["HF_ENDPOINT"] = original_endpoint
+
+    # 3. 镜像也失败，最后尝试官方源
+    logger.info("[BGE] falling_back_to_official model=%s", model_name)
     return SentenceTransformer(model_name)
 
 

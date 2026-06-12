@@ -279,6 +279,7 @@ class CourseKnowledgeRetriever:
         return [
             {
                 "chunk_id": chunk.get("chunk_id", ""),
+                "chunk_type": chunk.get("chunk_type", ""),
                 "section": chunk.get("section", ""),
                 "text": chunk.get("text", ""),
                 "keywords": list(chunk.get("keywords", [])),
@@ -510,6 +511,7 @@ class CourseKnowledgeRetriever:
             return [
                 {
                     "chunk_id": chunk.get("chunk_id", ""),
+                    "chunk_type": chunk.get("chunk_type", ""),
                     "section": chunk.get("section", ""),
                     "text": chunk.get("text", ""),
                     "evidence_label": chunk.get("evidence_label", ""),
@@ -529,6 +531,7 @@ class CourseKnowledgeRetriever:
         return [
             {
                 "chunk_id": chunk.get("chunk_id", ""),
+                "chunk_type": chunk.get("chunk_type", ""),
                 "section": chunk.get("section", ""),
                 "text": chunk.get("text", ""),
                 "evidence_label": chunk.get("evidence_label", ""),
