@@ -428,7 +428,7 @@ function confirmProfileClear(options: {
   title: string
   content: string
   positiveText: string
-  apply: () => void
+  apply: (current: LearnerProfile) => LearnerProfile
   success: string
 }) {
   dialog.warning({
@@ -436,9 +436,22 @@ function confirmProfileClear(options: {
     content: options.content,
     positiveText: options.positiveText,
     negativeText: '取消',
-    onPositiveClick: () => {
-      options.apply()
-      message.success(options.success)
+    onPositiveClick: async () => {
+      saving.value = true
+      try {
+        const nextProfile = options.apply(profile.value)
+        const saved = await saveLearnerProfile(nextProfile)
+        stopWatching?.()
+        profile.value = saved
+        writeLegacyStudentProfile(localStorage, saved)
+        dirty.value = false
+        startDirtyWatch()
+        message.success(options.success)
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '清空失败')
+      } finally {
+        saving.value = false
+      }
     },
   })
 }
@@ -446,48 +459,40 @@ function confirmProfileClear(options: {
 function confirmClearBasic() {
   confirmProfileClear({
     title: '清空基本信息',
-    content: '将清空称呼、学习阶段、当前基础和学习背景。确认后需要点击“保存画像”才会写入学习档案。',
+    content: '将清空称呼、学习阶段、当前基础和学习背景，并立即写入学习档案。',
     positiveText: '清空基本信息',
-    apply: () => {
-      profile.value = clearLearnerProfileBasic(profile.value)
-    },
-    success: '已清空基本信息，记得保存画像',
+    apply: clearLearnerProfileBasic,
+    success: '已清空基本信息',
   })
 }
 
 function confirmClearPreferences() {
   confirmProfileClear({
     title: '清空学习偏好',
-    content: '将清空学习目标、期望难度、辅导方式和内容偏好。确认后需要点击“保存画像”才会写入学习档案。',
+    content: '将清空学习目标、期望难度、辅导方式和内容偏好，并立即写入学习档案。',
     positiveText: '清空学习偏好',
-    apply: () => {
-      profile.value = clearLearnerProfilePreferences(profile.value)
-    },
-    success: '已清空学习偏好，记得保存画像',
+    apply: clearLearnerProfilePreferences,
+    success: '已清空学习偏好',
   })
 }
 
 function confirmClearAllCourses() {
   confirmProfileClear({
     title: '清空全部课程画像',
-    content: '将删除所有已确认课程掌握度，并移除相关待确认更新和推荐。确认后需要点击“保存画像”才会写入学习档案。',
+    content: '将删除所有已确认课程掌握度，并移除相关待确认更新和推荐，然后立即写入学习档案。',
     positiveText: '全部清空',
-    apply: () => {
-      profile.value = clearLearnerCourses(profile.value)
-    },
-    success: '已清空全部课程画像，记得保存画像',
+    apply: clearLearnerCourses,
+    success: '已清空全部课程画像',
   })
 }
 
 function confirmClearCourse(courseId: string, courseName?: string) {
   confirmProfileClear({
     title: '清空课程画像',
-    content: `将删除“${courseName || '该课程'}”的掌握度画像，并移除该课程相关待确认更新和推荐。确认后需要点击“保存画像”才会写入学习档案。`,
+    content: `将删除“${courseName || '该课程'}”的掌握度画像，并移除该课程相关待确认更新和推荐，然后立即写入学习档案。`,
     positiveText: '清空该课程',
-    apply: () => {
-      profile.value = clearLearnerCourseProfile(profile.value, courseId)
-    },
-    success: '已清空该课程画像，记得保存画像',
+    apply: (current) => clearLearnerCourseProfile(current, courseId),
+    success: '已清空该课程画像',
   })
 }
 

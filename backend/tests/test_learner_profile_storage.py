@@ -85,6 +85,32 @@ class LearnerProfileStorageTest(unittest.TestCase):
         self.assertEqual("2026-06-08T10:00:00", second["created_at"])
         self.assertEqual({"course_python": {"course_name": "Python"}}, second["courses"])
 
+    def test_manual_save_can_clear_course_profile_fields(self) -> None:
+        self.storage.save_profile(
+            "user_1",
+            {
+                "basic": {"display_name": "小明"},
+                "courses": {"course_python": {"course_name": "Python"}},
+                "pending_updates": [{"id": "u1", "course_id": "course_python"}],
+                "recent_recommendations": [{"id": "r1", "course_id": "course_python"}],
+            },
+        )
+
+        saved = self.storage.save_manual_profile(
+            "user_1",
+            {
+                "basic": {"display_name": "小明"},
+                "preferences": {},
+                "courses": {},
+                "pending_updates": [],
+                "recent_recommendations": [],
+            },
+        )
+
+        self.assertEqual({}, saved["courses"])
+        self.assertEqual([], saved["pending_updates"])
+        self.assertEqual([], saved["recent_recommendations"])
+
     def test_profiles_are_isolated_by_user(self) -> None:
         self.storage.save_profile("user_1", {"goal": "考试通过"})
         self.storage.save_profile("user_2", {"goal": "项目实战"})

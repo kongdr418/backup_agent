@@ -213,6 +213,15 @@ class LearnerProfileStorage:
                     else existing.get("preferences", {})
                 ),
             }
+            for key in (
+                "courses",
+                "pending_updates",
+                "recent_recommendations",
+                "update_history",
+                "evidence_buffer",
+            ):
+                if key in payload:
+                    merged[key] = payload[key]
             for key in ("basis", "goal", "style", "difficulty"):
                 if key in payload:
                     merged[key] = payload[key]
