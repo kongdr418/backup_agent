@@ -44,6 +44,64 @@ export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
   }
 }
 
+export function clearLearnerProfileBasic(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...profile,
+    basic: {
+      display_name: '',
+      learning_stage: '',
+      learning_basis: '',
+      background: '',
+    },
+  }
+}
+
+export function clearLearnerProfilePreferences(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...profile,
+    preferences: {
+      goal: '',
+      content_style: [],
+      preferred_difficulty: '',
+      tutoring_style: '',
+    },
+  }
+}
+
+function clearCourseArtifacts(
+  profile: LearnerProfile,
+  courseIds: Set<string> | null,
+): LearnerProfile {
+  return {
+    ...profile,
+    pending_updates: (profile.pending_updates || []).filter(
+      (item) => !item.course_id || (courseIds !== null && !courseIds.has(item.course_id)),
+    ),
+    recent_recommendations: (profile.recent_recommendations || []).filter(
+      (item) => !item.course_id || (courseIds !== null && !courseIds.has(item.course_id)),
+    ),
+  }
+}
+
+export function clearLearnerCourses(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...clearCourseArtifacts(profile, null),
+    courses: {},
+  }
+}
+
+export function clearLearnerCourseProfile(
+  profile: LearnerProfile,
+  courseId: string,
+): LearnerProfile {
+  if (!courseId || !profile.courses?.[courseId]) return profile
+  const { [courseId]: _removed, ...courses } = profile.courses
+  return {
+    ...clearCourseArtifacts(profile, new Set([courseId])),
+    courses,
+  }
+}
+
 function hasText(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0
 }
