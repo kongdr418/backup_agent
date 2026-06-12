@@ -774,6 +774,21 @@ class InteractiveClassroomGenerator:
             }
         )
 
+    @staticmethod
+    def _merge_knowledge_points(
+        base_points: list[str],
+        knowledge_context: dict[str, Any] | None,
+    ) -> list[str]:
+        if not knowledge_context:
+            return base_points
+        standard_points = knowledge_context.get("knowledge_points", [])
+        merged = list(base_points)
+        for kp in standard_points:
+            label = kp.get("label", "").strip() if isinstance(kp, dict) else str(kp).strip()
+            if label and label not in merged:
+                merged.append(label)
+        return merged
+
     def _build_teaching_segments_prompt(
         self,
         *,
@@ -1923,6 +1938,7 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
         generation_strategy: dict[str, Any] | None = None,
+        knowledge_context: dict[str, Any] | None = None,
         lineage: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
@@ -2046,7 +2062,7 @@ class InteractiveClassroomGenerator:
                     "persona": "讲解清晰，先讲重点，再做练习。",
                 }
             ],
-            knowledge_points=[topic],
+            knowledge_points=self._merge_knowledge_points([topic], knowledge_context),
             scenes=scenes,
         )
 

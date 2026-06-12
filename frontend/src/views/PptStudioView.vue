@@ -168,7 +168,7 @@ import { useSettingStore } from '@/stores/settingStore'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
 import { clearNextLessonDraft, loadNextLessonDraft, type StoredNextLessonDraft } from '@/utils/classroomNextLessonDraft'
-import { resetPptDraftFields } from '@/utils/pptParams'
+import { applyClassroomPptDraft, resetPptDraftFields } from '@/utils/pptParams'
 import {
   clearPersistedClassroomGeneration,
   loadPersistedClassroomGeneration,
@@ -348,9 +348,11 @@ function applyClassroomDraft() {
   classroomLineage.value = getLineageFromQuery(storedDraft)
   if (topic) {
     store.params = {
-      ...store.params,
-      topic,
-      notes: buildClassroomPptNotes(store.params.notes, learningContext),
+      ...applyClassroomPptDraft(store.params, {
+        topic,
+        course: course || undefined,
+        notes: buildClassroomPptNotes(store.params.notes, learningContext),
+      }),
       deep_research: false,
       visual_critic: false,
       repair_enabled: store.params.repair_enabled ?? false,

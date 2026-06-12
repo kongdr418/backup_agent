@@ -222,6 +222,7 @@ export type PptCanvas = 'ppt169' | 'ppt43'
 
 export interface PptGenerateParams {
   topic: string
+  course?: string
   language?: PptLang
   num_slides?: number
   style?: PptStyle

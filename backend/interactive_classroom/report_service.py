@@ -4,6 +4,10 @@ import re
 from typing import Any
 
 
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
 def _compact_text_key(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
 
@@ -550,3 +554,80 @@ def refresh_report_learning_path(
         user_id,
     )
     return refreshed
+
+
+def resolve_knowledge_evidence(
+    knowledge_summary: dict[str, Any],
+    knowledge_context: dict[str, Any] | None,
+    classroom: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not knowledge_context:
+        return []
+
+    std_points = knowledge_context.get("knowledge_points", [])
+    evidence_chunks = knowledge_context.get("evidence", [])
+    if not std_points and not evidence_chunks:
+        return []
+
+    point_scene_ids: dict[str, list[str]] = {}
+    if classroom:
+        for point_name in knowledge_summary:
+            scene_ids = _find_scene_ids_for_points(classroom, [point_name])
+            if scene_ids:
+                point_scene_ids[point_name] = scene_ids
+
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for raw_name in knowledge_summary:
+        raw_norm = _normalize_text(raw_name)
+        best_kp: dict[str, Any] | None = None
+        best_score = 0.0
+        for kp in std_points:
+            label = kp.get("label", "")
+            if not label:
+                continue
+            label_norm = _normalize_text(label)
+            if raw_norm == label_norm:
+                best_kp = kp
+                best_score = 1.0
+                break
+            if raw_norm in label_norm or label_norm in raw_norm:
+                score = min(len(raw_norm), len(label_norm)) / max(len(raw_norm), len(label_norm), 1)
+                if score > best_score:
+                    best_score = score
+                    best_kp = kp
+
+        kp_id = (best_kp or {}).get("knowledge_point_id", "")
+        if kp_id in seen_ids:
+            continue
+
+        matching_evidence: list[dict[str, Any]] = []
+        for chunk in evidence_chunks:
+            chunk_text = _normalize_text(chunk.get("text", "") + " " + chunk.get("section", ""))
+            if raw_norm in chunk_text or any(
+                _normalize_text(kw) in raw_norm
+                for kw in chunk.get("keywords", [])
+                if len(kw) >= 2
+            ):
+                matching_evidence.append({
+                    "chunk_id": chunk.get("chunk_id", ""),
+                    "evidence_label": chunk.get("evidence_label", ""),
+                    "source_name": chunk.get("source_name", ""),
+                    "section": chunk.get("section", ""),
+                    "text_excerpt": (chunk.get("text", "") or "")[:200],
+                })
+
+        row: dict[str, Any] = {
+            "knowledge_point_id": kp_id,
+            "raw_name": raw_name,
+            "standard_label": (best_kp or {}).get("label", ""),
+            "match_confidence": round(best_score, 2),
+            "evidence": matching_evidence[:3],
+            "scene_ids": point_scene_ids.get(raw_name, []),
+        }
+        results.append(row)
+        if kp_id:
+            seen_ids.add(kp_id)
+
+    return results

@@ -237,6 +237,25 @@
               </div>
             </section>
 
+            <section v-if="reportKnowledgeEvidence.length" class="report-block">
+              <div class="report-label">课程知识依据</div>
+              <p class="muted-copy">以下知识点已关联到课程大纲标准条目，可用于精准复习。</p>
+              <div class="knowledge-evidence-list">
+                <div v-for="item in reportKnowledgeEvidence" :key="item.raw_name" class="evidence-row">
+                  <div class="evidence-header">
+                    <span class="evidence-label">{{ item.standard_label || item.raw_name }}</span>
+                    <span v-if="item.match_confidence > 0" class="evidence-confidence">{{ Math.round(item.match_confidence * 100) }}% 匹配</span>
+                  </div>
+                  <div v-if="item.evidence.length" class="evidence-sources">
+                    <div v-for="ev in item.evidence" :key="ev.chunk_id" class="evidence-chip">
+                      <span class="evidence-source">{{ ev.evidence_label || ev.source_name }}</span>
+                      <span v-if="ev.section" class="evidence-section">{{ ev.section }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <section v-if="reportLearningPath.length" class="report-block learning-path-block">
               <div class="learning-path-head">
                 <div>
@@ -793,6 +812,8 @@ const reportKnowledgeRows = computed(() => {
   const summary = report.value?.knowledge_summary || {}
   return Object.entries(summary).map(([name, row]) => ({ name, mastery: row.mastery }))
 })
+
+const reportKnowledgeEvidence = computed(() => report.value?.knowledge_evidence || [])
 
 const reportRecommendedTasks = computed(() => report.value?.recommended_tasks || [])
 const reportLearningPath = computed(() => report.value?.learning_path || [])
@@ -3091,6 +3112,64 @@ async function runTask(task: ClassroomRecommendedTask) {
   height: 100%;
   border-radius: inherit;
   background: rgb(16 185 129);
+}
+
+.knowledge-evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-row {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgb(var(--bg-subtle-rgb));
+}
+
+.evidence-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evidence-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.evidence-confidence {
+  font-size: 11px;
+  color: rgb(16 185 129);
+  font-weight: 600;
+}
+
+.evidence-sources {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.evidence-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgb(var(--ink-3-rgb));
+  background: rgb(var(--bg-base-rgb));
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.evidence-source {
+  font-weight: 500;
+}
+
+.evidence-section {
+  color: rgb(var(--ink-3-rgb));
+  opacity: 0.7;
 }
 
 .learning-path-block {

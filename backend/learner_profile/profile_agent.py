@@ -189,6 +189,7 @@ class ProfileAgent:
         raw_points: list[Any],
         course_profile: dict[str, Any] | None = None,
         context: str = "",
+        knowledge_context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         course_profile = course_profile or {}
         mastery = (
@@ -197,11 +198,12 @@ class ProfileAgent:
             else {}
         )
         existing: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
         for point_id, row in mastery.items():
             if not isinstance(row, dict):
                 continue
             name = _clean_text(row.get("name"), 80)
-            if name:
+            if name and point_id not in seen_ids:
                 existing.append(
                     {
                         "knowledge_point_id": point_id,
@@ -209,6 +211,21 @@ class ProfileAgent:
                         "parent_name": _clean_text(row.get("parent_name"), 80),
                     }
                 )
+                seen_ids.add(point_id)
+
+        for kp in (knowledge_context or {}).get("knowledge_points", []):
+            kp_id = kp.get("knowledge_point_id", "")
+            label = _clean_text(kp.get("label"), 80)
+            if kp_id and label and kp_id not in seen_ids:
+                existing.append(
+                    {
+                        "knowledge_point_id": kp_id,
+                        "name": label,
+                        "parent_name": "",
+                        "source": "course_knowledge",
+                    }
+                )
+                seen_ids.add(kp_id)
 
         cleaned_points: list[str] = []
         for value in raw_points:

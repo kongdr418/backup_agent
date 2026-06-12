@@ -199,6 +199,21 @@ export interface ClassroomLearningPathStage {
   target_scene_ids: string[]
 }
 
+export interface KnowledgeEvidenceItem {
+  knowledge_point_id: string
+  raw_name: string
+  standard_label: string
+  match_confidence: number
+  evidence: {
+    chunk_id: string
+    evidence_label: string
+    source_name: string
+    section: string
+    text_excerpt: string
+  }[]
+  scene_ids: string[]
+}
+
 export interface ClassroomReport {
   classroom_id: string
   title: string
@@ -226,6 +241,7 @@ export interface ClassroomReport {
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
   learning_path?: ClassroomLearningPathStage[]
+  knowledge_evidence?: KnowledgeEvidenceItem[]
   event_count?: number
   course_trend?: string
   profile_update_count?: number
@@ -250,6 +266,8 @@ export interface NextLessonPlan {
   lesson_depth: number
   lesson_index: number
   lesson_kind: string
+  course_lesson_title?: string
+  course_knowledge_points?: string[]
 }
 
 export interface ClassroomDiscussionMessage {

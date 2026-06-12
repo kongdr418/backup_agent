@@ -15,11 +15,18 @@ from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.profile_agent import ProfileAgent, build_course_id
+from course_knowledge import (
+    CourseKnowledgeIngestor,
+    CourseKnowledgeRetriever,
+    CourseKnowledgeStorage,
+    CourseVectorIndex,
+    LocalEmbeddingService,
+)
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
-from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path
+from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path, resolve_knowledge_evidence, _compact_text_key
 from interactive_classroom.event_service import (
     create_quiz_submitted_event,
     create_short_answer_scored_event,
@@ -89,6 +96,22 @@ GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
 PROFILE_AGENT = ProfileAgent()
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
+COURSE_KNOWLEDGE_STORAGE = CourseKnowledgeStorage(BACKEND_DIR)
+COURSE_KNOWLEDGE_EMBEDDINGS = LocalEmbeddingService()
+COURSE_KNOWLEDGE_VECTOR_INDEX = CourseVectorIndex(
+    storage=COURSE_KNOWLEDGE_STORAGE,
+    embedding_service=COURSE_KNOWLEDGE_EMBEDDINGS,
+)
+COURSE_KNOWLEDGE_INGESTOR = CourseKnowledgeIngestor(
+    BACKEND_DIR,
+    storage=COURSE_KNOWLEDGE_STORAGE,
+    vector_index=COURSE_KNOWLEDGE_VECTOR_INDEX,
+)
+COURSE_KNOWLEDGE_RETRIEVER = CourseKnowledgeRetriever(
+    BACKEND_DIR,
+    storage=COURSE_KNOWLEDGE_STORAGE,
+    vector_index=COURSE_KNOWLEDGE_VECTOR_INDEX,
+)
 CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
 CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
     CLASSROOM_STORAGE,
@@ -144,7 +167,8 @@ def _classroom_generation_now() -> str:
 def _classroom_generation_job_path(request_id: str) -> str:
     if not _is_safe_classroom_request_id(request_id):
         return ''
-    return os.path.join(CLASSROOM_GENERATION_JOBS_DIR, f'{request_id}.json')
+    safe_name = request_id.replace(':', '-')
+    return os.path.join(CLASSROOM_GENERATION_JOBS_DIR, f'{safe_name}.json')
 
 
 def _write_classroom_generation_job_file(request_id: str, job: dict) -> None:
@@ -1760,6 +1784,69 @@ def update_settings():
 
 # ==================== 学习者画像 API ====================
 
+@app.route('/api/course-knowledge/upload', methods=['POST'])
+def upload_course_knowledge():
+    user_id = get_request_user_id()
+    file = request.files.get('file')
+    if file is None or not (file.filename or '').strip():
+        return jsonify({'success': False, 'error': 'file is required'}), 400
+
+    try:
+        result = COURSE_KNOWLEDGE_INGESTOR.ingest_upload(
+            user_id=user_id,
+            filename=file.filename,
+            stream=file.stream,
+            content_type=file.mimetype or '',
+        )
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as exc:
+        request_logger.warning('[COURSE-KNOWLEDGE] upload failed', exc_info=True)
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+    return jsonify(
+        {
+            'success': True,
+            'document': result['document'],
+            'course_map': result['course_map'],
+        }
+    )
+
+
+@app.route('/api/course-knowledge/list', methods=['GET'])
+def list_course_knowledge():
+    user_id = get_request_user_id()
+    return jsonify(
+        {
+            'success': True,
+            'items': COURSE_KNOWLEDGE_INGESTOR.list_documents(user_id),
+        }
+    )
+
+
+@app.route('/api/course-knowledge/<document_id>', methods=['DELETE'])
+def delete_course_knowledge(document_id: str):
+    user_id = get_request_user_id()
+    try:
+        result = COURSE_KNOWLEDGE_INGESTOR.delete_document(user_id, document_id)
+        return jsonify({'success': True, **result})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/course-knowledge/course-map', methods=['GET'])
+def get_course_knowledge_course_map():
+    user_id = get_request_user_id()
+    return jsonify(
+        {
+            'success': True,
+            'courses': COURSE_KNOWLEDGE_INGESTOR.list_courses(user_id),
+        }
+    )
+
+
 @app.route('/api/learner-profile', methods=['GET'])
 def get_learner_profile():
     user_id = get_request_user_id()
@@ -2475,7 +2562,21 @@ def get_video_audio(filename):
 
 def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     notes = (data.get('notes') or '').strip()
-    if PPT_LEARNING_STRATEGY_TITLE not in notes:
+    source = (data.get('source') or '').strip()
+    course = (data.get('course') or '').strip()
+    topic = (data.get('topic') or '').strip()
+
+    # 注入课程知识库上下文
+    knowledge_notes = COURSE_KNOWLEDGE_RETRIEVER.build_ppt_knowledge_notes(
+        user_id=user_id,
+        course=course,
+        topic=topic,
+    )
+    if knowledge_notes:
+        notes = '\n\n'.join(part for part in [notes, knowledge_notes] if part)
+
+    # 注入学生画像（来自课堂入口时）
+    if source == 'interactive-classroom' and PPT_LEARNING_STRATEGY_TITLE not in notes:
         learning_strategy = LEARNER_PROFILE_STORAGE.build_ppt_learning_strategy(user_id)
         notes = '\n\n'.join(part for part in [notes, learning_strategy] if part)
     return notes or None
@@ -3226,6 +3327,13 @@ def interactive_classroom_generate():
     # 同步内容生成模型配置到 shared_config（LLM 测验生成需要）
     _apply_content_llm_config(data)
 
+    # 检索课程知识上下文
+    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+        user_id=user_id,
+        course=course,
+        topic=topic,
+    )
+
     tts_config = _build_classroom_tts_config(data=data)
 
     cancel_event = _register_classroom_generation(request_id)
@@ -3248,6 +3356,7 @@ def interactive_classroom_generate():
                     ppt_job_id=ppt_job_id,
                     student_profile=student_profile,
                     generation_strategy=generation_strategy,
+                    knowledge_context=knowledge_context,
                     lineage=lineage,
                     cancel_check=cancel_event.is_set if cancel_event is not None else None,
                     progress_callback=on_progress,
@@ -3297,6 +3406,7 @@ def interactive_classroom_generate():
             ppt_job_id=ppt_job_id,
             student_profile=student_profile,
             generation_strategy=generation_strategy,
+            knowledge_context=knowledge_context,
             lineage=lineage,
             cancel_check=cancel_event.is_set if cancel_event is not None else None,
         )
@@ -3647,11 +3757,23 @@ def interactive_classroom_report(classroom_id):
                 storage=CLASSROOM_STORAGE,
                 user_id=user_id,
             )
+
+    topic = classroom.get('topic', '')
+    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+        user_id, course_name, topic,
+    )
+    report['knowledge_evidence'] = resolve_knowledge_evidence(
+        report.get('knowledge_summary', {}),
+        knowledge_context,
+        classroom,
+    )
+
     proposals = _analyze_classroom_profile_updates(
         user_id,
         classroom,
         report,
         events,
+        knowledge_context=knowledge_context,
     )
     report['profile_update_count'] = len(proposals)
     report['profile_update_ids'] = [row.get('id') for row in proposals if row.get('id')]
@@ -3711,6 +3833,7 @@ def _analyze_classroom_profile_updates(
     classroom: dict,
     report: dict,
     events: list[dict],
+    knowledge_context: dict | None = None,
 ) -> list[dict]:
     try:
         profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
@@ -3733,6 +3856,7 @@ def _analyze_classroom_profile_updates(
                 missing_points,
                 course_profile,
                 context=f"{course_name} {classroom.get('topic', '')}",
+                knowledge_context=knowledge_context,
             )
             for row in normalized_missing:
                 if isinstance(row, dict) and row.get('raw_name'):
@@ -3887,7 +4011,7 @@ def _clean_next_lesson_list(values, max_items=6):
     return result
 
 
-def _build_next_lesson_plan(classroom, report, overrides):
+def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None):
     topic = _clean_next_lesson_text(classroom.get('topic'), 120) or '本节课程'
     course = _clean_next_lesson_text(classroom.get('course'), 120) or topic
     weak_points = _clean_next_lesson_list(report.get('weak_points', []), 5)
@@ -3898,10 +4022,29 @@ def _build_next_lesson_plan(classroom, report, overrides):
         220,
     )
 
+    course_lessons = (knowledge_context or {}).get("lessons", [])
+    course_kp_labels = [
+        kp.get("label", "")
+        for kp in (knowledge_context or {}).get("knowledge_points", [])
+        if kp.get("label")
+    ]
+
+    next_lesson_from_course = None
+    if course_lessons:
+        current_topic_norm = _compact_text_key(topic)
+        for i, lesson in enumerate(course_lessons):
+            lesson_title = _clean_next_lesson_text(lesson.get("title", ""), 120)
+            if lesson_title and _compact_text_key(lesson_title) == current_topic_norm:
+                if i + 1 < len(course_lessons):
+                    next_lesson_from_course = course_lessons[i + 1]
+                break
+        if next_lesson_from_course is None and len(course_lessons) > 1:
+            next_lesson_from_course = course_lessons[1] if _compact_text_key(course_lessons[0].get("title", "")) == current_topic_norm else course_lessons[0]
+
     default_topic = (
         f"{'、'.join(weak_points[:2])}补强与应用"
         if weak_points
-        else f"{topic}进阶应用"
+        else (next_lesson_from_course or {}).get("title", "") or f"{topic}进阶应用"
     )
     next_topic = (
         _clean_next_lesson_text(overrides.get('topic'), 120)
@@ -3918,6 +4061,7 @@ def _build_next_lesson_plan(classroom, report, overrides):
     focus_points = (
         _clean_next_lesson_list(overrides.get('focus_points'), 6)
         or weak_points[:4]
+        or course_kp_labels[:4]
         or _clean_next_lesson_list([next_topic], 1)
     )
     review_points = (
@@ -3937,6 +4081,8 @@ def _build_next_lesson_plan(classroom, report, overrides):
         rationale_parts.append(f"可利用已掌握的{'、'.join(strong_points[:2])}做迁移。")
     if next_recommendation:
         rationale_parts.append(next_recommendation)
+    if next_lesson_from_course:
+        rationale_parts.append(f"课程大纲下一课：{next_lesson_from_course.get('title', '')}。")
     rationale = ' '.join(rationale_parts) or '根据本节课堂表现，建议进入下一阶段学习。'
     source_id = _clean_next_lesson_text(classroom.get('id'), 128)
     course_root_id = _clean_next_lesson_text(classroom.get('course_root_id'), 128) or source_id
@@ -3949,13 +4095,24 @@ def _build_next_lesson_plan(classroom, report, overrides):
     except (TypeError, ValueError):
         lesson_depth = 1
 
-    ppt_notes = '\n'.join([
+    ppt_notes_lines = [
         '【连续课堂上下文】',
         f'上一课主题：{topic}',
         f'上一课得分：{report.get("score", 0)}%',
         f'上一课回顾：{"；".join(review_points)}',
         f'薄弱点：{"、".join(weak_points) or "暂无明显薄弱点"}',
         f'强项：{"、".join(strong_points) or "暂无稳定强项"}',
+    ]
+
+    course_summary = (knowledge_context or {}).get("summary", "")
+    if course_summary:
+        ppt_notes_lines.append(f'课程简介：{course_summary}')
+    if course_lessons:
+        lesson_titles = [l.get("title", "") for l in course_lessons[:6] if l.get("title")]
+        if lesson_titles:
+            ppt_notes_lines.append(f'课程大纲相关课次：{"、".join(lesson_titles)}')
+
+    ppt_notes_lines.extend([
         '',
         '【下一堂课生成要求】',
         f'本课主题：{next_topic}',
@@ -3965,6 +4122,7 @@ def _build_next_lesson_plan(classroom, report, overrides):
         '请在 PPT 前 1-2 页简要总结上一堂课讲了什么与学生表现，再进入本节新内容。',
         '新内容需要自然承接薄弱点和已掌握内容，避免直接展示画像字段。',
     ])
+    ppt_notes = '\n'.join(ppt_notes_lines)
 
     return {
         'topic': next_topic,
@@ -3984,6 +4142,8 @@ def _build_next_lesson_plan(classroom, report, overrides):
         'lesson_depth': lesson_depth,
         'lesson_index': lesson_index,
         'lesson_kind': 'next_lesson',
+        'course_lesson_title': (next_lesson_from_course or {}).get('title', ''),
+        'course_knowledge_points': course_kp_labels[:6],
     }
 
 
@@ -4014,7 +4174,12 @@ def interactive_classroom_next_lesson_plan(classroom_id):
         CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
 
     data = request.json or {}
-    plan = _build_next_lesson_plan(classroom, report, data)
+    course_name = classroom.get('course') or classroom.get('topic') or ''
+    topic = classroom.get('topic', '')
+    knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+        user_id, course_name, topic,
+    )
+    plan = _build_next_lesson_plan(classroom, report, data, knowledge_context)
     return jsonify({'success': True, 'plan': plan})
 
 
@@ -4149,11 +4314,21 @@ def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
             storage=CLASSROOM_STORAGE,
             user_id=user_id,
         )
+        topic = classroom.get('topic', '')
+        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
+            user_id, course_name, topic,
+        )
+        report['knowledge_evidence'] = resolve_knowledge_evidence(
+            report.get('knowledge_summary', {}),
+            knowledge_context,
+            classroom,
+        )
         proposals = _analyze_classroom_profile_updates(
             user_id,
             classroom,
             report,
             events,
+            knowledge_context=knowledge_context,
         )
         report['profile_update_count'] = len(proposals)
         report['profile_update_ids'] = [
