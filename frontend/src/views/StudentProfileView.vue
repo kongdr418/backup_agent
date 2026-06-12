@@ -8,7 +8,7 @@
         <div class="hero-copy">
           <div class="eyebrow"><UserRound :size="15" /> 学习者中心</div>
           <h1>让每次生成，更懂你的学习方式</h1>
-          <p>这份画像是智慧课堂的统一学习档案。当前先由你维护基本信息和偏好，后续课堂表现会在确认后逐步补充课程画像。</p>
+          <p>这是你的个性化学习档案。系统会结合你的偏好和学习表现，持续调整课堂内容与练习。</p>
         </div>
         <div class="hero-actions">
           <span class="save-state" :class="{ saved: !dirty && !loading }">
@@ -58,7 +58,7 @@
             <Sparkles :size="17" />
             <div>
               <strong>Profile Agent 已接入</strong>
-              <p>课堂证据只会生成待确认建议，未经你的确认不会修改正式课程画像。</p>
+              <p>课堂表现只会生成学习建议，未经你的确认不会改变个性化学习设置。</p>
             </div>
           </div>
         </aside>
@@ -183,12 +183,47 @@
             </div>
           </section>
 
+          <section class="profile-card form-card">
+            <div class="section-head">
+              <div class="section-icon"><BrainCircuit :size="19" /></div>
+              <div>
+                <h2>认知与兴趣</h2>
+                <p>这是跨课程生效的全局画像，保存后会影响课堂讲解方式和案例语境。</p>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field field-wide">
+                <span>认知偏好</span>
+                <n-select
+                  v-model:value="selectedCognitivePreferences"
+                  :options="cognitivePreferenceOptions"
+                  multiple
+                  placeholder="选择更容易理解内容的方式"
+                />
+                <small>可多选。手动保存的偏好会作为已确认特征进入生成策略。</small>
+              </label>
+              <label class="field field-wide">
+                <span>兴趣方向</span>
+                <n-select
+                  v-model:value="selectedInterestDirections"
+                  :options="interestDirectionOptions"
+                  multiple
+                  filterable
+                  tag
+                  placeholder="选择或输入感兴趣的应用方向"
+                />
+                <small>兴趣方向用于选择案例背景，不会改变课程知识目标。</small>
+              </label>
+            </div>
+          </section>
+
           <section class="profile-card insight-card">
             <div class="section-head">
               <div class="section-icon"><BookOpenCheck :size="19" /></div>
               <div>
-                <h2>课程画像</h2>
-                <p>只展示已经确认的知识点掌握度和跨课堂趋势。</p>
+                <h2>我的课程学习情况</h2>
+                <p>查看知识点掌握情况、当前学习卡点和知识应用情况。</p>
               </div>
               <button
                 type="button"
@@ -230,42 +265,60 @@
                     <strong>{{ point.score }}%</strong>
                   </div>
                 </div>
+                <div class="course-trait-grid">
+                  <div>
+                    <span>当前学习卡点</span>
+                    <div class="trait-chips">
+                      <em
+                        v-for="pattern in confirmedErrorPatterns(course)"
+                        :key="pattern"
+                      >
+                        {{ errorPatternLabel(pattern) }}
+                      </em>
+                      <small v-if="!confirmedErrorPatterns(course).length">暂未发现稳定的学习卡点</small>
+                    </div>
+                  </div>
+                  <div>
+                    <span>知识应用情况</span>
+                    <strong>{{ transferAbilityText(course) }}</strong>
+                  </div>
+                </div>
               </article>
             </div>
-            <div v-else class="empty-panel">完成课堂并确认画像建议后，这里会形成课程掌握度。</div>
+            <div v-else class="empty-panel">完成课堂和练习后，这里会逐步形成你的课程学习分析。</div>
           </section>
 
           <section class="profile-card insight-card">
             <div class="section-head">
               <div class="section-icon warm"><Bot :size="19" /></div>
               <div>
-                <h2>待确认更新</h2>
-                <p>每条建议都保留证据、原因、置信度和调整前后值。</p>
+                <h2>学习分析建议</h2>
+                <p>你可以决定是否将分析结果用于后续个性化课堂和练习。</p>
               </div>
             </div>
             <div v-if="pendingUpdates.length" class="update-list">
               <article v-for="update in pendingUpdates" :key="update.id" class="update-card">
                 <div class="update-head">
                   <div>
-                    <span>{{ update.course_name || '课程画像' }}</span>
-                    <strong>{{ update.knowledge_point_name || '知识点' }}</strong>
+                    <span>{{ update.course_name || '课程学习情况' }}</span>
+                    <strong>{{ profileUpdateTitle(update) }}</strong>
                   </div>
-                  <em>置信度 {{ Math.round((update.confidence || 0) * 100) }}%</em>
+                  <em>分析可信度 {{ Math.round((update.confidence || 0) * 100) }}%</em>
                 </div>
                 <div class="change-value">
-                  {{ formatMasteryChange(update.before || 0, update.after || 0) }}
+                  {{ formatProfileUpdateChange(update) }}
                 </div>
                 <p>{{ update.reason || '系统根据近期学习证据提出此建议。' }}</p>
-                <small>关联证据 {{ update.evidence_ids?.length || 0 }} 条</small>
+                <small>根据 {{ update.evidence_ids?.length || 0 }} 次学习表现分析</small>
                 <div class="update-actions">
                   <button
                     class="accept-btn"
                     :disabled="resolvingUpdateId === update.id"
                     @click="handleUpdate(update, 'accept')"
                   >
-                    接受建议
+                    应用到个性化学习
                   </button>
-                  <label>
+                  <label v-if="update.type === 'mastery_adjustment'">
                     <input
                       v-model.number="modifiedScores[update.id]"
                       type="number"
@@ -284,12 +337,12 @@
                     :disabled="resolvingUpdateId === update.id"
                     @click="handleUpdate(update, 'ignore')"
                   >
-                    忽略
+                    暂不采用
                   </button>
                 </div>
               </article>
             </div>
-            <div v-else class="empty-panel">当前没有待确认的画像更新。</div>
+            <div v-else class="empty-panel">当前没有新的学习分析建议。</div>
           </section>
 
           <section class="profile-card insight-card">
@@ -297,7 +350,7 @@
               <div class="section-icon"><History :size="19" /></div>
               <div>
                 <h2>下一步建议</h2>
-                <p>推荐同时参考最近课堂报告和已确认的历史课程画像。</p>
+                <p>根据最近课堂表现和已确认的课程学习情况推荐。</p>
               </div>
             </div>
             <div v-if="recentRecommendations.length" class="recommendation-list">
@@ -321,6 +374,7 @@ import { NInput, NSelect, useDialog, useMessage, type SelectOption } from 'naive
 import {
   BookOpenCheck,
   Bot,
+  BrainCircuit,
   CircleDashed,
   CircleCheckBig,
   History,
@@ -338,6 +392,7 @@ import {
   resolveLearnerProfileUpdate,
   saveLearnerProfile,
   type LearnerProfile,
+  type LearnerCourseProfile,
   type LearnerProfileUpdate,
 } from '@/api/learnerProfile'
 import {
@@ -353,8 +408,9 @@ import {
   writeLegacyStudentProfile,
 } from '@/utils/learnerProfile'
 import {
-  formatMasteryChange,
+  formatProfileUpdateChange,
   pendingProfileUpdates,
+  profileUpdateTitle,
   trendLabel,
 } from '@/utils/learnerProfileUpdates'
 
@@ -404,12 +460,72 @@ const contentStyleOptions: SelectOption[] = [
   { label: '代码实操', value: '代码实操' },
   { label: '精简总结', value: '精简总结' },
 ]
+const cognitivePreferenceOptions: SelectOption[] = [
+  { label: '图示结构', value: 'visual_structure' },
+  { label: '案例理解', value: 'example_based' },
+  { label: '步骤推导', value: 'step_by_step' },
+  { label: '对比辨析', value: 'comparison' },
+  { label: '文字概括', value: 'text_summary' },
+  { label: '实践操作', value: 'hands_on' },
+]
+const interestDirectionOptions: SelectOption[] = [
+  { label: '人工智能应用', value: '人工智能应用' },
+  { label: '软件开发', value: '软件开发' },
+  { label: '数据分析', value: '数据分析' },
+  { label: '工程实践', value: '工程实践' },
+  { label: '生活应用', value: '生活应用' },
+]
+
+const selectedCognitivePreferences = computed<string[]>({
+  get: () => Object.entries(profile.value.global_traits?.cognitive_preferences || {})
+    .filter(([, trait]) => trait.status === 'confirmed')
+    .map(([key]) => key),
+  set: (keys) => {
+    const previous = profile.value.global_traits?.cognitive_preferences || {}
+    profile.value.global_traits.cognitive_preferences = Object.fromEntries(
+      keys.map((key) => [
+        key,
+        {
+          ...(previous[key] || {}),
+          weight: previous[key]?.weight || 1,
+          confidence: 1,
+          source: 'self_reported',
+          status: 'confirmed',
+          evidence_ids: previous[key]?.evidence_ids || [],
+        },
+      ]),
+    )
+  },
+})
+
+const selectedInterestDirections = computed<string[]>({
+  get: () => (profile.value.global_traits?.interest_directions || [])
+    .filter((trait) => trait.status === 'confirmed')
+    .map((trait) => trait.label),
+  set: (labels) => {
+    const previous = new Map(
+      (profile.value.global_traits?.interest_directions || [])
+        .map((trait) => [trait.label, trait]),
+    )
+    profile.value.global_traits.interest_directions = labels.map((label) => ({
+      ...(previous.get(label) || {}),
+      label,
+      weight: previous.get(label)?.weight || 1,
+      confidence: 1,
+      source: 'self_reported',
+      status: 'confirmed',
+      evidence_ids: previous.get(label)?.evidence_ids || [],
+    }))
+  },
+})
 
 const avatarText = computed(() => profile.value.basic.display_name.trim().slice(0, 1) || '学')
 const summaryTags = computed(() => [
   profile.value.preferences.goal,
   ...profile.value.preferences.content_style,
   profile.value.preferences.preferred_difficulty,
+  ...selectedCognitivePreferences.value.map(cognitivePreferenceLabel),
+  ...selectedInterestDirections.value,
 ].filter(Boolean))
 const courseProfiles = computed(() => Object.values(profile.value.courses || {}))
 const pendingUpdates = computed(() => pendingProfileUpdates(profile.value.pending_updates || []))
@@ -478,21 +594,21 @@ function confirmClearPreferences() {
 
 function confirmClearAllCourses() {
   confirmProfileClear({
-    title: '清空全部课程画像',
-    content: '将删除所有已确认课程掌握度，并移除相关待确认更新和推荐，然后立即写入学习档案。',
+    title: '清空全部课程学习情况',
+    content: '将删除所有已确认的知识点掌握情况，并移除相关学习分析建议和推荐。',
     positiveText: '全部清空',
     apply: clearLearnerCourses,
-    success: '已清空全部课程画像',
+    success: '已清空全部课程学习情况',
   })
 }
 
 function confirmClearCourse(courseId: string, courseName?: string) {
   confirmProfileClear({
-    title: '清空课程画像',
-    content: `将删除“${courseName || '该课程'}”的掌握度画像，并移除该课程相关待确认更新和推荐，然后立即写入学习档案。`,
+    title: '清空课程学习情况',
+    content: `将删除“${courseName || '该课程'}”的知识点掌握情况，并移除相关学习分析建议和推荐。`,
     positiveText: '清空该课程',
     apply: (current) => clearLearnerCourseProfile(current, courseId),
-    success: '已清空该课程画像',
+    success: '已清空该课程学习情况',
   })
 }
 
@@ -540,10 +656,14 @@ async function handleUpdate(
   update: LearnerProfileUpdate,
   action: 'accept' | 'modify' | 'ignore',
 ) {
-  const modifiedAfter = action === 'modify'
-    ? modifiedScores.value[update.id] ?? update.after
+  const modifiedAfter = action === 'modify' && update.type === 'mastery_adjustment'
+    ? modifiedScores.value[update.id] ?? Number(update.after || 0)
     : undefined
-  if (action === 'modify' && (modifiedAfter === undefined || modifiedAfter < 0 || modifiedAfter > 100)) {
+  if (
+    action === 'modify'
+    && update.type === 'mastery_adjustment'
+    && (modifiedAfter === undefined || modifiedAfter < 0 || modifiedAfter > 100)
+  ) {
     message.warning('请输入 0-100 的掌握度')
     return
   }
@@ -554,12 +674,50 @@ async function handleUpdate(
     profile.value = saved
     dirty.value = false
     startDirtyWatch()
-    message.success(action === 'ignore' ? '已忽略画像建议' : '课程画像已更新')
+    message.success(action === 'ignore' ? '已暂不采用这条建议' : '已应用到个性化学习')
   } catch (error) {
     message.error(error instanceof Error ? error.message : '画像建议处理失败')
   } finally {
     resolvingUpdateId.value = ''
   }
+}
+
+const ERROR_PATTERN_LABELS: Record<string, string> = {
+  concept_confusion: '容易混淆相近概念',
+  prerequisite_gap: '建议先补充相关基础知识',
+  procedural_error: '解题步骤还不稳定',
+  application_failure: '将知识用于新问题时有困难',
+  careless_error: '需要加强题目条件检查',
+  expression_gap: '思路基本正确，但表达不够完整',
+}
+
+const TRANSFER_LEVEL_LABELS: Record<string, string> = {
+  unobserved: '完成更多练习后生成分析',
+  recall: '已能理解基础概念',
+  near_transfer: '能完成相似类型的问题',
+  far_transfer: '能解决新的应用问题',
+  integrated_problem_solving: '能综合运用多个知识点',
+}
+
+function cognitivePreferenceLabel(key: string): string {
+  return String(cognitivePreferenceOptions.find((item) => item.value === key)?.label || key)
+}
+
+function confirmedErrorPatterns(course: LearnerCourseProfile): string[] {
+  return Object.entries(course.error_patterns || {})
+    .filter(([, pattern]) => pattern.status === 'confirmed')
+    .map(([key]) => key)
+}
+
+function errorPatternLabel(key: string): string {
+  return ERROR_PATTERN_LABELS[key] || key
+}
+
+function transferAbilityText(course: LearnerCourseProfile): string {
+  const transfer = course.transfer_ability
+  if (!transfer || transfer.status !== 'confirmed') return '完成更多练习后生成分析'
+  const label = TRANSFER_LEVEL_LABELS[transfer.level] || transfer.level
+  return label
 }
 
 onMounted(loadProfile)
@@ -1116,6 +1274,52 @@ onBeforeUnmount(() => stopWatching?.())
   background: rgb(var(--nav-classroom-rgb));
 }
 
+.course-trait-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(120px, 0.8fr);
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(var(--line-rgb));
+}
+
+.course-trait-grid > div {
+  min-width: 0;
+}
+
+.course-trait-grid > div > span {
+  display: block;
+  margin-bottom: 7px;
+  color: rgb(var(--ink-4-rgb));
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.course-trait-grid strong {
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+}
+
+.trait-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trait-chips em {
+  border-radius: 999px;
+  background: rgb(var(--amber-rgb) / 0.10);
+  color: rgb(var(--amber-rgb));
+  padding: 4px 8px;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.trait-chips small {
+  color: rgb(var(--ink-4-rgb));
+  font-size: 11px;
+}
+
 .change-value {
   margin: 12px 0 6px;
   color: rgb(var(--nav-classroom-rgb));
@@ -1233,6 +1437,10 @@ onBeforeUnmount(() => stopWatching?.())
 
   .field-wide {
     grid-column: auto;
+  }
+
+  .course-trait-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -561,7 +561,7 @@ def _normalize_generation_strategy(strategy: dict[str, Any] | None) -> dict[str,
         for value in strategy.get("avoid", [])
         if _clean_text(str(value))
     ][:8]
-    return {
+    result = {
         "strategy_version": int(strategy.get("strategy_version", 1) or 1),
         "course_id": _clean_text(str(strategy.get("course_id", "")))[:80],
         "course_name": _clean_text(str(strategy.get("course_name", "")))[:120],
@@ -582,6 +582,15 @@ def _normalize_generation_strategy(strategy: dict[str, Any] | None) -> dict[str,
             str(strategy.get("profile_updated_at", ""))
         )[:40],
     }
+    for key in ("content_strategy", "assessment_strategy", "interaction_strategy"):
+        value = strategy.get(key)
+        result[key] = value if isinstance(value, dict) else {}
+    result["evidence_ids"] = [
+        _clean_text(str(value))[:180]
+        for value in strategy.get("evidence_ids", [])
+        if _clean_text(str(value))
+    ][:20]
+    return result
 
 
 def _option_rows(correct: str, distractors: list[str], offset: int = 0) -> tuple[list[dict[str, str]], str]:
@@ -1619,10 +1628,10 @@ class InteractiveClassroomGenerator:
                 content={
                     "extracted_text": [
                         point,
-                        (
-                            f"围绕{point}完成迁移应用和综合判断。"
-                            if task_type == "challenge_practice"
-                            else f"围绕{point}复习概念、判断依据和应用步骤。"
+                        self._practice_strategy_instruction(
+                            point,
+                            task_type,
+                            generation_strategy,
                         ),
                     ]
                 },
@@ -1646,8 +1655,48 @@ class InteractiveClassroomGenerator:
             else f"补强练习：{'、'.join(clean_points[:3])}"
         )
         scene.content["practice_task_type"] = task_type
+        assessment = (
+            generation_strategy.get("assessment_strategy", {})
+            if isinstance(generation_strategy, dict)
+            else {}
+        )
+        scene.content["error_targets"] = list(assessment.get("error_targets", []))
+        scene.content["transfer_level"] = assessment.get(
+            "transfer_level",
+            "unobserved",
+        )
         scene.content["covered_scene_ids"] = []
         return scene
+
+    @staticmethod
+    def _practice_strategy_instruction(
+        point: str,
+        task_type: str,
+        generation_strategy: dict[str, Any] | None,
+    ) -> str:
+        assessment = (
+            generation_strategy.get("assessment_strategy", {})
+            if isinstance(generation_strategy, dict)
+            else {}
+        )
+        error_targets = set(assessment.get("error_targets", []))
+        requirements: list[str] = []
+        if "concept_confusion" in error_targets:
+            requirements.append("加入相近概念对比辨析")
+        if "prerequisite_gap" in error_targets:
+            requirements.append("先检查前置知识")
+        if "procedural_error" in error_targets:
+            requirements.append("要求展示关键步骤")
+        if "application_failure" in error_targets:
+            requirements.append("加入变式和应用情境")
+        if "expression_gap" in error_targets:
+            requirements.append("加入简答表达与要点核对")
+        base = (
+            f"围绕{point}完成迁移应用和综合判断"
+            if task_type == "challenge_practice"
+            else f"围绕{point}复习概念、判断依据和应用步骤"
+        )
+        return f"{base}；{'；'.join(requirements)}。" if requirements else f"{base}。"
 
     def _build_mindmap_prompt(
         self,

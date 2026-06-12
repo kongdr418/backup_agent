@@ -18,6 +18,8 @@ from memory_manager import MemoryManager
 from video_generator import VideoGenerator
 from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.profile_agent import ProfileAgent, build_course_id
+from learner_profile.orchestrator import ProfileOrchestrator
+from learner_profile.adapters import build_ppt_strategy_notes
 from course_knowledge import (
     CourseKnowledgeIngestor,
     CourseKnowledgeRetriever,
@@ -98,6 +100,7 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
 PROFILE_AGENT = ProfileAgent()
+PROFILE_ORCHESTRATOR = ProfileOrchestrator()
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 COURSE_KNOWLEDGE_STORAGE = CourseKnowledgeStorage(BACKEND_DIR)
 COURSE_KNOWLEDGE_EMBEDDINGS = LocalEmbeddingService()
@@ -2587,7 +2590,12 @@ def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
 
     # 注入学生画像（来自课堂入口时）
     if source == 'interactive-classroom' and PPT_LEARNING_STRATEGY_TITLE not in notes:
-        learning_strategy = LEARNER_PROFILE_STORAGE.build_ppt_learning_strategy(user_id)
+        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+        strategy = PROFILE_AGENT.build_generation_strategy(
+            profile,
+            course or topic or '通用课程',
+        )
+        learning_strategy = build_ppt_strategy_notes(strategy)
         notes = '\n\n'.join(part for part in [notes, learning_strategy] if part)
     return notes or None
 
@@ -3913,13 +3921,20 @@ def _analyze_classroom_profile_updates(
             user_id,
             observations,
         )
-        proposals = PROFILE_AGENT.analyze_learning_evidence(
+        mastery_proposals = PROFILE_AGENT.analyze_learning_evidence(
             profile,
             classroom,
             report,
             events,
             observations=observations,
         )
+        trait_proposals = PROFILE_ORCHESTRATOR.analyze(
+            profile=profile,
+            classroom=classroom,
+            report=report,
+            events=events,
+        )
+        proposals = [*mastery_proposals, *trait_proposals]
         if proposals:
             LEARNER_PROFILE_STORAGE.add_pending_updates(user_id, proposals)
         return proposals
@@ -4042,7 +4057,13 @@ def _clean_next_lesson_list(values, max_items=6):
     return result
 
 
-def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None):
+def _build_next_lesson_plan(
+    classroom,
+    report,
+    overrides,
+    knowledge_context=None,
+    generation_strategy=None,
+):
     topic = _clean_next_lesson_text(classroom.get('topic'), 120) or '本节课程'
     course = _clean_next_lesson_text(classroom.get('course'), 120) or topic
     weak_points = _clean_next_lesson_list(report.get('weak_points', []), 5)
@@ -4051,6 +4072,19 @@ def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None
     next_recommendation = _clean_next_lesson_text(
         report.get('next_recommendation'),
         220,
+    )
+    assessment_strategy = (
+        generation_strategy.get("assessment_strategy", {})
+        if isinstance(generation_strategy, dict)
+        else {}
+    )
+    transfer_level = _clean_next_lesson_text(
+        assessment_strategy.get("transfer_level"),
+        60,
+    ) or "unobserved"
+    error_targets = _clean_next_lesson_list(
+        assessment_strategy.get("error_targets", []),
+        6,
     )
 
     course_lessons = (knowledge_context or {}).get("lessons", [])
@@ -4114,6 +4148,10 @@ def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None
         rationale_parts.append(next_recommendation)
     if next_lesson_from_course:
         rationale_parts.append(f"课程大纲下一课：{next_lesson_from_course.get('title', '')}。")
+    if transfer_level != "unobserved":
+        rationale_parts.append(f"当前知识迁移水平：{transfer_level}。")
+    if error_targets:
+        rationale_parts.append(f"下一课需要继续处理错误模式：{'、'.join(error_targets)}。")
     rationale = ' '.join(rationale_parts) or '根据本节课堂表现，建议进入下一阶段学习。'
     source_id = _clean_next_lesson_text(classroom.get('id'), 128)
     course_root_id = _clean_next_lesson_text(classroom.get('course_root_id'), 128) or source_id
@@ -4133,6 +4171,8 @@ def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None
         f'上一课回顾：{"；".join(review_points)}',
         f'薄弱点：{"、".join(weak_points) or "暂无明显薄弱点"}',
         f'强项：{"、".join(strong_points) or "暂无稳定强项"}',
+        f'知识迁移水平：{transfer_level}',
+        f'错误模式：{"、".join(error_targets) or "暂无稳定错误模式"}',
     ]
 
     course_summary = (knowledge_context or {}).get("summary", "")
@@ -4175,6 +4215,8 @@ def _build_next_lesson_plan(classroom, report, overrides, knowledge_context=None
         'lesson_kind': 'next_lesson',
         'course_lesson_title': (next_lesson_from_course or {}).get('title', ''),
         'course_knowledge_points': course_kp_labels[:6],
+        'transfer_level': transfer_level,
+        'error_targets': error_targets,
     }
 
 
@@ -4217,7 +4259,18 @@ def interactive_classroom_next_lesson_plan(classroom_id):
             classroom_id, type(exc).__name__,
         )
         knowledge_context = None
-    plan = _build_next_lesson_plan(classroom, report, data, knowledge_context)
+    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    generation_strategy = PROFILE_AGENT.build_generation_strategy(
+        profile,
+        course_name or topic or '通用课程',
+    )
+    plan = _build_next_lesson_plan(
+        classroom,
+        report,
+        data,
+        knowledge_context,
+        generation_strategy,
+    )
     return jsonify({'success': True, 'plan': plan})
 
 

@@ -18,9 +18,18 @@ export interface LearnerProfileSummary {
   description: string
 }
 
+const COGNITIVE_PREFERENCE_LABELS: Record<string, string> = {
+  visual_structure: '图示结构',
+  example_based: '案例理解',
+  step_by_step: '步骤推导',
+  comparison: '对比辨析',
+  text_summary: '文字概括',
+  hands_on: '实践操作',
+}
+
 export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
   return {
-    profile_version: 1,
+    profile_version: 2,
     user_id: userId,
     basic: {
       display_name: '',
@@ -33,6 +42,10 @@ export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
       content_style: [],
       preferred_difficulty: '',
       tutoring_style: '',
+    },
+    global_traits: {
+      cognitive_preferences: {},
+      interest_directions: [],
     },
     courses: {},
     pending_updates: [],
@@ -155,11 +168,19 @@ export function toLegacyStudentProfile(profile: LearnerProfile): Required<Studen
 }
 
 export function buildLearnerProfileSummary(profile: LearnerProfile): LearnerProfileSummary {
+  const cognitiveTraits = Object.entries(profile.global_traits?.cognitive_preferences || {})
+    .filter(([, trait]) => trait.status === 'confirmed')
+    .map(([key]) => COGNITIVE_PREFERENCE_LABELS[key] || key)
+  const interestTraits = (profile.global_traits?.interest_directions || [])
+    .filter((trait) => trait.status === 'confirmed')
+    .map((trait) => trait.label)
   const tags = [
     profile.basic.learning_stage,
     profile.basic.learning_basis,
     profile.preferences.goal,
     ...profile.preferences.content_style,
+    ...cognitiveTraits,
+    ...interestTraits,
     profile.preferences.preferred_difficulty
       ? `${profile.preferences.preferred_difficulty}难度`
       : '',

@@ -8,8 +8,13 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from .schemas import (
+    PROFILE_VERSION,
+    default_global_traits,
+    normalize_courses,
+    normalize_global_traits,
+)
 
-PROFILE_VERSION = 1
 _SAFE_USER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 PPT_LEARNING_STRATEGY_TITLE = "【学习者画像教学策略】"
 
@@ -81,6 +86,7 @@ class LearnerProfileStorage:
                 "preferred_difficulty": "",
                 "tutoring_style": "",
             },
+            "global_traits": default_global_traits(),
             "courses": {},
             "pending_updates": [],
             "recent_recommendations": [],
@@ -144,7 +150,8 @@ class LearnerProfileStorage:
                     80,
                 ),
             },
-            "courses": _safe_collection(payload.get("courses"), {}),
+            "global_traits": normalize_global_traits(payload.get("global_traits")),
+            "courses": normalize_courses(payload.get("courses"), updated_at),
             "pending_updates": _safe_collection(payload.get("pending_updates"), []),
             "recent_recommendations": _safe_collection(
                 payload.get("recent_recommendations"),
@@ -212,6 +219,11 @@ class LearnerProfileStorage:
                     if isinstance(payload.get("preferences"), dict)
                     else existing.get("preferences", {})
                 ),
+                "global_traits": (
+                    payload.get("global_traits")
+                    if isinstance(payload.get("global_traits"), dict)
+                    else existing.get("global_traits", default_global_traits())
+                ),
             }
             for key in (
                 "courses",
@@ -271,17 +283,10 @@ class LearnerProfileStorage:
         user_id: str,
         update_id: str,
         action: str,
-        modified_after: int | float | None = None,
+        modified_after: Any | None = None,
     ) -> dict[str, Any]:
         if action not in {"accept", "modify", "ignore"}:
             raise ValueError("invalid action")
-        if action == "modify":
-            if modified_after is None:
-                raise ValueError("modified_after is required")
-            score = float(modified_after)
-            if score < 0 or score > 100:
-                raise ValueError("modified_after must be between 0 and 100")
-
         with self._lock:
             profile = self.load_profile(user_id)
             pending = profile.setdefault("pending_updates", [])
@@ -303,6 +308,37 @@ class LearnerProfileStorage:
                 proposal["status"] = "ignored"
                 proposal["resolved_at"] = now
                 return self.save_profile(user_id, profile)
+
+            proposal_type = _clean_text(proposal.get("type"), 80)
+            if proposal_type != "mastery_adjustment":
+                applied_value = (
+                    modified_after
+                    if action == "modify"
+                    else proposal.get("after")
+                )
+                if applied_value is None:
+                    raise ValueError("proposal is missing after value")
+                self._apply_trait_update(profile, proposal, applied_value, now)
+                proposal["status"] = "modified" if action == "modify" else "accepted"
+                proposal["applied_after"] = json.loads(
+                    json.dumps(applied_value, ensure_ascii=False)
+                )
+                proposal["resolved_at"] = now
+                self._append_update_history(
+                    profile,
+                    proposal,
+                    action,
+                    applied_value,
+                    now,
+                )
+                return self.save_profile(user_id, profile)
+
+            if action == "modify":
+                if modified_after is None:
+                    raise ValueError("modified_after is required")
+                score = float(modified_after)
+                if score < 0 or score > 100:
+                    raise ValueError("modified_after must be between 0 and 100")
 
             applied_score = int(
                 round(
@@ -419,6 +455,97 @@ class LearnerProfileStorage:
                 if not course_buffer:
                     evidence_buffer.pop(course_id, None)
             return self.save_profile(user_id, profile)
+
+    def _apply_trait_update(
+        self,
+        profile: dict[str, Any],
+        proposal: dict[str, Any],
+        applied_value: Any,
+        now: str,
+    ) -> None:
+        proposal_type = _clean_text(proposal.get("type"), 80)
+        trait_key = _clean_text(proposal.get("trait_key"), 120)
+        value = json.loads(json.dumps(applied_value, ensure_ascii=False))
+        if isinstance(value, dict):
+            value["status"] = "confirmed"
+            value["updated_at"] = now
+            value.setdefault("confidence", proposal.get("confidence", 0.5))
+            value.setdefault("evidence_ids", proposal.get("evidence_ids", []))
+
+        if proposal_type == "cognitive_preference_update":
+            if not trait_key:
+                raise ValueError("proposal is missing trait_key")
+            traits = profile.setdefault("global_traits", default_global_traits())
+            traits.setdefault("cognitive_preferences", {})[trait_key] = value
+            return
+
+        if proposal_type == "interest_direction_update":
+            traits = profile.setdefault("global_traits", default_global_traits())
+            interests = traits.setdefault("interest_directions", [])
+            label = _clean_text(
+                value.get("label") if isinstance(value, dict) else trait_key,
+                120,
+            )
+            interests[:] = [
+                row
+                for row in interests
+                if not isinstance(row, dict) or _clean_text(row.get("label"), 120) != label
+            ]
+            if isinstance(value, dict):
+                interests.append(value)
+            return
+
+        course_id = _clean_text(proposal.get("course_id"), 80)
+        if not course_id:
+            raise ValueError("proposal is missing course")
+        courses = profile.setdefault("courses", {})
+        course = courses.setdefault(
+            course_id,
+            normalize_courses(
+                {
+                    course_id: {
+                        "course_id": course_id,
+                        "course_name": _clean_text(proposal.get("course_name"), 120),
+                    }
+                },
+                now,
+            )[course_id],
+        )
+        if proposal_type == "error_pattern_update":
+            if not trait_key:
+                raise ValueError("proposal is missing trait_key")
+            course.setdefault("error_patterns", {})[trait_key] = value
+        elif proposal_type == "transfer_ability_update":
+            course["transfer_ability"] = value
+        else:
+            raise ValueError("unsupported profile update type")
+        course["updated_at"] = now
+
+    def _append_update_history(
+        self,
+        profile: dict[str, Any],
+        proposal: dict[str, Any],
+        action: str,
+        applied_value: Any,
+        now: str,
+    ) -> None:
+        history = profile.setdefault("update_history", [])
+        history.append(
+            {
+                "update_id": proposal.get("id"),
+                "type": proposal.get("type"),
+                "scope": proposal.get("scope"),
+                "course_id": proposal.get("course_id", ""),
+                "trait_key": proposal.get("trait_key", ""),
+                "before": proposal.get("before"),
+                "after": json.loads(json.dumps(applied_value, ensure_ascii=False)),
+                "action": action,
+                "evidence_ids": proposal.get("evidence_ids", []),
+                "reason": proposal.get("reason", ""),
+                "resolved_at": now,
+            }
+        )
+        profile["update_history"] = history[-100:]
 
     def accumulate_evidence(
         self,
