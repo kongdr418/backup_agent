@@ -619,7 +619,7 @@ async function stopCurrentGeneration() {
 
 function restorePersistedGeneration() {
   const persisted = loadPersistedClassroomGeneration()
-  if (!persisted || persisted.surface !== 'home') return
+  if (!persisted) return
   activeRequestId.value = persisted.requestId
   activeSuccessMessage.value = '课堂已生成'
   loading.value = true
