@@ -13,6 +13,7 @@ const DEFAULTS: ContentSettings = {
   chat_provider: 'minimax',
   content_model: 'deepseek-v4-flash',
   content_provider: 'deepseek',
+  classroom_critic_mode: 'standard',
   ppt_model: 'deepseek-v4-flash',
   ppt_provider: 'deepseek',
   tts_provider: 'mimo-tts',

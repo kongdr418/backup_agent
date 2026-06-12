@@ -98,6 +98,14 @@
               </div>
             </div>
 
+            <!-- ============ 内容可靠性 ============ -->
+            <div v-if="activeSection === 'reliability'" class="max-w-xl">
+              <ClassroomCriticModeControl
+                :model-value="settings.classroom_critic_mode"
+                @update:model-value="onUpdate('classroom_critic_mode', $event)"
+              />
+            </div>
+
             <!-- ============ PPT 生成模型 ============ -->
             <div v-if="activeSection === 'ppt'" class="space-y-5 max-w-xl">
               <div class="space-y-1.5">
@@ -208,7 +216,8 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { NSelect, NRadioGroup, NRadioButton, NInput, useMessage } from 'naive-ui'
-import { Settings, MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, X, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
+import { Settings, MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, ShieldCheck, X, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
+import ClassroomCriticModeControl from '@/components/settings/ClassroomCriticModeControl.vue'
 import { useSettingStore } from '@/stores/settingStore'
 import { verifyModel } from '@/api/providers'
 import type { ProviderInfo, TTSProviderInfo } from '@/types'
@@ -225,8 +234,9 @@ const showKey = reactive<Record<ModuleKey, boolean>>({ chat: false, content: fal
 const verifying = reactive<Record<ModuleKey, boolean>>({ chat: false, content: false, ppt: false, tts: false })
 const verifyResults = reactive<Record<ModuleKey, { success: boolean; message: string } | null>>({ chat: null, content: null, ppt: null, tts: null })
 
-const activeSection = ref<string>('chat')
+const activeSection = ref<string>('reliability')
 const navItems = [
+  { id: 'reliability', label: '内容可靠性', icon: ShieldCheck, subtitle: '智慧课堂防幻觉检查强度' },
   { id: 'chat', label: '对话模型', icon: MessageCircle, subtitle: '智能对话使用的模型' },
   { id: 'content', label: '内容生成', icon: FileText, subtitle: '讲稿、大纲、习题、测验等' },
   { id: 'ppt', label: 'PPT 生成', icon: Presentation, subtitle: 'PPT 工作台使用的模型' },

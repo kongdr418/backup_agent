@@ -22,6 +22,7 @@ export interface InteractiveClassroomGenerateRequest {
   content_api_key?: string
   content_base_url?: string
   content_provider_type?: string
+  critic_mode?: 'off' | 'standard' | 'strict'
   signal?: AbortSignal
 }
 
@@ -113,6 +114,7 @@ export interface InteractiveClassroomPayload {
   lesson_kind?: string
   student_profile?: StudentProfile
   generation_strategy?: Record<string, unknown>
+  critic_summary?: ClassroomCriticSummary
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
   answers_record?: {
@@ -121,6 +123,16 @@ export interface InteractiveClassroomPayload {
       evaluation?: Omit<QuizSubmitResult, 'success' | 'feedback_action'>
     }>
   }
+}
+
+export interface ClassroomCriticSummary {
+  mode: 'off' | 'standard' | 'strict' | string
+  checks: number
+  llm_checks: number
+  retries: number
+  fallbacks: number
+  duration_ms: number
+  issues: string[]
 }
 
 export interface InteractiveClassroomGenerationStatus {
@@ -165,6 +177,8 @@ export interface QuizSubmitResult {
     feedback?: string      // LLM 评语，仅 short_answer 有
     earned_points?: number // 简答题按 (score/100)*points 折算
     covered_points?: string[] // LLM 评出的"学生答到的要点"
+    review_required?: boolean
+    critic?: Record<string, unknown>
     knowledge_point?: string
     points?: number
   }>
@@ -384,6 +398,7 @@ export async function submitInteractiveClassroomAnswer(
     content_api_key?: string
     content_base_url?: string
     content_provider_type?: string
+    critic_mode?: 'off' | 'standard' | 'strict'
   },
 ) {
   const res = await client.post<QuizSubmitResult>(

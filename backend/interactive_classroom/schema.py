@@ -84,6 +84,7 @@ class InteractiveClassroom:
     lesson_index: int = 1
     lesson_kind: str = "root"
     source: dict[str, Any] = field(default_factory=dict)
+    critic_summary: dict[str, Any] = field(default_factory=dict)
     agents: list[dict[str, Any]] = field(default_factory=list)
     knowledge_points: list[str] = field(default_factory=list)
     scenes: list[ClassroomScene] = field(default_factory=list)

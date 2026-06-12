@@ -4,6 +4,19 @@
 
     <div class="flex-1 overflow-y-auto p-6 settings-content">
       <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- 内容可靠性 -->
+        <section class="bg-bg-surface border border-line rounded-card shadow-card">
+          <div class="px-5 py-4 border-b border-line/30">
+            <SectionTitle :icon="ShieldCheck" title="内容可靠性" subtitle="智慧课堂防幻觉检查强度" />
+          </div>
+          <div class="px-5 py-4">
+            <ClassroomCriticModeControl
+              :model-value="settings.classroom_critic_mode"
+              @update:model-value="onUpdate('classroom_critic_mode', $event)"
+            />
+          </div>
+        </section>
+
         <!-- 对话模型 -->
         <section class="bg-bg-surface border border-line rounded-card shadow-card">
           <div class="px-5 py-4 border-b border-line/30">
@@ -189,8 +202,9 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { NSelect, NRadioGroup, NRadioButton, NInput, useMessage } from 'naive-ui'
-import { MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
+import { MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, ShieldCheck, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
 import PageHeader from '@/components/common/PageHeader.vue'
+import ClassroomCriticModeControl from '@/components/settings/ClassroomCriticModeControl.vue'
 import SectionTitle from './_SettingsSection.vue'
 import { useSettingStore } from '@/stores/settingStore'
 import { verifyModel } from '@/api/providers'

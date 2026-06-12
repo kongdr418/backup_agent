@@ -10,6 +10,12 @@ from html import unescape
 from typing import Any, Callable
 from uuid import uuid4
 
+from .critic_service import (
+    ClassroomCriticService,
+    CriticResult,
+    build_grounding_context,
+    normalize_critic_mode,
+)
 from .schema import ClassroomAction, ClassroomScene, InteractiveClassroom
 from .storage import ClassroomStorage
 from .tts_service import (
@@ -721,11 +727,51 @@ class InteractiveClassroomGenerator:
         storage: ClassroomStorage,
         quiz_generator: Any | None = None,
         llm_quiz_enabled: bool = True,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self.backend_dir = backend_dir
         self.storage = storage
         self.quiz_generator = quiz_generator
         self.llm_quiz_enabled = llm_quiz_enabled
+        self.semantic_reviewer = semantic_reviewer
+
+    @staticmethod
+    def _critic_summary(
+        result: CriticResult,
+        *,
+        retried: bool = False,
+        fallback: bool = False,
+    ) -> dict[str, Any]:
+        summary = result.to_dict()
+        summary["retried"] = retried
+        summary["fallback"] = fallback
+        return summary
+
+    @staticmethod
+    def _aggregate_critic_summary(
+        mode: str,
+        scenes: list[ClassroomScene],
+    ) -> dict[str, Any]:
+        summaries = [
+            scene.content.get("critic")
+            for scene in scenes
+            if isinstance(scene.content, dict)
+            and isinstance(scene.content.get("critic"), dict)
+        ]
+        issues: list[str] = []
+        for summary in summaries:
+            for issue in summary.get("issue_codes", []):
+                if issue and issue not in issues:
+                    issues.append(str(issue))
+        return {
+            "mode": normalize_critic_mode(mode),
+            "checks": len(summaries),
+            "llm_checks": sum(bool(row.get("llm_checked")) for row in summaries),
+            "retries": sum(bool(row.get("retried")) for row in summaries),
+            "fallbacks": sum(bool(row.get("fallback")) for row in summaries),
+            "duration_ms": sum(int(row.get("duration_ms", 0) or 0) for row in summaries),
+            "issues": issues[:20],
+        }
 
     def _resolve_ppt_job_dir(self, user_id: str, ppt_job_id: str) -> str:
         if not _is_safe_job_id(ppt_job_id):
@@ -857,46 +903,99 @@ class InteractiveClassroomGenerator:
         targets: list[dict[str, Any]],
         svg_texts: list[str],
         student_profile: dict[str, str] | None = None,
-    ) -> list[dict[str, Any]]:
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        include_critic: bool = False,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
         valid_ids = {str(target.get("id")) for target in targets if target.get("id")}
+        mode = normalize_critic_mode(critic_mode)
+        grounding = build_grounding_context(
+            knowledge_context=knowledge_context,
+            visible_texts=svg_texts,
+            manuscript_note=manuscript_note,
+        )
+        critic = ClassroomCriticService(
+            mode=mode,
+            semantic_reviewer=semantic_reviewer or self.semantic_reviewer,
+        )
+        last_result = CriticResult(
+            passed=False,
+            severity="error",
+            issue_codes=["generation_failed"],
+            grounding_level=grounding.level,
+            retry_required=True,
+        )
         if targets and self.llm_quiz_enabled:
-            try:
-                quiz_generator = self._get_quiz_generator()
-                prompt = self._build_teaching_segments_prompt(
-                    page_index=page_index,
-                    page_total=page_total,
-                    title=title,
-                    manuscript_note=manuscript_note,
-                    targets=targets,
-                    student_profile=student_profile,
-                )
-                raw = quiz_generator._call_llm(prompt)  # noqa: SLF001
-                data = json.loads(self._clean_llm_json(raw))
-                rows = data.get("segments") if isinstance(data, dict) else None
-                segments: list[dict[str, Any]] = []
-                if isinstance(rows, list):
-                    for row in rows:
-                        if not isinstance(row, dict):
-                            continue
-                        target_id = str(row.get("target_id") or "").strip()
-                        text = _clean_text(str(row.get("text") or ""))
-                        if target_id not in valid_ids or len(text) < 12:
-                            continue
-                        segments.append(
-                            {
-                                "target_id": target_id,
-                                "mode": _safe_segment_mode(row.get("mode"), "outline"),
-                                "text": text,
-                            }
+            for attempt in range(2):
+                try:
+                    quiz_generator = self._get_quiz_generator()
+                    prompt = self._build_teaching_segments_prompt(
+                        page_index=page_index,
+                        page_total=page_total,
+                        title=title,
+                        manuscript_note=manuscript_note,
+                        targets=targets,
+                        student_profile=student_profile,
+                    )
+                    if attempt:
+                        prompt += (
+                            "\n\n上一次输出未通过安全检查。请只修复依据不足、目标绑定错误、"
+                            "答案泄露或内部画像字段泄露问题，仍按原 JSON 结构返回。"
                         )
-                        if len(segments) >= 6:
-                            break
-                if len(segments) >= 2:
-                    return segments
-            except Exception:
-                pass
+                    raw = quiz_generator._call_llm(prompt)  # noqa: SLF001
+                    data = json.loads(self._clean_llm_json(raw))
+                    rows = data.get("segments") if isinstance(data, dict) else None
+                    segments: list[dict[str, Any]] = []
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            target_id = str(row.get("target_id") or "").strip()
+                            text = _clean_text(str(row.get("text") or ""))
+                            if not target_id or len(text) < 12:
+                                continue
+                            segments.append(
+                                {
+                                    "target_id": target_id,
+                                    "mode": _safe_segment_mode(row.get("mode"), "outline"),
+                                    "text": text,
+                                }
+                            )
+                            if len(segments) >= 6:
+                                break
+                    last_result = critic.review_teaching_segments(
+                        segments=segments,
+                        valid_target_ids=valid_ids,
+                        grounding=grounding,
+                    )
+                    if segments and last_result.passed:
+                        summary = self._critic_summary(
+                            last_result,
+                            retried=attempt > 0,
+                        )
+                        return (segments, summary) if include_critic else segments
+                except Exception:
+                    last_result = CriticResult(
+                        passed=False,
+                        severity="error",
+                        issue_codes=["generation_failed"],
+                        grounding_level=grounding.level,
+                        retry_required=True,
+                    )
 
-        return _fallback_teaching_segments(title, manuscript_note, targets, svg_texts)
+        fallback_segments = _fallback_teaching_segments(
+            title,
+            manuscript_note,
+            targets,
+            svg_texts,
+        )
+        summary = self._critic_summary(
+            last_result,
+            retried=targets and self.llm_quiz_enabled,
+            fallback=True,
+        )
+        return (fallback_segments, summary) if include_critic else fallback_segments
 
     def _build_slide_scenes_from_ppt_job(
         self,
@@ -908,6 +1007,9 @@ class InteractiveClassroomGenerator:
         tts_service: ClassroomTTSService | None = None,
         audio_dir: str = "",
         classroom_id: str = "",
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> list[ClassroomScene]:
         job_dir = self._resolve_ppt_job_dir(user_id, ppt_job_id)
         if not job_dir:
@@ -952,6 +1054,9 @@ class InteractiveClassroomGenerator:
                     ppt_job_id,
                     student_profile,
                     cancel_check,
+                    critic_mode,
+                    knowledge_context,
+                    semantic_reviewer,
                 ): idx
                 for idx, fname in enumerate(svg_files, start=1)
             }
@@ -1014,6 +1119,9 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> ClassroomScene:
         _raise_if_cancelled(cancel_check)
         path = os.path.join(svg_dir, fname)
@@ -1023,7 +1131,7 @@ class InteractiveClassroomGenerator:
         svg_texts = _extract_svg_texts(svg)
         title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
         highlight_targets = _extract_svg_highlight_targets(svg)
-        teaching_segments = self._generate_teaching_segments(
+        teaching_segments, critic_summary = self._generate_teaching_segments(
             page_index=idx,
             page_total=page_total,
             title=title,
@@ -1031,6 +1139,10 @@ class InteractiveClassroomGenerator:
             targets=highlight_targets,
             svg_texts=svg_texts,
             student_profile=student_profile,
+            critic_mode=critic_mode,
+            knowledge_context=knowledge_context,
+            include_critic=True,
+            semantic_reviewer=semantic_reviewer,
         )
         speech_text = _compose_teaching_speech(teaching_segments)
         if not speech_text:
@@ -1060,6 +1172,7 @@ class InteractiveClassroomGenerator:
                 "speech_source": "manuscript" if manuscript_note else "svg_text",
                 "speech_segments": speech_segments,
                 "highlight_targets": highlight_targets,
+                "critic": critic_summary,
             },
             actions=[
                 ClassroomAction(
@@ -1497,32 +1610,79 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
         require_short_answer: bool = False,
-    ) -> list[dict[str, Any]]:
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         _raise_if_cancelled(cancel_check)
         if not self.llm_quiz_enabled:
-            return []
-        try:
-            raw_json = self._generate_context_quiz_json(
-                topic, scenes, max_questions, student_profile, require_short_answer
+            return [], self._critic_summary(
+                CriticResult(
+                    passed=True,
+                    grounding_level="none",
+                )
             )
-            _raise_if_cancelled(cancel_check)
-            questions = self._convert_llm_quiz_json(
-                raw_json=raw_json,
-                scenes=scenes,
-                max_questions=max_questions,
-                qid_prefix=qid_prefix,
-            )
-            # 兜底：LLM 没出简答但要求了 → 把最后一道单选/多选降级为简答
-            # 这样即使 LLM 偶尔忽略 prompt，仍然能保证 ~50% 测验有简答
-            if (
-                require_short_answer
-                and questions
-                and not any(q.get("type") == "short_answer" for q in questions)
-            ):
-                questions = self._force_one_short_answer(questions)
-            return questions
-        except Exception:
-            return []
+        slide_summaries = self._build_slide_summaries(scenes)
+        visible_texts: list[str] = []
+        for summary in slide_summaries:
+            visible_texts.extend(summary.get("knowledge_points", []))
+            visible_texts.extend(summary.get("extracted_text", []))
+        grounding = build_grounding_context(
+            knowledge_context=knowledge_context,
+            visible_texts=visible_texts,
+            manuscript_note="",
+        )
+        critic = ClassroomCriticService(
+            mode=critic_mode,
+            semantic_reviewer=semantic_reviewer or self.semantic_reviewer,
+        )
+        last_result = CriticResult(
+            passed=False,
+            severity="error",
+            issue_codes=["generation_failed"],
+            grounding_level=grounding.level,
+            retry_required=True,
+        )
+        for attempt in range(2):
+            try:
+                raw_json = self._generate_context_quiz_json(
+                    topic, scenes, max_questions, student_profile, require_short_answer
+                )
+                _raise_if_cancelled(cancel_check)
+                questions = self._convert_llm_quiz_json(
+                    raw_json=raw_json,
+                    scenes=scenes,
+                    max_questions=max_questions,
+                    qid_prefix=qid_prefix,
+                )
+                if (
+                    require_short_answer
+                    and questions
+                    and not any(q.get("type") == "short_answer" for q in questions)
+                ):
+                    questions = self._force_one_short_answer(questions)
+                last_result = critic.review_quiz_questions(
+                    questions=questions,
+                    grounding=grounding,
+                )
+                if questions and last_result.passed:
+                    return questions, self._critic_summary(
+                        last_result,
+                        retried=attempt > 0,
+                    )
+            except Exception:
+                last_result = CriticResult(
+                    passed=False,
+                    severity="error",
+                    issue_codes=["generation_failed"],
+                    grounding_level=grounding.level,
+                    retry_required=True,
+                )
+        return [], self._critic_summary(
+            last_result,
+            retried=True,
+            fallback=True,
+        )
 
     @staticmethod
     def _force_one_short_answer(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1562,10 +1722,13 @@ class InteractiveClassroomGenerator:
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
         require_short_answer: bool = False,
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> ClassroomScene:
         _raise_if_cancelled(cancel_check)
         qid_prefix = f"q{quiz_index}_"
-        questions = self._build_llm_quiz_questions(
+        questions, critic_summary = self._build_llm_quiz_questions(
             topic,
             scenes,
             max_questions=max_questions,
@@ -1573,6 +1736,9 @@ class InteractiveClassroomGenerator:
             student_profile=student_profile,
             cancel_check=cancel_check,
             require_short_answer=require_short_answer,
+            critic_mode=critic_mode,
+            knowledge_context=knowledge_context,
+            semantic_reviewer=semantic_reviewer,
         )
         _raise_if_cancelled(cancel_check)
         quiz_source = "llm_json" if questions else "slide_text"
@@ -1599,6 +1765,7 @@ class InteractiveClassroomGenerator:
                 "questions": questions,
                 "quiz_source": quiz_source,
                 "covered_scene_ids": [scene.id for scene in scenes],
+                "critic": critic_summary,
             },
             actions=[],
         )
@@ -1853,6 +2020,9 @@ class InteractiveClassroomGenerator:
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
         expected_extra_scene_count: int = 0,
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> list[ClassroomScene]:
         _raise_if_cancelled(cancel_check)
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
@@ -1946,6 +2116,9 @@ class InteractiveClassroomGenerator:
                     cancel_check=cancel_check,
                     progress_callback=progress_callback,
                     require_short_answer=job["require_short_answer"],
+                    critic_mode=critic_mode,
+                    knowledge_context=knowledge_context,
+                    semantic_reviewer=semantic_reviewer,
                 ): job
                 for job in quiz_jobs
             }
@@ -1991,6 +2164,8 @@ class InteractiveClassroomGenerator:
         lineage: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
+        critic_mode: str = "standard",
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
@@ -2012,6 +2187,7 @@ class InteractiveClassroomGenerator:
             "next_lesson" if parent_classroom_id else "root"
         )
         normalized_strategy = _normalize_generation_strategy(generation_strategy)
+        normalized_critic_mode = normalize_critic_mode(critic_mode)
         normalized_profile = (
             self._profile_from_generation_strategy(normalized_strategy)
             if normalized_strategy
@@ -2030,6 +2206,9 @@ class InteractiveClassroomGenerator:
                 tts,
                 audio_dir,
                 classroom_id,
+                normalized_critic_mode,
+                knowledge_context,
+                semantic_reviewer,
             )
             if not scenes:
                 scenes = self._build_fallback_slide_scenes(
@@ -2058,6 +2237,9 @@ class InteractiveClassroomGenerator:
                     cancel_check,
                     progress_callback,
                     expected_extra_scene_count=1,
+                    critic_mode=normalized_critic_mode,
+                    knowledge_context=knowledge_context,
+                    semantic_reviewer=semantic_reviewer,
                 )
                 _raise_if_cancelled(cancel_check)
                 mindmap_scene = mindmap_future.result()
@@ -2072,7 +2254,14 @@ class InteractiveClassroomGenerator:
                     scenes.append(mindmap_scene)
         else:
             scenes = self._insert_quiz_scenes(
-                topic, scenes, normalized_profile, cancel_check, progress_callback
+                topic,
+                scenes,
+                normalized_profile,
+                cancel_check,
+                progress_callback,
+                critic_mode=normalized_critic_mode,
+                knowledge_context=knowledge_context,
+                semantic_reviewer=semantic_reviewer,
             )
 
         for idx, scene in enumerate(scenes, start=1):
@@ -2101,6 +2290,10 @@ class InteractiveClassroomGenerator:
             lesson_index=lesson_index,
             lesson_kind=lesson_kind,
             source={"type": "ppt_svg_job" if ppt_job_id else "topic_fallback", "job_id": ppt_job_id},
+            critic_summary=self._aggregate_critic_summary(
+                normalized_critic_mode,
+                scenes,
+            ),
             agents=[
                 {
                     "id": "teacher",

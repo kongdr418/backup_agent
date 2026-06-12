@@ -405,6 +405,7 @@ import {
   createEmptyLearnerProfile,
 } from '@/utils/learnerProfile'
 import { classroomUnitCountLabel, classroomUnitLabel } from '@/utils/classroomLessonDisplay'
+import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
 import {
   buildCoursewareClassroomSeed,
   getGeneratedPptJobId,
@@ -629,6 +630,7 @@ async function onGenerate() {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
+      ...buildClassroomCriticPayload(settingStore.settings),
     }, '课堂已生成')
   } catch (err) {
     const text = err instanceof Error ? err.message : '生成失败'
@@ -748,6 +750,7 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
+      ...buildClassroomCriticPayload(settingStore.settings),
     }, '课堂已重新生成')
   } catch (err) {
     const text = err instanceof Error ? err.message : '重新生成失败'

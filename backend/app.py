@@ -29,6 +29,11 @@ from course_knowledge import (
 )
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.critic_service import (
+    build_content_llm_semantic_reviewer,
+    content_llm_semantic_reviewer,
+    normalize_critic_mode,
+)
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path, resolve_knowledge_evidence, _compact_text_key
@@ -118,7 +123,11 @@ COURSE_KNOWLEDGE_RETRIEVER = CourseKnowledgeRetriever(
     storage=COURSE_KNOWLEDGE_STORAGE,
     vector_index=COURSE_KNOWLEDGE_VECTOR_INDEX,
 )
-CLASSROOM_GENERATOR = InteractiveClassroomGenerator(BACKEND_DIR, CLASSROOM_STORAGE)
+CLASSROOM_GENERATOR = InteractiveClassroomGenerator(
+    BACKEND_DIR,
+    CLASSROOM_STORAGE,
+    semantic_reviewer=content_llm_semantic_reviewer,
+)
 CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
     CLASSROOM_STORAGE,
     CLASSROOM_GENERATOR,
@@ -728,6 +737,28 @@ def _apply_content_llm_config(data: dict):
             pass
 
 
+def _resolve_classroom_critic_mode(data: dict) -> str:
+    """请求显式值优先，否则使用持久化的智慧课堂全局审查模式。"""
+    if 'critic_mode' in data:
+        return normalize_critic_mode(data.get('critic_mode'))
+
+    default_mode = globals().get('DEFAULT_SETTINGS', {}).get(
+        'classroom_critic_mode',
+        'standard',
+    )
+    try:
+        saved_settings = (
+            get_memory_manager()
+            .get_config()
+            .get('content_settings', {})
+        )
+        return normalize_critic_mode(
+            saved_settings.get('classroom_critic_mode', default_mode)
+        )
+    except Exception:
+        return normalize_critic_mode(default_mode)
+
+
 def _resolve_content_llm_request_config(data: dict) -> dict[str, str]:
     """解析一次请求里的 LLM 配置，并在缺 key / base_url / provider_type 时做 provider 回退。"""
     content_model = (data.get('content_model') or '').strip()
@@ -749,6 +780,7 @@ def _resolve_content_llm_request_config(data: dict) -> dict[str, str]:
         'content_api_key': content_api_key,
         'content_base_url': content_base_url,
         'content_provider_type': content_provider_type,
+        'critic_mode': _resolve_classroom_critic_mode(data),
     }
 
 
@@ -1708,6 +1740,7 @@ DEFAULT_SETTINGS = {
     'chat_provider': 'minimax',
     'content_model': 'deepseek-v4-flash',
     'content_provider': 'deepseek',
+    'classroom_critic_mode': 'standard',
     'ppt_model': 'deepseek-v4-flash',
     'ppt_provider': 'deepseek',
     'tts_provider': 'mimo-tts',
@@ -1726,6 +1759,9 @@ def get_settings():
     config = memory.get_config()
     saved_settings = config.get('content_settings', {})
     settings = {**DEFAULT_SETTINGS, **saved_settings}
+    settings['classroom_critic_mode'] = normalize_critic_mode(
+        settings.get('classroom_critic_mode')
+    )
 
     return jsonify({
         'settings': settings,
@@ -1766,6 +1802,10 @@ def update_settings():
     global DEFAULT_SETTINGS
     data = request.json
     new_settings = data.get('settings', {})
+    if 'classroom_critic_mode' in new_settings:
+        new_settings['classroom_critic_mode'] = normalize_critic_mode(
+            new_settings.get('classroom_critic_mode')
+        )
 
     # 更新设置
     for key, value in new_settings.items():
@@ -3319,6 +3359,7 @@ def interactive_classroom_generate():
     course = (data.get('course') or '通用课程').strip()
     ppt_job_id = (data.get('ppt_job_id') or '').strip()
     request_id = (data.get('request_id') or '').strip()
+    critic_mode = _resolve_classroom_critic_mode(data)
     lineage = _resolve_classroom_lineage(data)
     learner_profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
     student_profile = LEARNER_PROFILE_STORAGE.load_classroom_profile(user_id)
@@ -3344,6 +3385,8 @@ def interactive_classroom_generate():
 
     # 同步内容生成模型配置到 shared_config（LLM 测验生成需要）
     _apply_content_llm_config(data)
+    critic_llm_config = _resolve_content_llm_request_config(data)
+    semantic_reviewer = build_content_llm_semantic_reviewer(critic_llm_config)
 
     # 检索课程知识上下文
     try:
@@ -3385,6 +3428,8 @@ def interactive_classroom_generate():
                     lineage=lineage,
                     cancel_check=cancel_event.is_set if cancel_event is not None else None,
                     progress_callback=on_progress,
+                    critic_mode=critic_mode,
+                    semantic_reviewer=semantic_reviewer,
                 )
                 _mark_classroom_generation_done(request_id, payload.get('id'), payload)
                 emit({
@@ -3434,6 +3479,8 @@ def interactive_classroom_generate():
             knowledge_context=knowledge_context,
             lineage=lineage,
             cancel_check=cancel_event.is_set if cancel_event is not None else None,
+            critic_mode=critic_mode,
+            semantic_reviewer=semantic_reviewer,
         )
     except ClassroomGenerationCancelled:
         request_logger.info(f'[INTERACTIVE-CLASSROOM] 生成已取消 request_id={request_id}')

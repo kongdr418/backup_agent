@@ -123,6 +123,8 @@ export interface ContentSettings {
   // 内容生成模型（讲稿、大纲、习题、测验、知识卡片、思维导图等）
   content_model: string
   content_provider: string
+  // 智慧课堂内容可靠性检查
+  classroom_critic_mode: 'off' | 'standard' | 'strict'
   // PPT 生成模型
   ppt_model: string
   ppt_provider: string

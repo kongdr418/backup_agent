@@ -6,6 +6,11 @@ import re
 from typing import Any
 
 from generators.shared_config import content_llm_call
+from .critic_service import (
+    ClassroomCriticService,
+    build_content_llm_semantic_reviewer,
+    normalize_critic_mode,
+)
 
 
 def _normalize_answer(value: Any) -> list[str]:
@@ -103,27 +108,66 @@ async def llm_grade_short_answer(
         '{"score": 0-100, "feedback": "一句话反馈", "covered_points": ["学生答到的要点1", "要点2"]}\n'
     )
     cfg = llm_config or {}
-    raw: str = ""
-    try:
-        raw = await asyncio.to_thread(
-            content_llm_call,
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.2,
-            # reasoning 模型（如 mimo-v2.5）会用掉绝大部分 token 预算
-            # 在"思考"上。600 token 不够（实测 reasoning_tokens=599 时
-            # content 被截断为空）。提到 1500 留余量给 JSON 输出。
-            max_tokens=1500,
-            model=cfg.get("content_model", ""),
-            api_key=cfg.get("content_api_key", ""),
-            base_url=cfg.get("content_base_url", ""),
-            provider_type=cfg.get("content_provider_type", ""),
+    mode = normalize_critic_mode(cfg.get("critic_mode"))
+    critic = ClassroomCriticService(
+        mode=mode,
+        semantic_reviewer=(
+            build_content_llm_semantic_reviewer(
+                cfg,
+                llm_call=content_llm_call,
+            )
+            if mode == "strict"
+            else None
+        ),
+    )
+    last_critic: dict[str, Any] = {}
+    for attempt in range(2):
+        try:
+            raw = await asyncio.to_thread(
+                content_llm_call,
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2,
+                # reasoning 模型（如 mimo-v2.5）会用掉绝大部分 token 预算
+                # 在"思考"上。600 token 不够（实测 reasoning_tokens=599 时
+                # content 被截断为空）。提到 1500 留余量给 JSON 输出。
+                max_tokens=1500,
+                model=cfg.get("content_model", ""),
+                api_key=cfg.get("content_api_key", ""),
+                base_url=cfg.get("content_base_url", ""),
+                provider_type=cfg.get("content_provider_type", ""),
+            )
+        except Exception:
+            break
+        grade = _parse_short_answer_score(raw or "")
+        review = critic.review_short_answer_grade(
+            grade=grade,
+            reference_answer=reference,
+            student_answer=student_answer,
         )
-    except Exception:
-        return {"score": 0, "feedback": "评分服务暂时不可用，请稍后复核。", "covered_points": []}
-    return _parse_short_answer_score(raw or "")
+        last_critic = review.to_dict()
+        if review.passed:
+            grade["review_required"] = False
+            grade["critic"] = {
+                **last_critic,
+                "retried": attempt > 0,
+                "fallback": False,
+            }
+            return grade
+
+    return {
+        "score": None,
+        "feedback": "评分依据不足，本题暂不计分。",
+        "covered_points": [],
+        "review_required": True,
+        "critic": {
+            **last_critic,
+            "retried": bool(last_critic),
+            "fallback": True,
+        },
+    }
 
 
 def _result_for_short_answer(
@@ -134,12 +178,15 @@ def _result_for_short_answer(
 ) -> dict[str, Any]:
     """把 LLM 评分结果组装成与单选/多选一致的 result 形状。"""
     points = int(question.get("points", 1) or 1)
-    score = int(grade.get("score", 0) or 0)
-    score = max(0, min(100, score))
-    earned_points = round((score / 100) * points, 2)
+    review_required = bool(grade.get("review_required"))
+    raw_score = grade.get("score")
+    score = None if review_required or raw_score is None else int(raw_score or 0)
+    if score is not None:
+        score = max(0, min(100, score))
+    earned_points = 0 if score is None else round((score / 100) * points, 2)
     return {
         "question_id": qid,
-        "correct": score >= 80,  # 80 分以上视为掌握
+        "correct": None if score is None else score >= 80,
         "your_answer": [student_answer] if student_answer else [],
         "correct_answer": [
             str(question.get("reference_answer") or question.get("analysis") or "").strip()
@@ -152,6 +199,8 @@ def _result_for_short_answer(
         "feedback": str(grade.get("feedback") or "").strip(),
         "earned_points": earned_points,
         "covered_points": grade.get("covered_points") or [],
+        "review_required": review_required,
+        "critic": grade.get("critic") or {},
     }
 
 
@@ -257,11 +306,12 @@ async def evaluate_quiz_scene_async(
             else:
                 result = _result_for_short_answer(q, qid, student_answer, grade)
             results.append(result)
-            total += 1
-            total_points += points
-            earned_points += result["earned_points"]
-            if result["correct"]:
-                correct += 1
+            if not result["review_required"]:
+                total += 1
+                total_points += points
+                earned_points += result["earned_points"]
+                if result["correct"]:
+                    correct += 1
 
     # 按 question_id 稳定排序（前端 resultByQuestion 映射依赖 id）
     results.sort(key=lambda r: str(r.get("question_id", "")))

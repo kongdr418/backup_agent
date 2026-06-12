@@ -568,6 +568,7 @@ import {
   type HighlightTarget,
 } from '@/utils/classroomHighlight'
 import { clearPersistedClassroomGeneration } from '@/utils/classroomGenerationState'
+import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
 import { useSettingStore } from '@/stores/settingStore'
@@ -1387,6 +1388,7 @@ async function submitQuiz() {
         content_api_key: settingStore.getEffectiveContentApiKey(),
         content_base_url: settingStore.getEffectiveContentBaseUrl(),
         content_provider_type: settingStore.getContentProviderType(),
+        ...buildClassroomCriticPayload(settingStore.settings),
       },
     )
     quizResultsByScene.value = {

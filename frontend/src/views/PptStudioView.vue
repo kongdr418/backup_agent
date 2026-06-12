@@ -167,6 +167,7 @@ import {
 import { useSettingStore } from '@/stores/settingStore'
 import { useInteractiveClassroomStream } from '@/composables/useInteractiveClassroomStream'
 import { buildClassroomPptNotes, type ClassroomLearningContext } from '@/utils/classroomPptNotes'
+import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
 import { clearNextLessonDraft, loadNextLessonDraft, type StoredNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import { applyClassroomPptDraft, resetPptDraftFields } from '@/utils/pptParams'
 import {
@@ -529,6 +530,7 @@ async function onCreateClassroom() {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
+      ...buildClassroomCriticPayload(settingStore.settings),
     })
     if (isClassroomSourceRoute.value) clearNextLessonDraft()
     await router.push({
