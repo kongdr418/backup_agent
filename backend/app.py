@@ -3986,7 +3986,13 @@ def interactive_classroom_next_lesson_plan(classroom_id):
 def interactive_classroom_record_event(classroom_id):
     """记录单个学习事件（scene_reviewed / recommended_task_opened / classroom_completed 等）。"""
     user_id = get_request_user_id()
-    if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
+    if (
+        not classroom_id
+        or '..' in classroom_id
+        or '/' in classroom_id
+        or '\\' in classroom_id
+        or not re.match(r'^[a-zA-Z0-9_-]{1,128}$', classroom_id)
+    ):
         return jsonify({'success': False, 'error': '非法 classroom_id'}), 400
 
     data = request.json or {}
