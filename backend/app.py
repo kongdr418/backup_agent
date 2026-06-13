@@ -18,7 +18,6 @@ from memory_manager import MemoryManager
 from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.profile_agent import ProfileAgent, build_course_id
 from learner_profile.orchestrator import ProfileOrchestrator
-from learner_profile.adapters import build_ppt_strategy_notes
 from learner_profile.onboarding_service import ProfileOnboardingService
 from generators.shared_config import content_llm_call
 from course_knowledge import (
@@ -2516,7 +2515,6 @@ def get_video_audio(filename):
 
 def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     notes = (data.get('notes') or '').strip()
-    source = (data.get('source') or '').strip()
     course = (data.get('course') or '').strip()
     topic = (data.get('topic') or '').strip()
 
@@ -2536,14 +2534,9 @@ def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     if knowledge_notes:
         notes = '\n\n'.join(part for part in [notes, knowledge_notes] if part)
 
-    # 注入学生画像（来自课堂入口时）
-    if source == 'interactive-classroom' and PPT_LEARNING_STRATEGY_TITLE not in notes:
-        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-        strategy = PROFILE_AGENT.build_generation_strategy(
-            profile,
-            course or topic or '通用课程',
-        )
-        learning_strategy = build_ppt_strategy_notes(strategy)
+    # 默认注入学习者画像策略，确保 PPT 资源生成和课堂入口保持个性化。
+    if PPT_LEARNING_STRATEGY_TITLE not in notes:
+        learning_strategy = LEARNER_PROFILE_STORAGE.build_ppt_learning_strategy(user_id)
         notes = '\n\n'.join(part for part in [notes, learning_strategy] if part)
     return notes or None
 

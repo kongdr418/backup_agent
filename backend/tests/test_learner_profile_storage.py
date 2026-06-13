@@ -10,6 +10,7 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+from learner_profile.schemas import PROFILE_VERSION
 from learner_profile.storage import LearnerProfileStorage
 
 
@@ -27,7 +28,7 @@ class LearnerProfileStorageTest(unittest.TestCase):
     def test_missing_profile_returns_versioned_default(self) -> None:
         profile = self.storage.load_profile("user_1")
 
-        self.assertEqual(1, profile["profile_version"])
+        self.assertEqual(PROFILE_VERSION, profile["profile_version"])
         self.assertEqual("user_1", profile["user_id"])
         self.assertEqual("", profile["basic"]["learning_basis"])
         self.assertEqual([], profile["preferences"]["content_style"])
@@ -83,7 +84,9 @@ class LearnerProfileStorageTest(unittest.TestCase):
         self.assertEqual(["图解", "案例"], first["preferences"]["content_style"])
         self.assertNotIn("ignored", first["basic"])
         self.assertEqual("2026-06-08T10:00:00", second["created_at"])
-        self.assertEqual({"course_python": {"course_name": "Python"}}, second["courses"])
+        self.assertEqual("Python", second["courses"]["course_python"]["course_name"])
+        self.assertEqual("course_python", second["courses"]["course_python"]["course_id"])
+        self.assertIn("transfer_ability", second["courses"]["course_python"])
 
     def test_manual_save_can_clear_course_profile_fields(self) -> None:
         self.storage.save_profile(

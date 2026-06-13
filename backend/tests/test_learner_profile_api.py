@@ -12,6 +12,7 @@ if BACKEND_DIR not in sys.path:
 
 import app as backend_app
 from course_knowledge import CourseKnowledgeRetriever, CourseKnowledgeStorage
+from learner_profile.schemas import PROFILE_VERSION
 from learner_profile.storage import PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.storage import LearnerProfileStorage
 
@@ -51,7 +52,7 @@ class LearnerProfileApiTest(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["success"])
         self.assertEqual("user_1", payload["profile"]["user_id"])
-        self.assertEqual(1, payload["profile"]["profile_version"])
+        self.assertEqual(PROFILE_VERSION, payload["profile"]["profile_version"])
 
     def test_put_persists_normalized_profile(self) -> None:
         response = self.client.put(

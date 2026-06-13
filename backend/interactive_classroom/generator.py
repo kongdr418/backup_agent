@@ -1195,7 +1195,7 @@ class InteractiveClassroomGenerator:
         svg_texts = _extract_svg_texts(svg)
         title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
         highlight_targets = _extract_svg_highlight_targets(svg)
-        teaching_segments, critic_summary = self._generate_teaching_segments(
+        teaching_result = self._generate_teaching_segments(
             page_index=idx,
             page_total=page_total,
             title=title,
@@ -1208,6 +1208,15 @@ class InteractiveClassroomGenerator:
             include_critic=True,
             semantic_reviewer=semantic_reviewer,
         )
+        if (
+            isinstance(teaching_result, tuple)
+            and len(teaching_result) == 2
+            and isinstance(teaching_result[1], dict)
+        ):
+            teaching_segments, critic_summary = teaching_result
+        else:
+            teaching_segments = teaching_result  # type: ignore[assignment]
+            critic_summary = {}
         speech_text = _compose_teaching_speech(teaching_segments)
         if not speech_text:
             speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
