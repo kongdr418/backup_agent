@@ -839,10 +839,10 @@ def chat():
     provider_type = data.get('provider_type', '')
 
     # 服务端 API Key 回退
+    provider_id, _, _ = _get_provider_for_model(model)
     if not api_key:
-        pid, _, _ = _get_provider_for_model(model)
-        if pid and pid in SERVER_API_KEYS:
-            api_key = SERVER_API_KEYS[pid]
+        if provider_id and provider_id in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[provider_id]
 
     # 内容生成模型配置（用于讲稿、大纲、习题等生成器）
     _apply_content_llm_config(data)
@@ -1155,6 +1155,28 @@ PROVIDERS = {
         ],
         'requiresApiKey': True,
     },
+    'xfyun': {
+        'id': 'xfyun',
+        'name': '科大讯飞星火 X2',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://spark-api-open.xf-yun.com/x2/',
+        'models': [
+            {'id': 'spark-x', 'name': 'Spark X2', 'contextWindow': 65536, 'maxOutput': 131072},
+        ],
+        'requiresApiKey': True,
+        'supportsReasoning': True,
+    },
+    'xfyun-v2': {
+        'id': 'xfyun-v2',
+        'name': '科大讯飞星火 v2',
+        'type': 'openai',
+        'defaultBaseUrl': 'https://spark-api-open.xf-yun.com/v2/',
+        'models': [
+            {'id': 'spark-x', 'name': 'Spark X1.5 / v2', 'contextWindow': 65536, 'maxOutput': 131072},
+        ],
+        'requiresApiKey': True,
+        'supportsReasoning': True,
+    },
 }
 
 # ==================== TTS Provider 注册表 ====================
@@ -1266,6 +1288,12 @@ if os.environ.get('MIMO_API_KEY'):
     SERVER_API_KEYS['mimo-tts'] = os.environ['MIMO_API_KEY']
 if os.environ.get('ZHIPU_API_KEY'):
     SERVER_API_KEYS['glm-tts'] = os.environ['ZHIPU_API_KEY']
+if os.environ.get('XFYUN_API_KEY'):
+    SERVER_API_KEYS['xfyun'] = os.environ['XFYUN_API_KEY']
+    SERVER_API_KEYS['xfyun-v2'] = os.environ['XFYUN_API_KEY']
+elif os.environ.get('XFYUN_API_PASSWORD'):
+    SERVER_API_KEYS['xfyun'] = os.environ['XFYUN_API_PASSWORD']
+    SERVER_API_KEYS['xfyun-v2'] = os.environ['XFYUN_API_PASSWORD']
 
 
 def _get_provider_for_model(model_id: str):
@@ -1470,12 +1498,12 @@ def verify_model():
         elif provider_type == 'anthropic':
             return _verify_anthropic(api_key, base_url, model_id)
         else:
-            return _verify_openai_compatible(api_key, base_url, model_id)
+            return _verify_openai_compatible(api_key, base_url, model_id, provider_id)
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
 
-def _verify_openai_compatible(api_key: str, base_url: str, model_id: str):
+def _verify_openai_compatible(api_key: str, base_url: str, model_id: str, provider_id: str = ''):
     """验证 OpenAI 兼容 API"""
     from openai import OpenAI
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=15)
@@ -1495,7 +1523,10 @@ def _verify_openai_compatible(api_key: str, base_url: str, model_id: str):
     except Exception as e:
         error_str = str(e)
         if '401' in error_str or 'Unauthorized' in error_str or 'Incorrect API key' in error_str:
-            msg = 'API Key 无效或已过期'
+            if provider_id.startswith('xfyun') or 'xf-yun.com' in base_url:
+                msg = '讯飞鉴权失败：请填写控制台生成的 APIpassword，或 AK:SK；同时确认当前账号已开通所选 X2/v2 接口权限。'
+            else:
+                msg = 'API Key 无效或已过期'
         elif '404' in error_str or 'not found' in error_str.lower():
             msg = '模型未找到，请检查模型 ID 或 Base URL'
         elif '429' in error_str:
@@ -2521,6 +2552,7 @@ def ppt_svg_generate():
         bridge = SSEBridge()
         bridge.run(pipeline.generate(
             topic,
+            provider=provider_id or 'deepseek',
             model=model,
             api_key=api_key,
             base_url=base_url,

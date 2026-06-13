@@ -163,7 +163,7 @@ export interface ModelInfo {
 export interface ProviderInfo {
   id: string
   name: string
-  type: 'minimax' | 'openai' | 'anthropic'
+  type: 'minimax' | 'openai' | 'anthropic' | string
   defaultBaseUrl: string
   models: ModelInfo[]
   requiresApiKey: boolean

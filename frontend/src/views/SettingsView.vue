@@ -215,6 +215,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   moonshot: '/logos/kimi.png', zhipu: '/logos/glm.svg', glm: '/logos/glm.svg',
   qwen: '/logos/qwen.svg', siliconflow: '/logos/siliconflow.svg',
   mimo: '/logos/xiaomi.svg', 'mimo-tts': '/logos/xiaomi.svg',
+  xfyun: '/logos/xfyun.svg', 'xfyun-v2': '/logos/xfyun.svg',
   'edge-tts': '/logos/edge.svg',
 }
 const MONO_LOGOS = new Set(['openai', 'deepseek', 'siliconflow'])
