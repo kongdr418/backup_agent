@@ -2527,12 +2527,22 @@ def ppt_svg_generate():
     model = data.get('model', 'deepseek-v4-flash')
     api_key = data.get('api_key')
     base_url = data.get('base_url')
+    provider_id = (data.get('provider_id') or data.get('providerId') or '').strip()
+    canvas_format = data.get('canvas_format', 'ppt169')
+
+    inferred_provider_id, inferred_provider, _ = _get_provider_for_model(model)
+    if not provider_id:
+        provider_id = inferred_provider_id or 'deepseek'
+    provider = PROVIDERS.get(provider_id) or inferred_provider
 
     # 服务端 API Key 回退
     if not api_key:
-        pid, _, _ = _get_provider_for_model(model)
-        if pid and pid in SERVER_API_KEYS:
-            api_key = SERVER_API_KEYS[pid]
+        if provider_id and provider_id in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[provider_id]
+        elif inferred_provider_id and inferred_provider_id in SERVER_API_KEYS:
+            api_key = SERVER_API_KEYS[inferred_provider_id]
+    if not base_url and provider:
+        base_url = provider.get('defaultBaseUrl', '')
 
     deep_research = _bool_from_payload(data.get('deep_research'), False)
     visual_critic = _bool_from_payload(data.get('visual_critic'), False)
@@ -2560,6 +2570,7 @@ def ppt_svg_generate():
             language=language,
             num_slides=num_slides,
             style=style,
+            canvas_format=canvas_format,
             detail_level=detail_level,
             deep_research=deep_research,
             visual_critic=visual_critic,

@@ -227,6 +227,8 @@ export interface PptGenerateParams {
   num_slides?: number
   style?: PptStyle
   detail_level?: PptDetail
+  provider_id?: string
+  provider_type?: string
   model?: string
   api_key?: string
   base_url?: string

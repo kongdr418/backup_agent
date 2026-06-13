@@ -440,6 +440,8 @@ async function onGenerate() {
     // 注入设置中的 PPT 模型、API Key 和 Base URL（设置优先）
     const paramsWithModel = {
       ...store.params,
+      provider_id: settingStore.settings.ppt_provider,
+      provider_type: settingStore.getPptProviderType(),
       model: settingStore.settings.ppt_model || store.params.model,
       api_key: settingStore.getEffectivePptApiKey() || store.params.api_key,
       base_url: settingStore.getEffectivePptBaseUrl() || store.params.base_url,
