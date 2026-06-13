@@ -374,20 +374,28 @@ def build_discussion_messages(
         "罗列多个要点时用 - 无序列表；"
         "必要时可用 > 引用 题目原文/页面关键句。"
     )
-    user_prompt = (
-        f"当前讨论触发方式：{trigger_text}\n"
-        f"{f'{current_position}\\n' if current_position else ''}"
-        f"{f'快捷动作：{quick_action}\\n' if quick_action else ''}"
-        f"{f'请优先围绕当前页面内容回答：\\n{focus_context}\\n' if focus_context else ''}"
-        f"{f'整堂课页码与讲稿摘要：\\n{outline}\\n' if outline else ''}"
-        f"{f'以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：\\n{context}\\n' if context else ''}"
+    user_prompt_parts = [f"当前讨论触发方式：{trigger_text}\n"]
+    if current_position:
+        user_prompt_parts.append(f"{current_position}\n")
+    if quick_action:
+        user_prompt_parts.append(f"快捷动作：{quick_action}\n")
+    if focus_context:
+        user_prompt_parts.append(f"请优先围绕当前页面内容回答：\n{focus_context}\n")
+    if outline:
+        user_prompt_parts.append(f"整堂课页码与讲稿摘要：\n{outline}\n")
+    if context:
+        user_prompt_parts.append(
+            f"以下是本堂课已经播放过的课堂文本上下文，请只基于这些内容回答，不要编造课堂里没有讲过的知识：\n{context}\n"
+        )
+    user_prompt_parts.append(
         "回答约束：\n"
         "1. 如果学生提到“这页”“这一页”“当前这部分”，一律解释当前页，不要让学生再澄清。\n"
         "2. 先用 1 句概括当前页核心内容，再进行解释或举例。\n"
         "3. 解释时优先引用当前页里的标题、页面文本、讲解词、题目或知识点。\n"
         "4. 不要输出“你是想问概念还是顺序吗”这种脱离页面的泛化追问，除非当前页上下文本身不足。\n"
-        f"{quick_action_prompt}"
     )
+    user_prompt_parts.append(quick_action_prompt)
+    user_prompt = "".join(user_prompt_parts)
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system_prompt},

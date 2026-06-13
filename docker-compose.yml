@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: zhichuang-backend
+    environment:
+      APP_DEBUG: "false"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/memory:/app/memory
+      - ./backend/generated_svg_ppt:/app/generated_svg_ppt
+      - ./backend/generators/generated_ppt:/app/generators/generated_ppt
+      - ./backend/generators/generated_lectures:/app/generators/generated_lectures
+      - ./backend/generators/generated_outlines:/app/generators/generated_outlines
+      - ./backend/generators/generated_speeches:/app/generators/generated_speeches
+      - ./backend/generators/generated_exercises:/app/generators/generated_exercises
+      - ./backend/generators/generated_quizzes:/app/generators/generated_quizzes
+      - ./backend/generators/generated_cards:/app/generators/generated_cards
+      - ./backend/generators/generated_mindmaps:/app/generators/generated_mindmaps
+      - ./backend/generators/generated_content:/app/generators/generated_content
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: zhichuang-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped

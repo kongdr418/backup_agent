@@ -4407,6 +4407,8 @@ if __name__ == '__main__':
     app_logger.info('✅ 所有路由注册完成')
     app_logger.info('=' * 60)
 
+    debug_enabled = os.environ.get('APP_DEBUG', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+
     # use_reloader=False: 禁用 watchdog 自动重载;长时 SSE 流期间
     # Python stdlib 文件 mtime 抖动会触发重启,导致连接被强制中断
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=debug_enabled, use_reloader=False)
