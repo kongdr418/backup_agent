@@ -32,6 +32,7 @@ from course_knowledge import (
 from course_knowledge.routes import create_course_knowledge_blueprint
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.generation_jobs import ClassroomGenerationJobService
 from interactive_classroom.routes import create_interactive_classroom_blueprint
 from interactive_classroom.critic_service import (
     build_content_llm_semantic_reviewer,
@@ -63,6 +64,7 @@ import os
 import shutil
 import mimetypes
 import logging
+import queue
 import re
 import sys
 from deep_translator import GoogleTranslator
@@ -138,20 +140,20 @@ CLASSROOM_PRACTICE_SERVICE = ClassroomPracticeService(
     CLASSROOM_STORAGE,
     CLASSROOM_GENERATOR,
 )
-CLASSROOM_GENERATION_CANCELS: dict[str, threading.Event] = {}
-CLASSROOM_GENERATION_JOBS: dict[str, dict] = {}
-CLASSROOM_GENERATION_CANCELS_LOCK = threading.Lock()
 CLASSROOM_GENERATION_JOBS_DIR = os.path.join(BACKEND_DIR, 'memory', 'classroom_generation_jobs')
 CLASSROOM_GENERATION_ORPHAN_TIMEOUT_SECONDS = 90
-
-# SSE 订阅者：每个连上的前端对应一个 queue.Queue；生成线程把事件 fan-out 给所有订阅者
-import queue  # noqa: E402
-CLASSROOM_GENERATION_SUBSCRIBERS: dict[str, list[queue.Queue]] = {}
-CLASSROOM_GENERATION_SUBSCRIBERS_LOCK = threading.Lock()
+CLASSROOM_GENERATION_JOB_SERVICE = ClassroomGenerationJobService(
+    jobs_dir=CLASSROOM_GENERATION_JOBS_DIR,
+    logger=request_logger,
+    orphan_timeout_seconds=CLASSROOM_GENERATION_ORPHAN_TIMEOUT_SECONDS,
+)
+CLASSROOM_GENERATION_CANCELS = CLASSROOM_GENERATION_JOB_SERVICE.cancels
+CLASSROOM_GENERATION_JOBS = CLASSROOM_GENERATION_JOB_SERVICE.jobs
+CLASSROOM_GENERATION_CANCELS_LOCK = CLASSROOM_GENERATION_JOB_SERVICE.cancels_lock
 
 
 def _is_safe_classroom_request_id(value: str) -> bool:
-    return bool(re.match(r'^[a-zA-Z0-9_.:-]{1,128}$', value or ''))
+    return CLASSROOM_GENERATION_JOB_SERVICE.is_safe_request_id(value)
 
 
 def _bool_from_payload(value, default: bool = False) -> bool:
@@ -171,356 +173,96 @@ def _bool_from_payload(value, default: bool = False) -> bool:
 
 
 def _register_classroom_generation(request_id: str) -> threading.Event | None:
-    if not request_id:
-        return None
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        event = CLASSROOM_GENERATION_CANCELS.get(request_id)
-        if event is None:
-            event = threading.Event()
-            CLASSROOM_GENERATION_CANCELS[request_id] = event
-        return event
+    return CLASSROOM_GENERATION_JOB_SERVICE.register(request_id)
 
 
 def _classroom_generation_now() -> str:
-    return datetime.now().isoformat(timespec='seconds')
+    return CLASSROOM_GENERATION_JOB_SERVICE.now()
 
 
 def _classroom_generation_job_path(request_id: str) -> str:
-    if not _is_safe_classroom_request_id(request_id):
-        return ''
-    safe_name = request_id.replace(':', '-')
-    return os.path.join(CLASSROOM_GENERATION_JOBS_DIR, f'{safe_name}.json')
+    return CLASSROOM_GENERATION_JOB_SERVICE._job_path(request_id)
 
 
 def _write_classroom_generation_job_file(request_id: str, job: dict) -> None:
-    path = _classroom_generation_job_path(request_id)
-    if not path:
-        return
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        temp_path = f'{path}.tmp'
-        with open(temp_path, 'w', encoding='utf-8') as file:
-            json.dump(job, file, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
-    except Exception:
-        request_logger.warning(
-            f'[INTERACTIVE-CLASSROOM] 写入生成任务快照失败 request_id={request_id}',
-            exc_info=True,
-        )
+    CLASSROOM_GENERATION_JOB_SERVICE._write_job_file(request_id, job)
 
 
 def _read_classroom_generation_job_file(request_id: str) -> dict | None:
-    path = _classroom_generation_job_path(request_id)
-    if not path or not os.path.exists(path):
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as file:
-            payload = json.load(file)
-        if isinstance(payload, dict):
-            return payload
-    except Exception:
-        request_logger.warning(
-            f'[INTERACTIVE-CLASSROOM] 读取生成任务快照失败 request_id={request_id}',
-            exc_info=True,
-        )
-    return None
+    return CLASSROOM_GENERATION_JOB_SERVICE._read_job_file(request_id)
 
 
 def _classroom_generation_elapsed_seconds(job: dict, now: datetime | None = None) -> int:
-    started_at = job.get('started_at')
-    if not started_at:
-        return 0
-    try:
-        start = datetime.fromisoformat(started_at)
-        current = now or datetime.now()
-        return max(0, int((current - start).total_seconds()))
-    except (TypeError, ValueError):
-        return 0
+    return CLASSROOM_GENERATION_JOB_SERVICE.elapsed_seconds(job, now)
 
 
 def _mark_orphaned_classroom_generation_locked(request_id: str, job: dict) -> dict:
-    now = _classroom_generation_now()
-    try:
-        now_dt = datetime.fromisoformat(now)
-    except ValueError:
-        now_dt = datetime.now()
-    next_job = {
-        **job,
-        'request_id': request_id,
-        'status': 'error',
-        'updated_at': now,
-        'error': '课堂生成任务已中断，请重新生成',
-    }
-    next_job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(next_job, now_dt)
-    CLASSROOM_GENERATION_JOBS[request_id] = next_job
-    _write_classroom_generation_job_file(request_id, next_job)
-    return next_job
+    return CLASSROOM_GENERATION_JOB_SERVICE._mark_orphaned_locked(request_id, job)
 
 
 def _normalize_classroom_generation_job_locked(request_id: str, job: dict) -> dict:
-    if job.get('status') not in {'running', 'cancelling'} or request_id in CLASSROOM_GENERATION_CANCELS:
-        return job
-    timestamp = job.get('updated_at') or job.get('started_at')
-    if not timestamp:
-        return job
-    try:
-        age_seconds = (datetime.now() - datetime.fromisoformat(timestamp)).total_seconds()
-    except (TypeError, ValueError):
-        return job
-    if age_seconds >= CLASSROOM_GENERATION_ORPHAN_TIMEOUT_SECONDS:
-        return _mark_orphaned_classroom_generation_locked(request_id, job)
-    return job
+    return CLASSROOM_GENERATION_JOB_SERVICE._normalize_locked(request_id, job)
 
 
 def _prune_classroom_generation_jobs_locked(max_jobs: int = 80) -> None:
-    if len(CLASSROOM_GENERATION_JOBS) <= max_jobs:
-        return
-    removable = [
-        (job.get('updated_at') or job.get('started_at') or '', request_id)
-        for request_id, job in CLASSROOM_GENERATION_JOBS.items()
-        if job.get('status') not in {'running', 'cancelling'}
-    ]
-    removable.sort()
-    for _, request_id in removable[:max(0, len(CLASSROOM_GENERATION_JOBS) - max_jobs)]:
-        CLASSROOM_GENERATION_JOBS.pop(request_id, None)
+    CLASSROOM_GENERATION_JOB_SERVICE._prune_locked(max_jobs)
 
 
 def _mark_classroom_generation_running(request_id: str, topic: str) -> dict | None:
-    if not request_id:
-        return None
-    now = _classroom_generation_now()
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
-        job = {
-            **current,
-            'request_id': request_id,
-            'topic': topic,
-            'status': 'running',
-            'started_at': current.get('started_at') or now,
-            'updated_at': now,
-            'progress_events': current.get('progress_events') or [],
-            'progress_event_count': current.get('progress_event_count') or 0,
-            'elapsed_seconds': current.get('elapsed_seconds') or 0,
-        }
-        CLASSROOM_GENERATION_JOBS[request_id] = job
-        _write_classroom_generation_job_file(request_id, job)
-        _prune_classroom_generation_jobs_locked()
-        return dict(job)
+    return CLASSROOM_GENERATION_JOB_SERVICE.mark_running(request_id, topic)
 
 
 def _mark_classroom_generation_done(request_id: str, classroom_id: str, classroom: dict) -> dict | None:
-    if not request_id:
-        return None
-    now = _classroom_generation_now()
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
-        job = {
-            **current,
-            'request_id': request_id,
-            'status': 'done',
-            'classroom_id': classroom_id,
-            'classroom': classroom,
-            'scenes_generated': len(classroom.get('scenes', [])),
-            'total_scenes': len(classroom.get('scenes', [])),
-            'updated_at': now,
-        }
-        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
-        CLASSROOM_GENERATION_JOBS[request_id] = job
-        _write_classroom_generation_job_file(request_id, job)
-        _prune_classroom_generation_jobs_locked()
-        return dict(job)
+    return CLASSROOM_GENERATION_JOB_SERVICE.mark_done(request_id, classroom_id, classroom)
 
 
 def _mark_classroom_generation_cancelled(request_id: str) -> dict | None:
-    if not request_id:
-        return None
-    now = _classroom_generation_now()
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
-        job = {
-            **current,
-            'request_id': request_id,
-            'status': 'cancelled',
-            'updated_at': now,
-            'error': '课堂生成已停止',
-        }
-        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
-        CLASSROOM_GENERATION_JOBS[request_id] = job
-        _write_classroom_generation_job_file(request_id, job)
-        _prune_classroom_generation_jobs_locked()
-        return dict(job)
+    return CLASSROOM_GENERATION_JOB_SERVICE.mark_cancelled(request_id)
 
 
 def _mark_classroom_generation_error(request_id: str, error: str) -> dict | None:
-    if not request_id:
-        return None
-    now = _classroom_generation_now()
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        current = CLASSROOM_GENERATION_JOBS.get(request_id, {})
-        job = {
-            **current,
-            'request_id': request_id,
-            'status': 'error',
-            'updated_at': now,
-            'error': error,
-        }
-        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, datetime.fromisoformat(now))
-        CLASSROOM_GENERATION_JOBS[request_id] = job
-        _write_classroom_generation_job_file(request_id, job)
-        _prune_classroom_generation_jobs_locked()
-        return dict(job)
+    return CLASSROOM_GENERATION_JOB_SERVICE.mark_error(request_id, error)
 
 
 def _get_classroom_generation_job(request_id: str) -> dict | None:
-    if not request_id:
-        return None
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        job = CLASSROOM_GENERATION_JOBS.get(request_id)
-        if job:
-            job = _normalize_classroom_generation_job_locked(request_id, job)
-            CLASSROOM_GENERATION_JOBS[request_id] = job
-            return dict(job)
-        disk_job = _read_classroom_generation_job_file(request_id)
-        if disk_job:
-            disk_job = _normalize_classroom_generation_job_locked(request_id, disk_job)
-            CLASSROOM_GENERATION_JOBS[request_id] = disk_job
-            return dict(disk_job)
-        return None
+    return CLASSROOM_GENERATION_JOB_SERVICE.get_job(request_id)
 
 
 def _get_classroom_generation_progress_events(request_id: str) -> list[dict]:
-    if not request_id:
-        return []
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        job = CLASSROOM_GENERATION_JOBS.get(request_id) or {}
-        return [
-            dict(event)
-            for event in job.get('progress_events', [])
-            if isinstance(event, dict)
-        ]
+    return CLASSROOM_GENERATION_JOB_SERVICE.get_progress_events(request_id)
 
 
 def _record_classroom_generation_progress(request_id: str, event: dict) -> None:
-    if not request_id or event.get('type') != 'classroom_progress':
-        return
-    now_text = _classroom_generation_now()
-    try:
-        now_dt = datetime.fromisoformat(now_text)
-    except ValueError:
-        now_dt = datetime.now()
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        current = CLASSROOM_GENERATION_JOBS.get(request_id)
-        if not current:
-            return
-        progress_events = [
-            dict(row)
-            for row in current.get('progress_events', [])
-            if isinstance(row, dict)
-        ]
-        progress_events.append(dict(event))
-        progress_events = progress_events[-80:]
-
-        scene = event.get('scene') if isinstance(event.get('scene'), dict) else None
-        generated_scene_count = int(current.get('scenes_generated') or 0)
-        if scene:
-            generated_scene_count = max(generated_scene_count, int(event.get('scene_index') or 0))
-
-        job = {
-            **current,
-            'status': current.get('status') or 'running',
-            'stage': event.get('stage') or '',
-            'stage_label': event.get('stage_label') or '',
-            'stage_index': int(event.get('stage_index') or 0),
-            'stage_total': int(event.get('stage_total') or 0),
-            'current_step_done': int(event.get('scene_index') or 0),
-            'current_step_total': int(event.get('scene_total') or 0),
-            'scene_index': int(event.get('scene_index') or 0),
-            'scene_total': int(event.get('scene_total') or 0),
-            'scenes_generated': generated_scene_count,
-            'progress_events': progress_events,
-            'progress_event_count': int(current.get('progress_event_count') or 0) + 1,
-            'updated_at': now_text,
-        }
-        if scene:
-            job['last_scene'] = dict(scene)
-            job['total_scenes'] = max(
-                int(current.get('total_scenes') or 0),
-                int(event.get('scene_total') or 0),
-            )
-        elif 'total_scenes' not in job:
-            job['total_scenes'] = int(current.get('total_scenes') or 0)
-        job['elapsed_seconds'] = _classroom_generation_elapsed_seconds(job, now_dt)
-        CLASSROOM_GENERATION_JOBS[request_id] = job
-        _write_classroom_generation_job_file(request_id, job)
+    CLASSROOM_GENERATION_JOB_SERVICE.record_progress(request_id, event)
 
 
 def _finish_classroom_generation(request_id: str) -> None:
-    if not request_id:
-        return
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        CLASSROOM_GENERATION_CANCELS.pop(request_id, None)
+    CLASSROOM_GENERATION_JOB_SERVICE.finish(request_id)
 
 
 def _cancel_classroom_generation(request_id: str) -> bool:
-    with CLASSROOM_GENERATION_CANCELS_LOCK:
-        event = CLASSROOM_GENERATION_CANCELS.get(request_id)
-        if event is None:
-            return False
-        event.set()
-        job = CLASSROOM_GENERATION_JOBS.get(request_id)
-        if job and job.get('status') == 'running':
-            CLASSROOM_GENERATION_JOBS[request_id] = {
-                **job,
-                'status': 'cancelling',
-                'updated_at': _classroom_generation_now(),
-            }
-            _write_classroom_generation_job_file(request_id, CLASSROOM_GENERATION_JOBS[request_id])
-        return True
+    return CLASSROOM_GENERATION_JOB_SERVICE.cancel(request_id)
 
 
 # ---------- SSE 订阅者 ----------
 
 def _classroom_subscribe(request_id: str) -> queue.Queue:
     """注册一个 SSE 订阅者，返回该客户端的事件队列。"""
-    q: queue.Queue = queue.Queue(maxsize=512)
-    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
-        CLASSROOM_GENERATION_SUBSCRIBERS.setdefault(request_id, []).append(q)
-    return q
+    return CLASSROOM_GENERATION_JOB_SERVICE.subscribe(request_id)
 
 
 def _classroom_unsubscribe(request_id: str, q: queue.Queue) -> None:
-    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
-        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id)
-        if not subs:
-            return
-        if q in subs:
-            subs.remove(q)
-        if not subs:
-            CLASSROOM_GENERATION_SUBSCRIBERS.pop(request_id, None)
+    CLASSROOM_GENERATION_JOB_SERVICE.unsubscribe(request_id, q)
 
 
 def _classroom_emit(request_id: str, event: dict) -> None:
     """由生成线程调用：把事件 fan-out 到所有 SSE 订阅者。"""
-    _record_classroom_generation_progress(request_id, event)
-    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
-        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id, [])
-        for q in subs:
-            try:
-                q.put_nowait(event)
-            except queue.Full:
-                # 慢消费者：丢弃这一帧；不阻塞生成线程
-                pass
+    CLASSROOM_GENERATION_JOB_SERVICE.emit(request_id, event)
 
 
 def _classroom_close_subscribers(request_id: str) -> None:
     """终端事件后调用：往所有订阅者塞一个 None 哨兵，让 SSE 循环退出。"""
-    with CLASSROOM_GENERATION_SUBSCRIBERS_LOCK:
-        subs = CLASSROOM_GENERATION_SUBSCRIBERS.get(request_id, [])
-        for q in subs:
-            try:
-                q.put_nowait(None)
-            except queue.Full:
-                pass
+    CLASSROOM_GENERATION_JOB_SERVICE.close_subscribers(request_id)
 
 
 def _classroom_from_generation_preview(user_id: str, request_id: str) -> dict | None:
