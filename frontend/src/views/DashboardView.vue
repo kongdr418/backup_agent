@@ -12,7 +12,7 @@
             多智能体交互智慧课堂
           </div>
           <h1 class="hero-title">开始你的学习</h1>
-          <p class="hero-sub">从下方模块选择一个，开启多智能体协同的个性化学习资源探索</p>
+          <p class="hero-sub">从下方模块选择一个，开启围绕学习者画像展开的多智能体个性化学习体验</p>
         </div>
 
         <!-- Main action grid — 3 primary modules -->
@@ -175,7 +175,7 @@ const primary = [
     icon: Presentation,
     iconBg: 'bg-ppt-pale',
     iconFg: 'text-purple-600',
-    desc: 'SVG 多 Agent 流水线，生成带讲解脚本的智慧课堂幻灯片',
+    desc: '为智慧课堂准备带讲解脚本的学习课件与课堂内容',
   },
   {
     label: '文件库',
@@ -183,7 +183,7 @@ const primary = [
     icon: FolderOpen,
     iconBg: 'bg-amber-pale',
     iconFg: 'text-amber-700',
-    desc: '查看和管理所有生成的学习资源',
+    desc: '查看和管理课堂资料、学习资源与历史产物',
   },
 ]
 

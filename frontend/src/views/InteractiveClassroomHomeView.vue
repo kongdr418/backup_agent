@@ -7,8 +7,8 @@
             <GraduationCap class="hero-icon-svg" />
           </div>
           <div>
-            <h1 class="title">交互式课堂</h1>
-            <p class="desc">生成一节可播放、可答题、可反馈的真实课堂。</p>
+            <h1 class="title">智慧课堂</h1>
+            <p class="desc">围绕学习者画像进入一节可播放、可答题、可反馈的个性化课堂。</p>
           </div>
         </div>
         <div class="hero-art" aria-hidden="true">
@@ -24,7 +24,7 @@
 
       <div class="create-card">
         <div class="create-main">
-          <h2 class="section-title">创建新课堂</h2>
+          <h2 class="section-title">开始新的学习课堂</h2>
 
           <div class="form-grid">
             <label class="line-field wide">
@@ -78,15 +78,15 @@
 
           <button class="primary-btn" :disabled="loading" @click="goPptStudio">
             <Sparkles class="btn-icon" />
-            <span>去 PPT 工作台生成课件</span>
+            <span>去准备课堂内容</span>
             <ArrowRight class="btn-icon" />
           </button>
         </div>
 
         <aside class="reuse-panel">
           <div class="reuse-copy">
-            <div class="reuse-title">已有课件转课堂</div>
-            <div class="reuse-desc">如果文件库里已有 PPT Studio 课件，可以直接选择并生成课堂。</div>
+            <div class="reuse-title">已有学习课件开始课堂</div>
+            <div class="reuse-desc">如果文件库里已有 PPT Studio 学习课件，可以直接选择并生成智慧课堂。</div>
           </div>
           <div class="reuse-actions">
             <n-select
@@ -599,7 +599,7 @@ function goPptStudio() {
 
 async function onGenerate() {
   if (!selectedPptJobId.value) {
-    message.warning('请先选择已有课件，或前往 PPT 工作台生成课件')
+    message.warning('请先选择已有学习课件，或前往 PPT 工作台准备课堂内容')
     return
   }
 
