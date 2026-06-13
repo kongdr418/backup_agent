@@ -19,7 +19,9 @@ from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY
 from learner_profile.profile_agent import ProfileAgent, build_course_id
 from learner_profile.orchestrator import ProfileOrchestrator
 from learner_profile.onboarding_service import ProfileOnboardingService
+from learner_profile.routes import create_learner_profile_blueprint
 from generators.shared_config import content_llm_call
+from ppt_engine.routes import create_ppt_routes_blueprint
 from course_knowledge import (
     CourseKnowledgeIngestor,
     CourseKnowledgeRetriever,
@@ -27,8 +29,10 @@ from course_knowledge import (
     CourseVectorIndex,
     LocalEmbeddingService,
 )
+from course_knowledge.routes import create_course_knowledge_blueprint
 from interactive_classroom.storage import ClassroomStorage
 from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.routes import create_interactive_classroom_blueprint
 from interactive_classroom.critic_service import (
     build_content_llm_semantic_reviewer,
     content_llm_semantic_reviewer,
@@ -53,6 +57,7 @@ from interactive_classroom.discussion_service import (
     generate_multi_agent_discussion_turns,
 )
 from interactive_classroom.tts_service import ClassroomTTSService
+from file_library.routes import create_file_library_blueprint
 import json
 import os
 import shutil
@@ -780,6 +785,26 @@ def _resolve_content_llm_request_config(data: dict) -> dict[str, str]:
         'critic_mode': _resolve_classroom_critic_mode(data),
     }
 
+
+app.register_blueprint(create_learner_profile_blueprint(
+    get_user_id=get_request_user_id,
+    get_storage=lambda: LEARNER_PROFILE_STORAGE,
+    get_profile_agent=lambda: PROFILE_AGENT,
+    get_onboarding_service=lambda: PROFILE_ONBOARDING_SERVICE,
+    resolve_content_llm_request_config=_resolve_content_llm_request_config,
+))
+app.register_blueprint(create_course_knowledge_blueprint(
+    get_user_id=get_request_user_id,
+    get_ingestor=lambda: COURSE_KNOWLEDGE_INGESTOR,
+    logger=request_logger,
+))
+app.register_blueprint(create_file_library_blueprint(
+    get_user_id=get_request_user_id,
+    backend_dir=BACKEND_DIR,
+    generators_dir=GENERATORS_DIR,
+    scan_dir=_scan_dir,
+    logger=request_logger,
+))
 
 # ==================== 健康检查 & API 信息 ====================
 
@@ -1798,638 +1823,6 @@ def update_settings():
     return jsonify({'success': True, 'settings': DEFAULT_SETTINGS})
 
 
-# ==================== 学习者画像 API ====================
-
-@app.route('/api/course-knowledge/upload', methods=['POST'])
-def upload_course_knowledge():
-    user_id = get_request_user_id()
-    file = request.files.get('file')
-    if file is None or not (file.filename or '').strip():
-        return jsonify({'success': False, 'error': 'file is required'}), 400
-
-    try:
-        result = COURSE_KNOWLEDGE_INGESTOR.ingest_upload(
-            user_id=user_id,
-            filename=file.filename,
-            stream=file.stream,
-            content_type=file.mimetype or '',
-        )
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
-    except Exception as exc:
-        request_logger.warning('[COURSE-KNOWLEDGE] upload failed', exc_info=True)
-        return jsonify({'success': False, 'error': str(exc)}), 500
-
-    return jsonify(
-        {
-            'success': True,
-            'document': result['document'],
-            'course_map': result['course_map'],
-        }
-    )
-
-
-@app.route('/api/course-knowledge/list', methods=['GET'])
-def list_course_knowledge():
-    user_id = get_request_user_id()
-    return jsonify(
-        {
-            'success': True,
-            'items': COURSE_KNOWLEDGE_INGESTOR.list_documents(user_id),
-        }
-    )
-
-
-@app.route('/api/course-knowledge/<document_id>', methods=['DELETE'])
-def delete_course_knowledge(document_id: str):
-    user_id = get_request_user_id()
-    try:
-        result = COURSE_KNOWLEDGE_INGESTOR.delete_document(user_id, document_id)
-        return jsonify({'success': True, **result})
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except Exception as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
-
-
-@app.route('/api/course-knowledge/course-map', methods=['GET'])
-def get_course_knowledge_course_map():
-    user_id = get_request_user_id()
-    return jsonify(
-        {
-            'success': True,
-            'courses': COURSE_KNOWLEDGE_INGESTOR.list_courses(user_id),
-        }
-    )
-
-
-@app.route('/api/learner-profile', methods=['GET'])
-def get_learner_profile():
-    user_id = get_request_user_id()
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    return jsonify({'success': True, 'profile': profile})
-
-
-@app.route('/api/learner-profile', methods=['PUT'])
-def update_learner_profile():
-    user_id = get_request_user_id()
-    data = request.get_json(silent=True) or {}
-    profile = data.get('profile')
-    if not isinstance(profile, dict):
-        return jsonify({'success': False, 'error': 'profile must be an object'}), 400
-
-    saved_profile = LEARNER_PROFILE_STORAGE.save_manual_profile(user_id, profile)
-    return jsonify({'success': True, 'profile': saved_profile})
-
-
-@app.route('/api/learner-profile/onboarding/message', methods=['POST'])
-def learner_profile_onboarding_message():
-    user_id = get_request_user_id()
-    data = request.get_json(silent=True) or {}
-    messages = data.get('messages', [])
-    if not isinstance(messages, list) or any(
-        not isinstance(item, dict)
-        or item.get('role') not in {'user', 'assistant'}
-        or not isinstance(item.get('content'), str)
-        for item in messages
-    ):
-        return jsonify({'success': False, 'error': 'messages must be a conversation list'}), 400
-
-    request_config = _resolve_content_llm_request_config(data)
-    llm_config = {
-        'model': request_config.get('content_model', ''),
-        'api_key': request_config.get('content_api_key', ''),
-        'base_url': request_config.get('content_base_url', ''),
-        'provider_type': request_config.get('content_provider_type', ''),
-    }
-    draft = data.get('draft')
-    profile = draft if isinstance(draft, dict) else LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    result = PROFILE_ONBOARDING_SERVICE.advance(
-        profile=profile,
-        messages=messages[-20:],
-        llm_config=llm_config,
-    )
-    return jsonify({'success': True, **result})
-
-
-@app.route('/api/learner-profile/strategy', methods=['GET'])
-def get_learner_profile_strategy():
-    user_id = get_request_user_id()
-    course = (request.args.get('course') or '通用课程').strip() or '通用课程'
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    strategy = PROFILE_AGENT.build_generation_strategy(profile, course)
-    return jsonify({'success': True, 'generation_strategy': strategy})
-
-
-@app.route('/api/learner-profile/updates/<update_id>', methods=['PATCH'])
-def resolve_learner_profile_update(update_id):
-    user_id = get_request_user_id()
-    data = request.get_json(silent=True) or {}
-    action = (data.get('action') or '').strip()
-    try:
-        profile = LEARNER_PROFILE_STORAGE.resolve_pending_update(
-            user_id,
-            update_id,
-            action=action,
-            modified_after=data.get('after'),
-        )
-    except KeyError:
-        return jsonify({'success': False, 'error': '画像更新建议不存在'}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
-    return jsonify({'success': True, 'profile': profile})
-
-
-# ==================== 文件管理 API ====================
-
-@app.route('/api/files', methods=['GET'])
-def get_files():
-    """获取所有生成的文件列表"""
-    request_logger.info('[FILES] 获取文件列表')
-    user_id = get_request_user_id()
-
-    files = []
-
-    # 扫描 PPT 文件
-    ppt_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_ppt"), user_id)
-    if os.path.exists(ppt_dir):
-        for f in os.listdir(ppt_dir):
-            if f.endswith('.pptx') and not f.startswith('~$'):
-                filepath = os.path.join(ppt_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'ppt_{f}',
-                    'name': f,
-                    'type': 'ppt',
-                    'type_label': 'PPT',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '📊',
-                    'slide_count': None,
-                })
-
-    # 扫描 SVG PPT 导出的 PPTX 文件
-    svg_ppt_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
-    if os.path.exists(svg_ppt_dir):
-        for job_dir in os.listdir(svg_ppt_dir):
-            job_path = os.path.join(svg_ppt_dir, job_dir)
-            if not os.path.isdir(job_path) or job_dir.startswith('temp_'):
-                continue
-            exports_dir = os.path.join(job_path, 'exports')
-            if not os.path.exists(exports_dir):
-                continue
-            # 只取第一个 .pptx 文件
-            pptx_files = [f for f in os.listdir(exports_dir)
-                          if f.endswith('.pptx') and not f.startswith('~$')]
-            if not pptx_files:
-                continue
-            f = pptx_files[0]
-            filepath = os.path.join(exports_dir, f)
-            stat = os.stat(filepath)
-            # 读取 topic 作为友好文件名
-            topic = None
-            meta_path = os.path.join(job_path, 'metadata.json')
-            if os.path.exists(meta_path):
-                try:
-                    with open(meta_path, 'r', encoding='utf-8') as mf:
-                        meta = json.load(mf)
-                    topic = meta.get('topic')
-                except Exception:
-                    pass
-            display_name = f"{topic}.pptx" if topic else f
-            # 读取 slide_count
-            slide_count = None
-            svg_final_dir = os.path.join(job_path, 'svg_final')
-            if os.path.exists(svg_final_dir):
-                slide_count = len([x for x in os.listdir(svg_final_dir) if x.endswith('.svg')])
-            elif os.path.exists(exports_dir):
-                import glob
-                slide_count = len(glob.glob(os.path.join(exports_dir, '*.pptx'))) or None
-            files.append({
-                'id': f'svg_ppt_{job_dir}',
-                'name': display_name,
-                'type': 'ppt',
-                'type_label': 'PPT',
-                'job_id': job_dir,
-                'path': filepath,
-                'size': stat.st_size,
-                'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                'icon': '📊',
-                'slide_count': slide_count,
-            })
-
-    # 扫描讲义文件
-    lecture_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_lectures"), user_id)
-    if os.path.exists(lecture_dir):
-        for f in os.listdir(lecture_dir):
-            if f.endswith('.md'):
-                filepath = os.path.join(lecture_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'lecture_{f}',
-                    'name': f,
-                    'type': 'lecture',
-                    'type_label': '讲义',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '📚'
-                })
-
-    # 扫描课程大纲文件
-    outline_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_outlines"), user_id)
-    if os.path.exists(outline_dir):
-        for f in os.listdir(outline_dir):
-            if f.endswith(('.md', '.docx')):
-                filepath = os.path.join(outline_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'outline_{f}',
-                    'name': f,
-                    'type': 'outline',
-                    'type_label': '课程大纲',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '📋'
-                })
-
-    # 扫描讲稿文件
-    speech_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_speeches"), user_id)
-    if os.path.exists(speech_dir):
-        for f in os.listdir(speech_dir):
-            if f.endswith(('.md', '.docx')):
-                filepath = os.path.join(speech_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'speech_{f}',
-                    'name': f,
-                    'type': 'speech',
-                    'type_label': '讲稿',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🎤'
-                })
-
-    # 扫描习题集文件
-    exercise_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_exercises"), user_id)
-    if os.path.exists(exercise_dir):
-        for f in os.listdir(exercise_dir):
-            if f.endswith(('.md', '.docx')):
-                filepath = os.path.join(exercise_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'exercise_{f}',
-                    'name': f,
-                    'type': 'exercise',
-                    'type_label': '习题集',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '✏️'
-                })
-
-    # 扫描课堂测验文件
-    quiz_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_quizzes"), user_id)
-    if os.path.exists(quiz_dir):
-        for f in os.listdir(quiz_dir):
-            if f.endswith(('.md', '.docx')):
-                filepath = os.path.join(quiz_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'quiz_{f}',
-                    'name': f,
-                    'type': 'quiz',
-                    'type_label': '课堂测验',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '❓'
-                })
-
-    # 扫描知识卡片文件
-    card_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_cards"), user_id)
-    if os.path.exists(card_dir):
-        for f in os.listdir(card_dir):
-            if f.endswith(('.md', '.docx')):
-                filepath = os.path.join(card_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'card_{f}',
-                    'name': f,
-                    'type': 'knowledge_card',
-                    'type_label': '知识卡片',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🃏'
-                })
-
-    # 扫描思维导图文件
-    mindmap_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_mindmaps"), user_id)
-    if os.path.exists(mindmap_dir):
-        for f in os.listdir(mindmap_dir):
-            if f.endswith('.md'):
-                filepath = os.path.join(mindmap_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'mindmap_{f}',
-                    'name': f,
-                    'type': 'mindmap',
-                    'type_label': '思维导图',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🧠'
-                })
-
-    # 扫描图文内容文本文件
-    content_text_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/text"), user_id)
-    if os.path.exists(content_text_dir):
-        for f in os.listdir(content_text_dir):
-            if f.endswith('.md'):
-                filepath = os.path.join(content_text_dir, f)
-                stat = os.stat(filepath)
-                # 判断是视频脚本还是小红书文案
-                type_label = '视频脚本' if f.startswith('video_script') else '小红书文案'
-                files.append({
-                    'id': f'content_text_{f}',
-                    'name': f,
-                    'type': 'content_text',
-                    'type_label': type_label,
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '📝'
-                })
-
-    # 扫描音频文件
-    content_audio_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/audio"), user_id)
-    if os.path.exists(content_audio_dir):
-        for f in os.listdir(content_audio_dir):
-            if f.endswith('.wav'):
-                filepath = os.path.join(content_audio_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'content_audio_{f}',
-                    'name': f,
-                    'type': 'content_audio',
-                    'type_label': '音频',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🔊'
-                })
-
-    # 扫描图片文件
-    content_image_dir = _scan_dir(os.path.join(GENERATORS_DIR, "generated_content/images"), user_id)
-    if os.path.exists(content_image_dir):
-        for f in os.listdir(content_image_dir):
-            if f.endswith(('.jpeg', '.jpg', '.png')):
-                filepath = os.path.join(content_image_dir, f)
-                stat = os.stat(filepath)
-                files.append({
-                    'id': f'content_image_{f}',
-                    'name': f,
-                    'type': 'content_image',
-                    'type_label': '封面图',
-                    'path': filepath,
-                    'size': stat.st_size,
-                    'size_formatted': f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🖼️'
-                })
-
-    # 按时间倒序排列
-    files.sort(key=lambda x: x['created'], reverse=True)
-
-    request_logger.info(f'[FILES] 找到 {len(files)} 个文件')
-    return jsonify({'files': files})
-
-
-@app.route('/api/files/delete', methods=['POST'])
-def delete_file():
-    """删除文件"""
-    data = request.json
-    file_path = data.get('path', '')
-
-    request_logger.info(f'[FILES] 删除文件请求: {file_path}')
-
-    if not file_path or not os.path.exists(file_path):
-        return jsonify({'success': False, 'error': '文件不存在'}), 404
-
-    # 安全检查：确保文件在允许的目录中
-    allowed_dirs = [os.path.join(GENERATORS_DIR, d) for d in [
-        'generated_ppt', 'generated_lectures', 'generated_content',
-        'generated_outlines', 'generated_speeches', 'generated_exercises',
-        'generated_quizzes', 'generated_cards', 'generated_mindmaps'
-    ]]
-    # SVG PPT 在 BACKEND_DIR/generated_svg_ppt 下
-    svg_ppt_root = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
-    allowed_dirs.append(svg_ppt_root)
-    abs_path = os.path.abspath(file_path)
-    is_allowed = any(abs_path.startswith(d) for d in allowed_dirs)
-
-    if not is_allowed:
-        request_logger.warning(f'[FILES] 非法删除路径: {file_path}')
-        return jsonify({'success': False, 'error': '无权删除此文件'}), 403
-
-    try:
-        os.remove(abs_path)
-        request_logger.info(f'[FILES] 文件已删除: {file_path}')
-        return jsonify({'success': True, 'message': '文件已删除'})
-    except Exception as e:
-        request_logger.error(f'[FILES] 删除失败: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/files/rename', methods=['POST'])
-def rename_file():
-    """重命名文件"""
-    data = request.json
-    old_path = data.get('path', '')
-    new_name = data.get('new_name', '')
-    user_id = get_request_user_id()
-
-    request_logger.info(f'[FILES] 重命名文件: {old_path} -> {new_name} (user: {user_id})')
-
-    if not old_path or not os.path.exists(old_path):
-        return jsonify({'success': False, 'error': '文件不存在'}), 404
-
-    if not new_name or '/' in new_name or '\\' in new_name:
-        return jsonify({'success': False, 'error': '无效的文件名'}), 400
-
-    # 安全检查
-    allowed_dirs = [_scan_dir(os.path.join(GENERATORS_DIR, d), user_id) for d in [
-        'generated_ppt', 'generated_lectures', 'generated_content',
-        'generated_outlines', 'generated_speeches', 'generated_exercises',
-        'generated_quizzes', 'generated_cards', 'generated_mindmaps'
-    ]]
-    svg_ppt_root = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
-    allowed_dirs.append(svg_ppt_root)
-    abs_old = os.path.abspath(old_path)
-    is_allowed = any(abs_old.startswith(d) for d in allowed_dirs)
-
-    if not is_allowed:
-        request_logger.warning(f'[FILES] 非法重命名路径: {old_path}')
-        return jsonify({'success': False, 'error': '无权重命名此文件'}), 403
-
-    try:
-        # 获取文件扩展名
-        old_ext = os.path.splitext(abs_old)[1]
-        # 确保新文件名有正确的扩展名
-        if not new_name.endswith(old_ext):
-            new_name += old_ext
-
-        new_path = os.path.join(os.path.dirname(abs_old), new_name)
-
-        if os.path.exists(new_path):
-            return jsonify({'success': False, 'error': '目标文件已存在'}), 400
-
-        os.rename(abs_old, new_path)
-        request_logger.info(f'[FILES] 文件已重命名: {abs_old} -> {new_path}')
-        return jsonify({'success': True, 'message': '文件已重命名', 'new_path': new_path})
-    except Exception as e:
-        request_logger.error(f'[FILES] 重命名失败: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/files/clear', methods=['POST'])
-def clear_all_files():
-    """清空当前用户所有生成的文件"""
-    data = request.json
-    confirm = data.get('confirm', False)
-    user_id = get_request_user_id()
-
-    if not confirm:
-        return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
-
-    request_logger.info(f'[FILES] 收到清空文件请求 (user: {user_id})')
-
-    allowed_dirs = [
-        'generated_ppt', 'generated_lectures', 'generated_content',
-        'generated_outlines', 'generated_speeches', 'generated_exercises',
-        'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt'
-    ]
-    deleted_count = 0
-    errors = []
-
-    for dir_name in allowed_dirs:
-        if dir_name == 'generated_svg_ppt':
-            dir_path = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
-        else:
-            dir_path = _scan_dir(os.path.join(GENERATORS_DIR, dir_name), user_id)
-        if os.path.exists(dir_path):
-            try:
-                if dir_name == 'generated_svg_ppt':
-                    # SVG PPT 以 job 目录存储，需要删整个目录
-                    for job_id in os.listdir(dir_path):
-                        job_path = os.path.join(dir_path, job_id)
-                        abs_job = os.path.abspath(job_path)
-                        if os.path.isdir(abs_job) and abs_job.startswith(os.path.abspath(dir_path)):
-                            shutil.rmtree(abs_job)
-                            deleted_count += 1
-                else:
-                    for root, dirs, files in os.walk(dir_path):
-                        for f in files:
-                            file_path = os.path.join(root, f)
-                            if os.path.isfile(file_path):
-                                try:
-                                    os.remove(file_path)
-                                    deleted_count += 1
-                                except Exception as e:
-                                    errors.append(f'删除 {file_path} 失败: {e}')
-            except Exception as e:
-                errors.append(f'清空目录 {dir_path} 失败: {e}')
-
-    request_logger.info(f'[FILES] 清空完成，共删除 {deleted_count} 个文件')
-    if errors:
-        request_logger.error(f'[FILES] 清空过程中的错误: {errors}')
-
-    return jsonify({
-        'success': True,
-        'message': f'已清空 {deleted_count} 个文件',
-        'deleted_count': deleted_count,
-        'errors': errors
-    })
-
-
-@app.route('/api/files/download', methods=['GET'])
-def download_file():
-    """下载指定路径的文件"""
-    filepath = request.args.get('path', '')
-    if not filepath:
-        return jsonify({'error': '缺少 path 参数'}), 400
-
-    # 安全校验：只允许 generated_* 目录下的文件
-    abs_path = os.path.abspath(filepath)
-    base_dir = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
-    if not abs_path.startswith(base_dir):
-        return jsonify({'error': '非法路径'}), 403
-
-    allowed_prefixes = [os.path.join(base_dir, d) for d in [
-        'generated_ppt', 'generated_lectures', 'generated_content',
-        'generated_outlines', 'generated_speeches', 'generated_exercises',
-        'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt',
-        os.path.join('generators', 'generated_exercises'),
-        os.path.join('generators', 'generated_quizzes'),
-        os.path.join('generators', 'generated_lectures'),
-        os.path.join('generators', 'generated_outlines'),
-        os.path.join('generators', 'generated_speeches'),
-        os.path.join('generators', 'generated_cards'),
-        os.path.join('generators', 'generated_mindmaps'),
-        os.path.join('generators', 'generated_ppt'),
-        os.path.join('generators', 'generated_content'),
-    ]]
-    if not any(abs_path.startswith(p) for p in allowed_prefixes):
-        return jsonify({'error': '文件不在允许的目录中'}), 403
-
-    if not os.path.isfile(abs_path):
-        return jsonify({'error': '文件不存在'}), 404
-
-    from flask import send_file as flask_send_file
-    return flask_send_file(abs_path, as_attachment=True,
-                           download_name=os.path.basename(abs_path))
-
-
-@app.route('/api/files/read', methods=['GET'])
-def read_file():
-    """读取文本文件内容（用于预览）"""
-    filepath = request.args.get('path', '')
-    if not filepath:
-        return jsonify({'error': '缺少 path 参数'}), 400
-
-    abs_path = os.path.abspath(filepath)
-    base_dir = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
-    if not abs_path.startswith(base_dir):
-        return jsonify({'error': '非法路径'}), 403
-
-    if not os.path.isfile(abs_path):
-        return jsonify({'error': '文件不存在'}), 404
-
-    try:
-        with open(abs_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return jsonify({'content': content, 'filename': os.path.basename(abs_path)})
-    except UnicodeDecodeError:
-        return jsonify({'error': '文件不是文本格式'}), 400
-
-
 # ==================== 记忆设置 API ====================
 
 @app.route('/api/memory', methods=['GET'])
@@ -2541,432 +1934,18 @@ def _resolve_ppt_generation_notes(data: dict, user_id: str) -> str | None:
     return notes or None
 
 
-@app.route('/api/ppt-svg/generate', methods=['POST'])
-def ppt_svg_generate():
-    """SVG PPT 流式生成接口（SSE）"""
-    data = request.json or {}
-    topic = data.get('topic', '').strip()
-    language = data.get('language', 'zh')
-    num_slides = data.get('num_slides')
-    style = data.get('style', 'education')
-    detail_level = data.get('detail_level', 'normal')
-    model = data.get('model', 'deepseek-v4-flash')
-    api_key = data.get('api_key')
-    base_url = data.get('base_url')
-    provider_id = (data.get('provider_id') or data.get('providerId') or '').strip()
-    canvas_format = data.get('canvas_format', 'ppt169')
-
-    inferred_provider_id, inferred_provider, _ = _get_provider_for_model(model)
-    if not provider_id:
-        provider_id = inferred_provider_id or 'deepseek'
-    provider = PROVIDERS.get(provider_id) or inferred_provider
-
-    # 服务端 API Key 回退
-    if not api_key:
-        if provider_id and provider_id in SERVER_API_KEYS:
-            api_key = SERVER_API_KEYS[provider_id]
-        elif inferred_provider_id and inferred_provider_id in SERVER_API_KEYS:
-            api_key = SERVER_API_KEYS[inferred_provider_id]
-    if not base_url and provider:
-        base_url = provider.get('defaultBaseUrl', '')
-
-    deep_research = _bool_from_payload(data.get('deep_research'), False)
-    visual_critic = _bool_from_payload(data.get('visual_critic'), False)
-    repair_enabled = _bool_from_payload(data.get('repair_enabled'), False)
-    template_id = data.get('template_id')
-    user_id = get_request_user_id()
-    notes = _resolve_ppt_generation_notes(data, user_id)
-
-    if not topic:
-        return jsonify({'error': '课程主题不能为空'}), 400
-
-    def generate():
-        from ppt_engine.pipeline import PPTPipeline
-        from ppt_engine.sse_bridge import SSEBridge
-
-        pipeline = PPTPipeline()
-        bridge = SSEBridge()
-        bridge.run(pipeline.generate(
-            topic,
-            provider=provider_id or 'deepseek',
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            user_id=user_id,
-            language=language,
-            num_slides=num_slides,
-            style=style,
-            canvas_format=canvas_format,
-            detail_level=detail_level,
-            deep_research=deep_research,
-            visual_critic=visual_critic,
-            repair_enabled=repair_enabled,
-            template_id=template_id,
-            notes=notes,
-        ))
-
-        try:
-            for event in bridge.events():
-                # Forward SSE heartbeat comments directly
-                if isinstance(event, str):
-                    yield event
-                    continue
-
-                event_data = {
-                    'type': f'ppt_svg_{event.status}',
-                    'stage': event.stage,
-                    'message': event.message,
-                    'progress': event.progress,
-                }
-                if event.data:
-                    if 'svg' in event.data:
-                        event_data['slide'] = {
-                            'page': event.data['page'],
-                            'svg': event.data['svg'],
-                        }
-                    if 'output_path' in event.data:
-                        event_data['output_path'] = event.data['output_path']
-                    if 'job_id' in event.data:
-                        event_data['job_id'] = event.data['job_id']
-                    if 'total_slides' in event.data:
-                        event_data['total_slides'] = event.data['total_slides']
-                    if 'slide_count' in event.data:
-                        event_data['slide_count'] = event.data['slide_count']
-                    if 'pptx_filename' in event.data:
-                        event_data['pptx_filename'] = event.data['pptx_filename']
-                    if 'error' in event.data:
-                        event_data['error'] = event.data['error']
-                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'ppt_svg_error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-
-    response = Response(generate(), mimetype='text/event-stream')
-    response.headers['X-Accel-Buffering'] = 'no'
-    response.headers['Cache-Control'] = 'no-cache'
-    return response
-
-
-@app.route('/api/ppt-svg/preview/<job_id>/<int:slide_num>', methods=['GET'])
-def ppt_svg_preview(job_id, slide_num):
-    """获取指定页的 SVG 内容"""
-    import glob
-    user_id = get_request_user_id()
-    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not base_dir:
-        return jsonify({'error': '任务不存在'}), 404
-    svg_dir = os.path.join(base_dir, 'svg_final')
-    if not os.path.exists(svg_dir):
-        svg_dir = os.path.join(base_dir, 'svg_output')
-    if not os.path.exists(svg_dir):
-        return jsonify({'error': '未找到生成结果'}), 404
-
-    svg_files = sorted(glob.glob(os.path.join(svg_dir, '*.svg')))
-    if slide_num < 1 or slide_num > len(svg_files):
-        return jsonify({'error': f'页码 {slide_num} 超出范围 (1-{len(svg_files)})'}), 404
-
-    svg_path = svg_files[slide_num - 1]
-    with open(svg_path, 'r', encoding='utf-8') as f:
-        svg_content = f.read()
-
-    return jsonify({
-        'job_id': job_id,
-        'page': slide_num,
-        'total_pages': len(svg_files),
-        'svg': svg_content,
-        'filename': os.path.basename(svg_path),
-    })
-
-
-@app.route('/api/ppt-svg/preview-all/<job_id>', methods=['GET'])
-def ppt_svg_preview_all(job_id):
-    """获取所有页的 SVG 内容"""
-    import glob
-    user_id = get_request_user_id()
-    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not base_dir:
-        return jsonify({'error': '任务不存在'}), 404
-    svg_dir = os.path.join(base_dir, 'svg_final')
-    if not os.path.exists(svg_dir):
-        svg_dir = os.path.join(base_dir, 'svg_output')
-    if not os.path.exists(svg_dir):
-        return jsonify({'error': '未找到生成结果'}), 404
-
-    svg_files = sorted(glob.glob(os.path.join(svg_dir, '*.svg')))
-    slides = []
-    for i, svg_path in enumerate(svg_files, 1):
-        with open(svg_path, 'r', encoding='utf-8') as f:
-            slides.append({
-                'page': i,
-                'svg': f.read(),
-                'filename': os.path.basename(svg_path),
-            })
-
-    return jsonify({
-        'job_id': job_id,
-        'total_pages': len(slides),
-        'slides': slides,
-    })
-
-
-@app.route('/api/ppt-svg/download/<job_id>', methods=['GET'])
-def ppt_svg_download(job_id):
-    """下载生成的 PPTX 文件"""
-    import glob
-    user_id = get_request_user_id()
-    base_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not base_dir:
-        return jsonify({'error': '任务不存在'}), 404
-
-    # 优先使用 PPTist 编辑后的版本
-    pptist_pptx = os.path.join(base_dir, 'pptist', 'current.pptx')
-    if os.path.isfile(pptist_pptx):
-        from flask import send_file
-        resp = send_file(
-            pptist_pptx,
-            as_attachment=True,
-            download_name=os.path.basename(pptist_pptx),
-            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        )
-        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-        return resp
-
-    exports_dir = os.path.join(base_dir, 'exports')
-    if not os.path.exists(exports_dir):
-        return jsonify({'error': '未找到导出文件'}), 404
-
-    pptx_files = sorted(glob.glob(os.path.join(exports_dir, '*.pptx')), key=os.path.getmtime, reverse=True)
-    if not pptx_files:
-        return jsonify({'error': 'PPTX 文件不存在'}), 404
-
-    # 优先返回 PPTist 导出的版本
-    pptx_path = next((f for f in pptx_files if 'pptist' in os.path.basename(f).lower()), pptx_files[0])
-    from flask import send_file
-    resp = send_file(
-        pptx_path,
-        as_attachment=True,
-        download_name=os.path.basename(pptx_path),
-        mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    )
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    return resp
-
-
-@app.route('/api/ppt-svg/list', methods=['GET'])
-def ppt_svg_list():
-    """列出所有已生成的 SVG PPT"""
-    user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    if not os.path.exists(base_dir):
-        return jsonify({'jobs': []})
-
-    jobs = []
-    for job_dir in sorted(os.listdir(base_dir), reverse=True):
-        meta_path = os.path.join(base_dir, job_dir, 'metadata.json')
-        if os.path.exists(meta_path):
-            with open(meta_path, 'r', encoding='utf-8') as f:
-                meta = json.load(f)
-            exports_dir = os.path.join(base_dir, job_dir, 'exports')
-            has_pptx = os.path.exists(exports_dir) and any(
-                f.endswith('.pptx') for f in os.listdir(exports_dir)
-            ) if os.path.exists(exports_dir) else False
-            meta['has_pptx'] = has_pptx
-            jobs.append(meta)
-
-    return jsonify({'jobs': jobs})
-
-
-@app.route('/api/pptist/preview/<job_id>/deck', methods=['GET'])
-def pptist_preview_deck(job_id):
-    """PPTist 编辑器加载 deck 数据"""
-    import glob
-    user_id = get_request_user_id()
-
-    if '..' in job_id or '/' in job_id or '\\' in job_id:
-        return jsonify({'error': '非法 job_id'}), 400
-
-    job_dir, owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not job_dir:
-        return jsonify({'error': '任务不存在'}), 404
-
-    # 检查是否已有保存的 deck
-    deck_path = os.path.join(job_dir, 'pptist', 'deck.json')
-    if os.path.exists(deck_path):
-        try:
-            with open(deck_path, 'r', encoding='utf-8') as f:
-                deck = json.load(f)
-            deck.setdefault('source', {})
-            deck['source']['kind'] = 'preview'
-            deck['source']['id'] = job_id
-            deck['source']['saved_deck'] = True
-            uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
-            deck['source']['source_pptx_url'] = f'/api/ppt-svg/download/{job_id}{uid_qs}'
-            return jsonify(deck)
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # 返回 blank deck，让 PPTist 通过 source_pptx_url 导入 PPTX
-    uid_qs = f'?user_id={owner_user_id}' if owner_user_id != 'anonymous' else ''
-    return jsonify({
-        'title': os.path.basename(job_dir),
-        'width': 1280,
-        'height': 720,
-        'theme': None,
-        'slides': [],
-        'source': {
-            'kind': 'preview',
-            'id': job_id,
-            'saved_deck': False,
-            'source_pptx_url': f'/api/ppt-svg/download/{job_id}{uid_qs}',
-            'fallback_slides': [],
-        },
-    })
-
-
-@app.route('/api/pptist/preview/<job_id>/deck', methods=['PUT'])
-def pptist_save_deck(job_id):
-    """保存 PPTist deck JSON"""
-    user_id = get_request_user_id()
-
-    if '..' in job_id or '/' in job_id or '\\' in job_id:
-        return jsonify({'error': '非法 job_id'}), 400
-
-    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not job_dir:
-        return jsonify({'error': '任务不存在'}), 404
-
-    payload = request.get_json(silent=True) or {}
-    deck = {
-        'title': payload.get('title', ''),
-        'width': payload.get('width', 1280),
-        'height': payload.get('height', 720),
-        'theme': payload.get('theme'),
-        'slides': payload.get('slides', []),
-        'updated_at': datetime.now().isoformat(),
-    }
-
-    pptist_dir = os.path.join(job_dir, 'pptist')
-    os.makedirs(pptist_dir, exist_ok=True)
-    deck_path = os.path.join(pptist_dir, 'deck.json')
-
-    try:
-        with open(deck_path, 'w', encoding='utf-8') as f:
-            json.dump(deck, f, ensure_ascii=False, indent=2)
-        return jsonify({
-            'status': 'saved',
-            'slide_count': len(deck.get('slides', [])),
-            'updated_at': deck['updated_at'],
-        })
-    except Exception as e:
-        return jsonify({'error': f'保存失败: {e}'}), 500
-
-
-@app.route('/api/pptist/preview/<job_id>/export', methods=['POST'])
-def pptist_export_deck(job_id):
-    """接收 PPTist 导出的 PPTX 文件"""
-    import glob
-    user_id = get_request_user_id()
-
-    if '..' in job_id or '/' in job_id or '\\' in job_id:
-        return jsonify({'error': '非法 job_id'}), 400
-
-    job_dir, _owner_user_id = _resolve_svg_job_dir(job_id, user_id)
-    if not job_dir:
-        return jsonify({'error': '任务不存在'}), 404
-
-    if 'file' not in request.files:
-        return jsonify({'error': '没有上传文件'}), 400
-
-    file = request.files['file']
-    if file.filename == '' or not file.filename.endswith('.pptx'):
-        return jsonify({'error': '需要 PPTX 文件'}), 400
-
-    pptist_dir = os.path.join(job_dir, 'pptist')
-    os.makedirs(pptist_dir, exist_ok=True)
-    current_path = os.path.join(pptist_dir, 'current.pptx')
-    file.save(current_path)
-
-    # 同时保存到 exports 目录
-    exports_dir = os.path.join(job_dir, 'exports')
-    os.makedirs(exports_dir, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    export_path = os.path.join(exports_dir, f'presentation_pptist_{timestamp}.pptx')
-    shutil.copy2(current_path, export_path)
-
-    # 更新 metadata.json 的输出路径
-    meta_path = os.path.join(job_dir, 'metadata.json')
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as f:
-                meta = json.load(f)
-            meta['output_path'] = export_path
-            meta['pptx_filename'] = os.path.basename(export_path)
-            with open(meta_path, 'w', encoding='utf-8') as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    return jsonify({
-        'status': 'complete',
-        'output_path': export_path,
-        'slide_count': 0,
-    })
-
-
-@app.route('/api/ppt-svg/<job_id>', methods=['DELETE'])
-def ppt_svg_delete(job_id):
-    """删除指定 SVG PPT 的全部输出"""
-    user_id = get_request_user_id()
-    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    # 基本安全校验：job_id 不能含路径穿越字符
-    if '..' in job_id or '/' in job_id or '\\' in job_id:
-        return jsonify({'success': False, 'error': '非法 job_id'}), 400
-
-    job_path = os.path.join(base_dir, job_id)
-    if not os.path.exists(job_path):
-        return jsonify({'success': False, 'error': '任务不存在'}), 404
-
-    # 二次安全校验：必须确实位于 generated_svg_ppt 下
-    abs_base = os.path.abspath(base_dir)
-    abs_job = os.path.abspath(job_path)
-    if not abs_job.startswith(abs_base):
-        return jsonify({'success': False, 'error': '非法路径'}), 403
-
-    try:
-        shutil.rmtree(abs_job)
-        request_logger.info(f'[PPT-SVG] 已删除任务目录: {abs_job}')
-        return jsonify({'success': True, 'message': '已删除'})
-    except Exception as e:
-        request_logger.error(f'[PPT-SVG] 删除任务失败: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/ppt-svg/clear-all', methods=['POST'])
-def ppt_svg_clear_all():
-    """清空所有 SVG PPT 历史"""
-    data = request.json or {}
-    confirm = data.get('confirm', False)
-    if not confirm:
-        return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
-    user_id = get_request_user_id()
-
-    base_dir = _scan_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_svg_ppt'), user_id)
-    if not os.path.exists(base_dir):
-        return jsonify({'success': True, 'message': '已清空'})
-
-    try:
-        for job_id in os.listdir(base_dir):
-            job_path = os.path.join(base_dir, job_id)
-            abs_base = os.path.abspath(base_dir)
-            abs_job = os.path.abspath(job_path)
-            if abs_job.startswith(abs_base) and os.path.isdir(abs_job):
-                shutil.rmtree(abs_job)
-        request_logger.info('[PPT-SVG] 已清空所有 SVG PPT 历史')
-        return jsonify({'success': True, 'message': '已清空'})
-    except Exception as e:
-        request_logger.error(f'[PPT-SVG] 清空失败: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
+app.register_blueprint(create_ppt_routes_blueprint(
+    get_user_id=get_request_user_id,
+    get_provider_for_model=_get_provider_for_model,
+    providers=PROVIDERS,
+    server_api_keys=SERVER_API_KEYS,
+    bool_from_payload=_bool_from_payload,
+    resolve_ppt_generation_notes=_resolve_ppt_generation_notes,
+    resolve_svg_job_dir=_resolve_svg_job_dir,
+    scan_dir=_scan_dir,
+    backend_dir=BACKEND_DIR,
+    logger=request_logger,
+))
 
 
 # ==================== Interactive Classroom API ====================
@@ -3038,7 +2017,6 @@ def _inherit_classroom_lineage(user_id: str, lineage: dict, course: str) -> tupl
     return inherited, inherited_course
 
 
-@app.route('/api/interactive-classroom/generate', methods=['POST'])
 def interactive_classroom_generate():
     data = request.json or {}
     user_id = get_request_user_id()
@@ -3183,7 +2161,6 @@ def interactive_classroom_generate():
     })
 
 
-@app.route('/api/interactive-classroom/generate/cancel', methods=['POST'])
 def interactive_classroom_generate_cancel():
     data = request.json or {}
     request_id = (data.get('request_id') or '').strip()
@@ -3197,7 +2174,6 @@ def interactive_classroom_generate_cancel():
     return jsonify({'success': True, 'cancelled': True})
 
 
-@app.route('/api/interactive-classroom/generate/status/<request_id>', methods=['GET'])
 def interactive_classroom_generate_status(request_id):
     request_id = (request_id or '').strip()
     if not _is_safe_classroom_request_id(request_id):
@@ -3209,7 +2185,6 @@ def interactive_classroom_generate_status(request_id):
     return jsonify({'success': True, 'job': job})
 
 
-@app.route('/api/interactive-classroom/generate/stream/<request_id>', methods=['GET'])
 def interactive_classroom_generate_stream(request_id):
     """SSE 课堂生成进度流。
 
@@ -3301,14 +2276,12 @@ def interactive_classroom_generate_stream(request_id):
     return response
 
 
-@app.route('/api/interactive-classroom/list', methods=['GET'])
 def interactive_classroom_list():
     user_id = get_request_user_id()
     rows = CLASSROOM_STORAGE.list_classrooms(user_id)
     return jsonify({'classrooms': rows})
 
 
-@app.route('/api/interactive-classroom/<classroom_id>', methods=['GET'])
 def interactive_classroom_get(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3321,7 +2294,6 @@ def interactive_classroom_get(classroom_id):
     return jsonify({'success': True, 'classroom': classroom})
 
 
-@app.route('/api/interactive-classroom/<classroom_id>', methods=['PATCH'])
 def interactive_classroom_update(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3339,7 +2311,6 @@ def interactive_classroom_update(classroom_id):
     return jsonify({'success': True, 'classroom': classroom})
 
 
-@app.route('/api/interactive-classroom/<classroom_id>', methods=['DELETE'])
 def interactive_classroom_delete(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3351,7 +2322,6 @@ def interactive_classroom_delete(classroom_id):
     return jsonify({'success': True})
 
 
-@app.route('/api/interactive-classroom/clear', methods=['POST'])
 def interactive_classroom_clear():
     user_id = get_request_user_id()
     data = request.json or {}
@@ -3361,7 +2331,6 @@ def interactive_classroom_clear():
     return jsonify({'success': True, 'deleted': count})
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/answer', methods=['POST'])
 def interactive_classroom_answer(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3477,7 +2446,6 @@ def interactive_classroom_answer(classroom_id):
     })
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/report', methods=['GET'])
 def interactive_classroom_report(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3680,7 +2648,6 @@ def _analyze_classroom_profile_updates(
         return []
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/practice', methods=['POST'])
 def interactive_classroom_create_practice(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -3954,7 +2921,6 @@ def _build_next_lesson_plan(
     }
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/next-lesson-plan', methods=['POST'])
 def interactive_classroom_next_lesson_plan(classroom_id):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -4010,7 +2976,6 @@ def interactive_classroom_next_lesson_plan(classroom_id):
 
 # ---- P7: 学习事件 API ----
 
-@app.route('/api/interactive-classroom/<classroom_id>/event', methods=['POST'])
 def interactive_classroom_record_event(classroom_id):
     """记录单个学习事件（scene_reviewed / recommended_task_opened / classroom_completed 等）。"""
     user_id = get_request_user_id()
@@ -4180,7 +3145,6 @@ def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
         )
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/events', methods=['GET'])
 def interactive_classroom_list_events(classroom_id):
     """列出课堂的所有学习事件，支持按 type 筛选。"""
     user_id = get_request_user_id()
@@ -4199,7 +3163,6 @@ def interactive_classroom_list_events(classroom_id):
     return jsonify({'success': True, 'events': events})
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/discuss', methods=['POST'])
 def interactive_classroom_discuss(classroom_id):
     user_id = get_request_user_id()
 
@@ -4275,7 +3238,6 @@ def interactive_classroom_discuss(classroom_id):
     })
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/discuss/stream', methods=['POST'])
 def interactive_classroom_discuss_stream(classroom_id):
     """流式讨论接口（SSE），事件格式参考 /api/chat/stream：
     data: {"chunk": "..."}\\n\\n ... data: {"done": true}\\n\\n
@@ -4345,7 +3307,6 @@ def interactive_classroom_discuss_stream(classroom_id):
     return Response(generate(), mimetype='text/event-stream')
 
 
-@app.route('/api/interactive-classroom/<classroom_id>/audio/<filename>', methods=['GET'])
 def interactive_classroom_audio(classroom_id, filename):
     user_id = get_request_user_id()
     if '..' in classroom_id or '/' in classroom_id or '\\' in classroom_id:
@@ -4371,57 +3332,26 @@ def interactive_classroom_audio(classroom_id, filename):
     return send_file(audio_path, mimetype=guessed_type or 'application/octet-stream')
 
 
-# ==================== Templates API ====================
-
-@app.route('/api/templates/list', methods=['GET'])
-def templates_list():
-    """List all installed built-in templates."""
-    try:
-        from ppt_engine.template_manager import list_templates
-        templates = list_templates()
-        return jsonify({
-            'templates': [
-                {
-                    'template_id': t.template_id,
-                    'label': t.label,
-                    'summary': t.summary,
-                    'tone': t.tone,
-                    'theme_mode': t.theme_mode,
-                    'category': t.category,
-                    'keywords': t.keywords,
-                    'slide_count': t.slide_count,
-                }
-                for t in templates
-            ]
-        })
-    except Exception as e:
-        app_logger.error(f'[TEMPLATES] 列表加载失败: {e}')
-        return jsonify({'templates': []})
-
-
-@app.route('/api/templates/preview/<template_id>', methods=['GET'])
-def template_preview(template_id):
-    """Return all page SVGs of a built-in template."""
-    try:
-        from ppt_engine.template_manager import load_template
-        tmpl = load_template(template_id)
-        if tmpl is None:
-            return jsonify({'pages': {}, 'label': ''})
-        pages = {}
-        if tmpl.cover_svg:
-            pages['cover'] = tmpl.cover_svg
-        if tmpl.chapter_svg:
-            pages['chapter'] = tmpl.chapter_svg
-        if tmpl.content_svg:
-            pages['content'] = tmpl.content_svg
-        if tmpl.ending_svg:
-            pages['ending'] = tmpl.ending_svg
-        if tmpl.toc_svg:
-            pages['toc'] = tmpl.toc_svg
-        return jsonify({'pages': pages, 'label': tmpl.info.label})
-    except Exception as e:
-        app_logger.error(f'[TEMPLATES] 预览加载失败: {e}')
-        return jsonify({'pages': {}, 'label': ''})
+app.register_blueprint(create_interactive_classroom_blueprint({
+    'generate': interactive_classroom_generate,
+    'generate_cancel': interactive_classroom_generate_cancel,
+    'generate_status': interactive_classroom_generate_status,
+    'generate_stream': interactive_classroom_generate_stream,
+    'list': interactive_classroom_list,
+    'get': interactive_classroom_get,
+    'update': interactive_classroom_update,
+    'delete': interactive_classroom_delete,
+    'clear': interactive_classroom_clear,
+    'answer': interactive_classroom_answer,
+    'report': interactive_classroom_report,
+    'practice': interactive_classroom_create_practice,
+    'next_lesson_plan': interactive_classroom_next_lesson_plan,
+    'record_event': interactive_classroom_record_event,
+    'list_events': interactive_classroom_list_events,
+    'discuss': interactive_classroom_discuss,
+    'discuss_stream': interactive_classroom_discuss_stream,
+    'audio': interactive_classroom_audio,
+}))
 
 
 if __name__ == '__main__':
