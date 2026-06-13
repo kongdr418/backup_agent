@@ -12,6 +12,7 @@ if BACKEND_DIR not in sys.path:
 
 import app as backend_app
 from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.schema import ClassroomAction, ClassroomScene
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.storage import ClassroomStorage
 from learner_profile.storage import LearnerProfileStorage
@@ -141,6 +142,64 @@ class InteractiveClassroomNextLessonTest(unittest.TestCase):
         self.assertEqual(1, classroom["lesson_depth"])
         self.assertEqual(2, classroom["lesson_index"])
         self.assertEqual("next_lesson", classroom["lesson_kind"])
+
+    def test_quiz_fallback_asks_understanding_questions_not_scene_index(self) -> None:
+        generator = InteractiveClassroomGenerator(
+            backend_dir=self.tempdir.name,
+            storage=self.storage,
+            llm_quiz_enabled=False,
+        )
+        scenes = [
+            ClassroomScene(
+                id="scene_slide_001",
+                type="slide",
+                title="场景干扰",
+                order=1,
+                knowledge_points=["光照变化", "遮挡", "背景噪声"],
+                content={
+                    "extracted_text": [
+                        "场景干扰会导致模型误检或漏检，需要通过数据增强和鲁棒特征降低影响。",
+                    ]
+                },
+                actions=[
+                    ClassroomAction(
+                        id="act_001",
+                        type="speech",
+                        text="识别干扰来源后，应选择更稳健的数据和模型策略。",
+                    )
+                ],
+            ),
+            ClassroomScene(
+                id="scene_slide_002",
+                type="slide",
+                title="计算机视觉挑战",
+                order=2,
+                knowledge_points=["尺度变化", "类间相似", "实时性"],
+                content={
+                    "extracted_text": [
+                        "计算机视觉挑战包括尺度变化、类间相似和实时性约束。",
+                    ]
+                },
+            ),
+        ]
+
+        questions = generator._build_quiz_questions(
+            "计算机视觉",
+            scenes,
+            max_questions=4,
+            qid_prefix="q",
+        )
+
+        self.assertTrue(questions)
+        question_text = "\n".join(q["question"] for q in questions)
+        self.assertNotIn("第 1 个讲解场景主要围绕", question_text)
+        self.assertNotIn("第 2 个讲解场景主要围绕", question_text)
+        self.assertTrue(
+            any(
+                token in question_text
+                for token in ["最能说明", "判断依据", "应用步骤", "应该优先"]
+            )
+        )
 
     def test_generate_endpoint_inherits_lineage_from_parent_classroom(self) -> None:
         self.storage.save_classroom(
@@ -276,6 +335,75 @@ class InteractiveClassroomNextLessonTest(unittest.TestCase):
         self.assertEqual("completed", diagnose_stage["status"])
         self.assertEqual("completed", review_stage["status"])
         self.assertEqual("active", next_stage["status"])
+
+    def test_practice_fallback_uses_report_points_without_scene_index_questions(self) -> None:
+        self.storage.save_classroom(
+            "user_1",
+            "cls_source",
+            {
+                "id": "cls_source",
+                "title": "计算机视觉课堂",
+                "topic": "计算机视觉",
+                "course": "人工智能导论",
+                "status": "ready",
+                "created_at": "2026-06-09T09:00:00",
+                "updated_at": "2026-06-09T09:00:00",
+                "tts": {},
+                "course_root_id": "cls_source",
+                "parent_classroom_id": "",
+                "lesson_depth": 0,
+                "lesson_index": 1,
+                "lesson_kind": "root",
+                "source": {},
+                "knowledge_points": ["场景干扰"],
+                "scenes": [],
+            },
+        )
+        self.storage.save_report(
+            "user_1",
+            "cls_source",
+            {
+                "classroom_id": "cls_source",
+                "topic": "计算机视觉",
+                "score": 50,
+                "weak_points": ["场景干扰", "计算机视觉挑战"],
+                "strong_points": [],
+                "learned_points": ["计算机视觉核心任务"],
+                "next_recommendation": "建议补强干扰场景和挑战识别。",
+                "knowledge_summary": {"场景干扰": {"mastery": 40}},
+                "recommended_tasks": [
+                    {
+                        "id": "task_practice_weak_points",
+                        "type": "practice_weak_points",
+                        "title": "完成补强练习",
+                        "description": "围绕薄弱点再做一轮同类题。",
+                        "priority": "high",
+                        "knowledge_points": ["场景干扰", "计算机视觉挑战"],
+                        "target_scene_ids": [],
+                        "action_label": "生成练习",
+                        "reason": "本次课堂报告识别到这些薄弱点。",
+                        "evidence_ids": [],
+                    }
+                ],
+            },
+        )
+
+        response = self.client.post(
+            "/api/interactive-classroom/cls_source/practice",
+            query_string={"user_id": "user_1"},
+            json={
+                "task_id": "task_practice_weak_points",
+                "task_type": "practice_weak_points",
+            },
+        )
+
+        self.assertEqual(201, response.status_code)
+        practice = response.get_json()["classroom"]
+        questions = practice["scenes"][0]["content"]["questions"]
+        self.assertTrue(questions)
+        question_text = "\n".join(q["question"] for q in questions)
+        self.assertNotIn("第 1 个讲解场景主要围绕", question_text)
+        self.assertIn("场景干扰", "\n".join(q.get("knowledge_point", "") for q in questions))
 
     def test_report_backfills_existing_practice_child_as_generated(self) -> None:
         self.storage.save_classroom(

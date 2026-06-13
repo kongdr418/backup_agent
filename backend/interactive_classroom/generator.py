@@ -651,6 +651,70 @@ def _question(
     }
 
 
+def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]:
+    content = scene.content or {}
+    values: list[str] = []
+    extracted = content.get("extracted_text", [])
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
+    markdown = content.get("markdown", "")
+    if markdown:
+        values.append(str(markdown))
+    for action in scene.actions or []:
+        if action.type == "speech" and action.text:
+            values.append(action.text)
+
+    snippets: list[str] = []
+    for value in values:
+        cleaned = _clean_text(re.sub(r"[#*_`>\-\s]+", " ", str(value)))
+        if not cleaned:
+            continue
+        for part in re.split(r"[。！？!?；;]\s*", cleaned):
+            part = _clean_text(part)
+            if len(part) < 8:
+                continue
+            if part not in snippets:
+                snippets.append(part[:90])
+            if len(snippets) >= max_items:
+                return snippets
+    return snippets
+
+
+def _conceptual_distractors(
+    correct: str,
+    *,
+    scene_title: str,
+    topic: str,
+    pool: list[str],
+) -> list[str]:
+    generic = [
+        f"只记住“{scene_title or topic}”这个标题，不需要说明判断依据",
+        "优先关注页面顺序和视觉样式，而不是概念之间的关系",
+        "遇到题目时直接选择看起来最熟悉的词，不需要结合情境分析",
+        f"把所有问题都归因于{topic or '本节主题'}，不用区分具体条件",
+    ]
+    candidates = [
+        item
+        for item in [*pool, *generic]
+        if item and item != correct
+    ]
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        cleaned = _clean_text(item)[:90]
+        if not cleaned or cleaned in seen or cleaned == correct:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+        if len(result) >= 6:
+            break
+    return result
+
+
+def _question_has_scene_index(text: str) -> bool:
+    return bool(re.search(r"第\s*\d+\s*个讲解场景", text or ""))
+
+
 QUIZ_SOURCE_SKIP_KEYWORDS = (
     "课程总结",
     "总结",
@@ -1257,31 +1321,53 @@ class InteractiveClassroomGenerator:
             all_points.extend([point for point in scene.knowledge_points if point and point != scene.title])
 
         questions: list[dict[str, Any]] = []
-        for idx, scene in enumerate(eligible_scenes[:3], start=1):
-            other_titles = [title for title in titles if title != scene.title]
-            questions.append(
-                _question(
-                    qid=f"{qid_prefix}{len(questions) + 1}",
-                    question=f"第 {idx} 个讲解场景主要围绕哪一项内容展开？",
-                    correct=scene.title,
-                    distractors=other_titles,
-                    analysis=f"该场景标题为“{scene.title}”，课堂讲解和页面内容都围绕这个主题组织。",
-                    knowledge_point=scene.title or topic,
-                )
-            )
-
+        for scene in eligible_scenes[:3]:
             key_points = [point for point in scene.knowledge_points if point and point != scene.title]
-            if key_points:
-                correct = key_points[0]
-                distractors = [point for point in all_points if point != correct]
+            snippets = _scene_text_snippets(scene)
+            primary_point = key_points[0] if key_points else (scene.title or topic)
+            other_points = [
+                point
+                for point in [*all_points, *titles]
+                if point and point not in {primary_point, scene.title}
+            ]
+
+            if snippets:
+                correct = snippets[0]
+                distractors = _conceptual_distractors(
+                    correct,
+                    scene_title=scene.title,
+                    topic=topic,
+                    pool=[*snippets[1:], *other_points],
+                )
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"以下哪一项是“{scene.title}”页中提到的关键内容？",
+                        question=f"关于“{primary_point}”，以下哪一项最能说明本节要求掌握的判断依据？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"“{correct}”来自该页抽取文本，说明学生需要回到对应页面理解这一要点。",
-                        knowledge_point=scene.title or topic,
+                        analysis=f"这道题考查的是对“{primary_point}”的理解依据，而不是记住它出现在第几页。",
+                        knowledge_point=primary_point,
+                    )
+                )
+
+            if key_points and len(questions) < max_questions:
+                correct = (
+                    f"先识别{primary_point}的适用条件，再结合题目情境选择相应概念或处理步骤"
+                )
+                distractors = _conceptual_distractors(
+                    correct,
+                    scene_title=scene.title,
+                    topic=topic,
+                    pool=other_points,
+                )
+                questions.append(
+                    _question(
+                        qid=f"{qid_prefix}{len(questions) + 1}",
+                        question=f"遇到与“{primary_point}”相关的新题时，应该优先采用哪种应用步骤？",
+                        correct=correct,
+                        distractors=distractors,
+                        analysis=f"补强练习需要验证能否把“{primary_point}”迁移到新情境，而不是只匹配页面标题。",
+                        knowledge_point=primary_point,
                     )
                 )
 
@@ -1386,6 +1472,7 @@ class InteractiveClassroomGenerator:
 ## 出题要求
 1. 题目必须直接来自上面的页面标题、关键点或页面文本，不能泛泛问主题定义。
 1b. **跳过开场/目录类页面**：如果某些页面的标题是课程名称、目录、欢迎语、自我介绍、学习目标概述等开场性质的内容，不要基于这些页面出题。只围绕有实质知识点的页面出题。
+1c. **禁止页面位置匹配题**：不要问"第几页/第几个讲解场景主要围绕什么"、"哪个页面标题是什么"、"某知识点出现在哪一页"。题目必须考概念辨析、判断依据、应用步骤、错因修正或迁移应用。
 2. 单选题为主，可少量多选题；每题 4 个选项，干扰项要像真实学生会混淆的错误理解。
    **多选题识别强约束**：如果题干含「以下哪些」「下列哪些」「哪些选项」「哪些是」「多选」等表述，**必须**把 `type` 设为「多选题」并给 `answer` 多个字母（如 "A,C"）。否则前端 UI 会按单选渲染，题干和交互对不上。
 3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面编号（如"第 2 页"）或关键点。不要使用任何内部 ID。
@@ -1501,6 +1588,8 @@ class InteractiveClassroomGenerator:
                     break
                 text = _clean_quiz_text(str(row.get("text") or row.get("question") or ""))
                 if not text:
+                    continue
+                if _question_has_scene_index(text):
                     continue
 
                 # 修复：原先不过滤 LLM 直给的 knowledge_point，导致 "page 15 关键点：xxx"
@@ -1785,6 +1874,16 @@ class InteractiveClassroomGenerator:
         ][:5]
         if not clean_points:
             clean_points = [_clean_text(topic) or "综合理解"]
+        assessment = (
+            generation_strategy.get("assessment_strategy", {})
+            if isinstance(generation_strategy, dict)
+            else {}
+        )
+        diagnostic_notes = [
+            _clean_text(str(value))
+            for value in assessment.get("practice_diagnostic_notes", [])
+            if _clean_text(str(value))
+        ][:5]
         source_scenes = [
             ClassroomScene(
                 id=f"practice_source_{idx:03d}",
@@ -1800,6 +1899,7 @@ class InteractiveClassroomGenerator:
                             task_type,
                             generation_strategy,
                         ),
+                        *diagnostic_notes,
                     ]
                 },
                 actions=[],
@@ -1822,12 +1922,8 @@ class InteractiveClassroomGenerator:
             else f"补强练习：{'、'.join(clean_points[:3])}"
         )
         scene.content["practice_task_type"] = task_type
-        assessment = (
-            generation_strategy.get("assessment_strategy", {})
-            if isinstance(generation_strategy, dict)
-            else {}
-        )
         scene.content["error_targets"] = list(assessment.get("error_targets", []))
+        scene.content["diagnostic_notes"] = diagnostic_notes
         scene.content["transfer_level"] = assessment.get(
             "transfer_level",
             "unobserved",

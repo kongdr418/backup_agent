@@ -66,6 +66,42 @@ class ClassroomPracticeService:
                 str(source_classroom.get("topic") or "综合理解").strip()
             ]
 
+        diagnostic_notes = []
+        recommendation = str(report.get("next_recommendation") or "").strip()
+        if recommendation:
+            diagnostic_notes.append(f"学习报告建议：{recommendation}")
+        weak_points = [
+            str(value).strip()
+            for value in report.get("weak_points", [])
+            if str(value).strip()
+        ][:5]
+        if weak_points:
+            diagnostic_notes.append(f"报告薄弱点：{'、'.join(weak_points)}")
+        task_reason = str(task.get("reason") or "").strip()
+        if task_reason:
+            diagnostic_notes.append(f"推荐原因：{task_reason}")
+        knowledge_summary = report.get("knowledge_summary", {})
+        if isinstance(knowledge_summary, dict):
+            low_mastery = []
+            for point in knowledge_points:
+                row = knowledge_summary.get(point, {})
+                if isinstance(row, dict) and row.get("mastery") is not None:
+                    low_mastery.append(f"{point}掌握度{row.get('mastery')}%")
+            if low_mastery:
+                diagnostic_notes.append(f"掌握证据：{'；'.join(low_mastery[:4])}")
+
+        practice_strategy = dict(generation_strategy or {})
+        assessment_strategy = (
+            dict(practice_strategy.get("assessment_strategy") or {})
+            if isinstance(practice_strategy.get("assessment_strategy"), dict)
+            else {}
+        )
+        if diagnostic_notes:
+            assessment_strategy["practice_diagnostic_notes"] = diagnostic_notes
+        assessment_strategy["practice_focus_points"] = knowledge_points
+        assessment_strategy["practice_task_type"] = task_type
+        practice_strategy["assessment_strategy"] = assessment_strategy
+
         now = self.now_provider()
         classroom_id = (
             f"cls_practice_{now.strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
@@ -75,7 +111,7 @@ class ClassroomPracticeService:
             topic=f"{source_classroom.get('topic', '')}{title_prefix}",
             knowledge_points=knowledge_points,
             task_type=task_type,
-            generation_strategy=generation_strategy,
+            generation_strategy=practice_strategy,
         )
         source_id = source_classroom.get("id", "")
         parent_depth = int(source_classroom.get("lesson_depth", 0) or 0)
@@ -98,7 +134,7 @@ class ClassroomPracticeService:
             updated_at=now.isoformat(),
             tts={},
             student_profile={},
-            generation_strategy=generation_strategy,
+            generation_strategy=practice_strategy,
             course_root_id=course_root_id,
             parent_classroom_id=source_id,
             lesson_depth=parent_depth + 1,
