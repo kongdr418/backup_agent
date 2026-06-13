@@ -31,6 +31,7 @@ export interface Session {
   name: string
   createdAt: number
   updatedAt: number
+  kind?: 'chat' | 'profile_onboarding'
 }
 
 // ---------- SSE event ----------

@@ -52,7 +52,7 @@
       >
         <CircleAlert class="w-3.5 h-3.5" />
         <span>{{ message.error || '生成失败' }}</span>
-        <button class="retry-btn" @click="onRegenerate">
+        <button v-if="allowActions" class="retry-btn" @click="onRegenerate">
           <RotateCcw class="w-3 h-3" /> 重新生成
         </button>
       </div>
@@ -62,7 +62,7 @@
       >
         <Square class="w-3.5 h-3.5" />
         <span>已停止</span>
-        <button class="retry-btn" @click="onRegenerate">
+        <button v-if="allowActions" class="retry-btn" @click="onRegenerate">
           <RotateCcw class="w-3 h-3" /> 重新生成
         </button>
       </div>
@@ -70,6 +70,7 @@
       <!-- Action toolbar(assistant + done 时显示) -->
       <div
         v-if="
+          allowActions &&
           message.role === 'assistant' &&
           message.status !== 'streaming' &&
           message.status !== 'error' &&
@@ -114,7 +115,12 @@ import { useChatViewStore } from '@/stores/chatViewStore'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useRegenerate } from '@/composables/useRegenerate'
 
-const props = defineProps<{ message: ChatMessage }>()
+const props = withDefaults(defineProps<{
+  message: ChatMessage
+  allowActions?: boolean
+}>(), {
+  allowActions: true,
+})
 
 const chatView = useChatViewStore()
 const sessionStore = useSessionStore()

@@ -162,6 +162,19 @@ interface LearnerProfileResponse {
   profile: LearnerProfile
 }
 
+export interface ProfileOnboardingMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ProfileOnboardingResult {
+  reply: string
+  draft: LearnerProfile
+  completed: boolean
+  current_field: string
+  messages: ProfileOnboardingMessage[]
+}
+
 export async function getLearnerProfile(): Promise<LearnerProfile> {
   const response = await client.get<LearnerProfileResponse>('/api/learner-profile')
   return response.data.profile
@@ -175,6 +188,23 @@ export async function saveLearnerProfile(
     { profile },
   )
   return response.data.profile
+}
+
+export async function sendProfileOnboardingMessage(
+  messages: ProfileOnboardingMessage[],
+  draft?: LearnerProfile | null,
+  llmConfig: {
+    content_model?: string
+    content_api_key?: string
+    content_base_url?: string
+    content_provider_type?: string
+  } = {},
+): Promise<ProfileOnboardingResult> {
+  const response = await client.post<ProfileOnboardingResult & { success: boolean }>(
+    '/api/learner-profile/onboarding/message',
+    { messages, draft: draft || undefined, ...llmConfig },
+  )
+  return response.data
 }
 
 export async function getLearnerGenerationStrategy(

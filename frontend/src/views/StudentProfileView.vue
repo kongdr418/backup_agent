@@ -11,6 +11,10 @@
           <p>这是你的个性化学习档案。系统会结合你的偏好和学习表现，持续调整课堂内容与练习。</p>
         </div>
         <div class="hero-actions">
+          <button class="profile-chat-btn" type="button" @click="startProfileChat">
+            <Bot :size="16" />
+            和 AI 梳理画像
+          </button>
           <span class="save-state" :class="{ saved: !dirty && !loading }">
             <CircleCheckBig v-if="!dirty && !loading" :size="15" />
             <CircleDashed v-else :size="15" />
@@ -370,6 +374,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { NInput, NSelect, useDialog, useMessage, type SelectOption } from 'naive-ui'
 import {
   BookOpenCheck,
@@ -413,7 +418,9 @@ import {
   profileUpdateTitle,
   trendLabel,
 } from '@/utils/learnerProfileUpdates'
+import { PROFILE_ONBOARDING_SESSION_KIND } from '@/utils/profileOnboarding'
 
+const router = useRouter()
 const message = useMessage()
 const dialog = useDialog()
 const profile = ref<LearnerProfile>(createEmptyLearnerProfile())
@@ -652,6 +659,13 @@ async function handleSave() {
   }
 }
 
+function startProfileChat() {
+  void router.push({
+    path: '/chat',
+    query: { mode: PROFILE_ONBOARDING_SESSION_KIND },
+  })
+}
+
 async function handleUpdate(
   update: LearnerProfileUpdate,
   action: 'accept' | 'modify' | 'ignore',
@@ -807,6 +821,29 @@ onBeforeUnmount(() => stopWatching?.())
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
+}
+
+.profile-chat-btn {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid rgb(var(--forest-rgb) / 0.22);
+  border-radius: 10px;
+  color: rgb(var(--forest-rgb));
+  background: rgb(var(--forest-rgb) / 0.07);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.profile-chat-btn:hover {
+  background: rgb(var(--forest-rgb) / 0.12);
+  transform: translateY(-1px);
 }
 
 .save-state {
@@ -1428,6 +1465,10 @@ onBeforeUnmount(() => stopWatching?.())
   }
 
   .primary-btn {
+    width: 100%;
+  }
+
+  .profile-chat-btn {
     width: 100%;
   }
 

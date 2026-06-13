@@ -2,7 +2,7 @@
   <div class="border-t border-line glass-chrome px-4 py-3">
     <div class="max-w-3xl mx-auto">
       <!-- Quick action chips + model badge -->
-      <div v-if="!isLoading && !chatView.isSplit" class="quick-chips flex gap-1 mb-2 items-center">
+      <div v-if="mode === 'chat' && !isLoading && !chatView.isSplit" class="quick-chips flex gap-1 mb-2 items-center">
         <button
           v-for="q in quickActions"
           :key="q.label"
@@ -24,6 +24,7 @@
       >
         <!-- Format toggle -->
         <div
+          v-if="mode === 'chat'"
           class="flex items-center gap-0.5 px-1 shrink-0"
           :title="docxAvailable ? '' : '当前内容类型不支持 DOCX 导出'"
         >
@@ -46,7 +47,7 @@
           </button>
         </div>
 
-        <div class="w-px h-6 bg-line shrink-0" />
+        <div v-if="mode === 'chat'" class="w-px h-6 bg-line shrink-0" />
 
         <textarea
           ref="taRef"
@@ -60,7 +61,7 @@
         />
 
         <button
-          v-if="isLoading"
+          v-if="isLoading && canCancel"
           class="shrink-0 px-2.5 h-9 inline-flex items-center gap-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors text-[13px]"
           @click="$emit('cancel')"
         >
@@ -69,7 +70,7 @@
         </button>
 
         <button
-          v-else
+          v-else-if="!isLoading"
           class="shrink-0 w-9 h-9 inline-flex items-center justify-center rounded-lg transition-colors disabled:opacity-40"
           :class="
             input.trim()
@@ -89,13 +90,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  Send, Square, FileText, BookOpen, Image as ImageIcon, Video,
-  GraduationCap, Lightbulb, List, ClipboardList, GitBranch, Cpu
+  Send, Square, Image as ImageIcon,
+  GraduationCap, Lightbulb, ClipboardList, GitBranch, Cpu
 } from 'lucide-vue-next'
 import { useChatViewStore } from '@/stores/chatViewStore'
 import { useSettingStore } from '@/stores/settingStore'
+import { STUDENT_QUICK_ACTIONS } from '@/utils/studentQuickActions'
 
-defineProps<{ isLoading: boolean }>()
+const props = withDefaults(defineProps<{
+  isLoading: boolean
+  mode?: 'chat' | 'profile_onboarding'
+  canCancel?: boolean
+}>(), {
+  mode: 'chat',
+  canCancel: true,
+})
 const emit = defineEmits<{ send: [text: string]; cancel: [] }>()
 
 const chatView = useChatViewStore()
@@ -148,23 +157,25 @@ interface QuickAction {
   supportsDocx: boolean
 }
 
-const quickActions: QuickAction[] = [
-  { label: '课程大纲', prompt: '课程大纲：', icon: List, supportsDocx: true },
-  { label: '讲稿', prompt: '讲稿：', icon: FileText, supportsDocx: true },
-  { label: '讲义', prompt: '生成讲义：', icon: BookOpen, supportsDocx: false },
-  { label: '习题集', prompt: '习题集：', icon: GraduationCap, supportsDocx: true },
-  { label: '课堂测验', prompt: '课堂测验：', icon: ClipboardList, supportsDocx: true },
-  { label: '知识卡片', prompt: '知识卡片：', icon: Lightbulb, supportsDocx: true },
-  { label: '思维导图', prompt: '思维导图：', icon: GitBranch, supportsDocx: false },
-  { label: '图文', prompt: '生成图文：', icon: ImageIcon, supportsDocx: false },
-  { label: '短视频脚本', prompt: '生成短视频：', icon: Video, supportsDocx: false },
-]
+const quickActionIcons = {
+  exercise: GraduationCap,
+  quiz: ClipboardList,
+  card: Lightbulb,
+  mindmap: GitBranch,
+  graphic: ImageIcon,
+}
+const quickActions: QuickAction[] = STUDENT_QUICK_ACTIONS.map((item) => ({
+  ...item,
+  icon: quickActionIcons[item.icon],
+}))
 
 const isMobile = ref(window.innerWidth <= 767)
 const placeholder = computed(() =>
-  isMobile.value
+  props.mode === 'profile_onboarding'
+    ? '继续回答，也可以一次补充多项信息'
+    : isMobile.value
     ? '输入主题开始生成...'
-    : '描述你想学习的内容，例如：生成讲义：神经网络入门',
+    : '描述你想学习的内容，例如：知识卡片：神经网络入门',
 )
 
 function apply(q: QuickAction) {
@@ -208,6 +219,14 @@ function onEnter(e: KeyboardEvent) {
 function send() {
   const text = input.value.trim()
   if (!text) return
+  if (props.mode === 'profile_onboarding') {
+    emit('send', text)
+    input.value = ''
+    nextTick(() => {
+      if (taRef.value) taRef.value.style.height = 'auto'
+    })
+    return
+  }
   const fmt = selectedFormat.value
   // 安全检查：如果当前内容不支持 docx，强制使用 md
   const effectiveFmt = docxAvailable.value ? fmt : 'md'

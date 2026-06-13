@@ -15,6 +15,21 @@
           <p class="hero-sub">从下方模块选择一个，开启围绕学习者画像展开的多智能体个性化学习体验</p>
         </div>
 
+        <section v-if="showProfilePrompt" class="profile-onboarding-banner">
+          <div class="profile-banner-icon">
+            <BrainCircuit class="w-6 h-6" />
+          </div>
+          <div class="profile-banner-copy">
+            <span>首次使用建议</span>
+            <h2>先和 AI 聊几句，让后续学习内容更适合你</h2>
+            <p>通过自然对话建立初始学习画像。画像确认后，这个入口会自动消失。</p>
+          </div>
+          <button type="button" @click="startProfileOnboarding">
+            建立学习画像
+            <ArrowRight class="w-4 h-4" />
+          </button>
+        </section>
+
         <!-- Main action grid — 3 primary modules -->
         <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <button
@@ -130,6 +145,7 @@ import {
   PenLine,
   ClipboardList,
   Video,
+  BrainCircuit,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -143,6 +159,8 @@ import { usePptStore } from '@/stores/pptStore'
 import { getHealth } from '@/api/meta'
 import { listPptJobs } from '@/api/pptSvg'
 import { usePptStream } from '@/composables/usePptStream'
+import { getLearnerProfile } from '@/api/learnerProfile'
+import { needsProfileOnboarding, PROFILE_ONBOARDING_SESSION_KIND } from '@/utils/profileOnboarding'
 
 import type { GeneratedFile, PptGenerateParams } from '@/types'
 
@@ -159,6 +177,7 @@ const recent = ref<GeneratedFile[]>([])
 const svgPptCount = ref(0)
 const healthOk = ref<boolean | null>(null)
 const quickOpen = ref(false)
+const showProfilePrompt = ref(false)
 
 const primary = [
   {
@@ -269,6 +288,21 @@ async function loadSvgPptCount() {
   }
 }
 
+async function loadProfilePrompt() {
+  try {
+    showProfilePrompt.value = needsProfileOnboarding(await getLearnerProfile())
+  } catch {
+    showProfilePrompt.value = false
+  }
+}
+
+function startProfileOnboarding() {
+  void router.push({
+    path: '/chat',
+    query: { mode: PROFILE_ONBOARDING_SESSION_KIND },
+  })
+}
+
 async function onQuickSubmit(params: PptGenerateParams) {
   pptStore.params = { ...pptStore.params, ...params }
   await router.push('/ppt-studio')
@@ -283,6 +317,7 @@ onMounted(() => {
   checkHealth()
   loadRecent()
   loadSvgPptCount()
+  loadProfilePrompt()
 })
 </script>
 
@@ -326,6 +361,74 @@ onMounted(() => {
 }
 
 /* ── Primary cards ── */
+.profile-onboarding-banner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 22px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgb(var(--forest-rgb) / 0.2);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 88% 10%, rgb(var(--forest-rgb) / 0.13), transparent 34%),
+    linear-gradient(135deg, rgb(var(--forest-rgb) / 0.075), rgb(var(--bg-surface-rgb)) 58%);
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-banner-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  color: rgb(var(--forest-rgb));
+  background: rgb(var(--forest-rgb) / 0.11);
+}
+
+.profile-banner-copy span {
+  color: rgb(var(--forest-rgb));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.profile-banner-copy h2 {
+  margin: 4px 0 5px;
+  color: rgb(var(--ink-1-rgb));
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 18px;
+}
+
+.profile-banner-copy p {
+  margin: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.profile-onboarding-banner button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  color: white;
+  background: rgb(var(--forest-rgb));
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.profile-onboarding-banner button:hover {
+  transform: translateY(-1px);
+}
+
 .primary-card {
   display: flex;
   align-items: center;
@@ -487,6 +590,17 @@ onMounted(() => {
 
 /* ============ Mobile ============ */
 @media (max-width: 767px) {
+  .profile-onboarding-banner {
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    padding: 17px;
+  }
+
+  .profile-onboarding-banner button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .hero-block {
     padding: 4px 0 0;
   }

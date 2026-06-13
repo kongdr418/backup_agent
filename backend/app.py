@@ -19,6 +19,8 @@ from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY
 from learner_profile.profile_agent import ProfileAgent, build_course_id
 from learner_profile.orchestrator import ProfileOrchestrator
 from learner_profile.adapters import build_ppt_strategy_notes
+from learner_profile.onboarding_service import ProfileOnboardingService
+from generators.shared_config import content_llm_call
 from course_knowledge import (
     CourseKnowledgeIngestor,
     CourseKnowledgeRetriever,
@@ -105,6 +107,7 @@ GENERATORS_DIR = os.path.join(BACKEND_DIR, "generators")
 LEARNER_PROFILE_STORAGE = LearnerProfileStorage(BACKEND_DIR)
 PROFILE_AGENT = ProfileAgent()
 PROFILE_ORCHESTRATOR = ProfileOrchestrator()
+PROFILE_ONBOARDING_SERVICE = ProfileOnboardingService(llm_call=content_llm_call)
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 COURSE_KNOWLEDGE_STORAGE = CourseKnowledgeStorage(BACKEND_DIR)
 COURSE_KNOWLEDGE_EMBEDDINGS = LocalEmbeddingService()
@@ -1878,6 +1881,36 @@ def update_learner_profile():
 
     saved_profile = LEARNER_PROFILE_STORAGE.save_manual_profile(user_id, profile)
     return jsonify({'success': True, 'profile': saved_profile})
+
+
+@app.route('/api/learner-profile/onboarding/message', methods=['POST'])
+def learner_profile_onboarding_message():
+    user_id = get_request_user_id()
+    data = request.get_json(silent=True) or {}
+    messages = data.get('messages', [])
+    if not isinstance(messages, list) or any(
+        not isinstance(item, dict)
+        or item.get('role') not in {'user', 'assistant'}
+        or not isinstance(item.get('content'), str)
+        for item in messages
+    ):
+        return jsonify({'success': False, 'error': 'messages must be a conversation list'}), 400
+
+    request_config = _resolve_content_llm_request_config(data)
+    llm_config = {
+        'model': request_config.get('content_model', ''),
+        'api_key': request_config.get('content_api_key', ''),
+        'base_url': request_config.get('content_base_url', ''),
+        'provider_type': request_config.get('content_provider_type', ''),
+    }
+    draft = data.get('draft')
+    profile = draft if isinstance(draft, dict) else LEARNER_PROFILE_STORAGE.load_profile(user_id)
+    result = PROFILE_ONBOARDING_SERVICE.advance(
+        profile=profile,
+        messages=messages[-20:],
+        llm_config=llm_config,
+    )
+    return jsonify({'success': True, **result})
 
 
 @app.route('/api/learner-profile/strategy', methods=['GET'])
