@@ -4,6 +4,10 @@ from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
 
+from interactive_classroom.event_service import (
+    create_recommended_task_completed_event,
+    record_event,
+)
 from interactive_classroom.generator import InteractiveClassroomGenerator
 from interactive_classroom.schema import InteractiveClassroom
 from interactive_classroom.storage import ClassroomStorage
@@ -162,3 +166,53 @@ class ClassroomPracticeService:
         payload = classroom.to_dict()
         self.storage.save_classroom(user_id, classroom_id, payload)
         return payload
+
+    def backfill_practice_created_events(
+        self,
+        *,
+        user_id: str,
+        classroom: dict[str, Any],
+    ) -> int:
+        classroom_id = classroom.get("id", "")
+        if not classroom_id:
+            return 0
+
+        existing_task_ids = {
+            str((event.get("payload") or {}).get("task_id") or "")
+            for event in self.storage.load_events(user_id, classroom_id)
+            if event.get("type") == "recommended_task_completed"
+            and isinstance(event.get("payload"), dict)
+            and (event.get("payload") or {}).get("result", {}).get("status")
+            == "practice_created"
+        }
+        created_count = 0
+        for row in self.storage.list_classrooms(user_id):
+            if row.get("parent_classroom_id") != classroom_id:
+                continue
+            if row.get("lesson_kind") not in {"practice", "challenge_practice"}:
+                continue
+            child = self.storage.load_classroom(user_id, row.get("id", ""))
+            if not isinstance(child, dict):
+                continue
+            source = child.get("source")
+            if not isinstance(source, dict) or source.get("type") != "recommended_practice":
+                continue
+            task_id = (source.get("recommendation_task_id") or "").strip()
+            if not task_id or task_id in existing_task_ids:
+                continue
+            event = create_recommended_task_completed_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                course_id=classroom.get("course") or classroom.get("topic") or "",
+                task_id=task_id,
+                task_type=(source.get("recommendation_task_type") or "").strip(),
+                knowledge_points=child.get("knowledge_points", []),
+                result={
+                    "status": "practice_created",
+                    "practice_classroom_id": child.get("id", ""),
+                },
+            )
+            record_event(self.storage, event)
+            existing_task_ids.add(task_id)
+            created_count += 1
+        return created_count

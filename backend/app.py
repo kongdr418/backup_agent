@@ -2239,44 +2239,10 @@ def interactive_classroom_report(classroom_id):
 
 
 def _backfill_practice_created_events(user_id: str, classroom: dict) -> None:
-    classroom_id = classroom.get('id', '')
-    if not classroom_id:
-        return
-    existing_task_ids = {
-        str((event.get('payload') or {}).get('task_id') or '')
-        for event in CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-        if event.get('type') == 'recommended_task_completed'
-        and isinstance(event.get('payload'), dict)
-        and (event.get('payload') or {}).get('result', {}).get('status') == 'practice_created'
-    }
-    for row in CLASSROOM_STORAGE.list_classrooms(user_id):
-        if row.get('parent_classroom_id') != classroom_id:
-            continue
-        if row.get('lesson_kind') not in {'practice', 'challenge_practice'}:
-            continue
-        child = CLASSROOM_STORAGE.load_classroom(user_id, row.get('id', ''))
-        if not isinstance(child, dict):
-            continue
-        source = child.get('source')
-        if not isinstance(source, dict) or source.get('type') != 'recommended_practice':
-            continue
-        task_id = (source.get('recommendation_task_id') or '').strip()
-        if not task_id or task_id in existing_task_ids:
-            continue
-        event = create_recommended_task_completed_event(
-            user_id=user_id,
-            classroom_id=classroom_id,
-            course_id=classroom.get('course') or classroom.get('topic') or '',
-            task_id=task_id,
-            task_type=(source.get('recommendation_task_type') or '').strip(),
-            knowledge_points=child.get('knowledge_points', []),
-            result={
-                'status': 'practice_created',
-                'practice_classroom_id': child.get('id', ''),
-            },
-        )
-        record_event(CLASSROOM_STORAGE, event)
-        existing_task_ids.add(task_id)
+    CLASSROOM_PRACTICE_SERVICE.backfill_practice_created_events(
+        user_id=user_id,
+        classroom=classroom,
+    )
 
 
 def _analyze_classroom_profile_updates(
