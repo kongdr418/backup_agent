@@ -11,6 +11,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 import app as backend_app
+from course_knowledge import CourseKnowledgeRetriever, CourseKnowledgeStorage
 from learner_profile.storage import PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.storage import LearnerProfileStorage
 
@@ -23,11 +24,21 @@ class LearnerProfileApiTest(unittest.TestCase):
             now_provider=lambda: "2026-06-08T11:00:00",
         )
         self.original_storage = backend_app.LEARNER_PROFILE_STORAGE
+        self.original_course_knowledge_retriever = backend_app.COURSE_KNOWLEDGE_RETRIEVER
         backend_app.LEARNER_PROFILE_STORAGE = self.storage
+        self.course_knowledge_storage = CourseKnowledgeStorage(
+            self.tempdir.name,
+            now_provider=lambda: "2026-06-08T11:00:00",
+        )
+        backend_app.COURSE_KNOWLEDGE_RETRIEVER = CourseKnowledgeRetriever(
+            self.tempdir.name,
+            storage=self.course_knowledge_storage,
+        )
         self.client = backend_app.app.test_client()
 
     def tearDown(self) -> None:
         backend_app.LEARNER_PROFILE_STORAGE = self.original_storage
+        backend_app.COURSE_KNOWLEDGE_RETRIEVER = self.original_course_knowledge_retriever
         self.tempdir.cleanup()
 
     def test_get_returns_default_profile_for_current_user(self) -> None:
@@ -126,6 +137,61 @@ class LearnerProfileApiTest(unittest.TestCase):
         )
 
         self.assertEqual(1, notes.count(PPT_LEARNING_STRATEGY_TITLE))
+
+    def test_ppt_generation_notes_match_course_from_topic_when_course_missing(self) -> None:
+        course_id = "course_cloud"
+        self.course_knowledge_storage.save_course_map(
+            "user_1",
+            {
+                "courses": [
+                    {
+                        "course_id": course_id,
+                        "course_name": "云计算与大数据技术",
+                        "summary": "课程要求学生掌握云计算和大数据分析的基础能力。",
+                        "lessons": [
+                            {"lesson_id": "lesson_hadoop", "title": "Hadoop 安装与配置"},
+                        ],
+                        "knowledge_points": [
+                            {"knowledge_point_id": "kp_cloud", "label": "云计算"},
+                            {"knowledge_point_id": "kp_hadoop", "label": "Hadoop"},
+                        ],
+                    }
+                ]
+            },
+        )
+        self.course_knowledge_storage.save_course_catalog(
+            "user_1",
+            course_id,
+            {
+                "course_id": course_id,
+                "course_name": "云计算与大数据技术",
+            },
+        )
+        self.course_knowledge_storage.save_chunk_index(
+            "user_1",
+            course_id,
+            [
+                {
+                    "chunk_id": "chunk_cloud",
+                    "chunk_type": "lesson",
+                    "section": "云计算与大数据技术",
+                    "text": "云计算与大数据技术包括云计算、Hadoop 和大数据分析。",
+                    "keywords": ["云计算", "Hadoop"],
+                    "knowledge_point_ids": ["kp_cloud", "kp_hadoop"],
+                    "evidence_label": "云计算与大数据技术",
+                }
+            ],
+        )
+
+        notes = backend_app._resolve_ppt_generation_notes(
+            {"topic": "云计算与大数据技术"},
+            "user_1",
+        )
+
+        self.assertIn("## 课程知识库参考", notes)
+        self.assertIn("课程名称：云计算与大数据技术", notes)
+        self.assertIn("云计算", notes)
+        self.assertIn("Hadoop", notes)
 
 
 if __name__ == "__main__":

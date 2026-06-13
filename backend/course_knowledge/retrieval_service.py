@@ -127,11 +127,12 @@ class CourseKnowledgeRetriever:
         course_map = self.storage.load_course_map(user_id)
         courses = course_map.get("courses", [])
 
-        if not course:
+        query_course = course or topic
+        if not query_course:
             logger.info("[BGE] search_skipped reason=course_missing")
             return _empty_context(course)
 
-        matched_course = self._find_best_course(courses, course)
+        matched_course = self._find_best_course(courses, query_course)
         if not matched_course:
             # 跨课程兜底：用 topic 在所有课程中做向量搜索
             if topic and courses:

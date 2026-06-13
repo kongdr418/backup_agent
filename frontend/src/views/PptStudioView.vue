@@ -162,6 +162,10 @@ import { getUserId } from '@/composables/useUserId'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { fetchTemplatePreview, type TemplatePreview } from '@/api/templates'
 import {
+  getCourseKnowledgeCourseMap,
+  type CourseKnowledgeCourseSummary,
+} from '@/api/courseKnowledge'
+import {
   startInteractiveClassroomGeneration,
 } from '@/api/interactiveClassroom'
 import { useSettingStore } from '@/stores/settingStore'
@@ -218,6 +222,7 @@ const activeIdx = ref(0)
 const historyOpen = ref(false)
 const drawerOpen = ref(false)
 const creatingClassroom = ref(false)
+const knowledgeCourses = ref<CourseKnowledgeCourseSummary[]>([])
 const classroomCourse = ref('')
 const classroomElapsedSeconds = ref(0)
 const classroomRequestId = ref('')
@@ -319,6 +324,7 @@ watch(
 onMounted(() => {
   restoreClassroomGeneration()
   store.refreshJobs().catch(() => undefined)
+  loadKnowledgeCourses().catch(() => undefined)
 })
 
 onBeforeUnmount(() => {
@@ -402,6 +408,34 @@ function getLearningContextFromQuery(): ClassroomLearningContext {
   }
 }
 
+async function loadKnowledgeCourses() {
+  try {
+    knowledgeCourses.value = await getCourseKnowledgeCourseMap()
+  } catch {
+    knowledgeCourses.value = []
+  }
+}
+
+function compactCourseText(value: string): string {
+  return value.toLowerCase().replace(/[\s　:：\-—_、，,。.!！?？（）()《》"“”'‘’]+/g, '')
+}
+
+function resolvePptKnowledgeCourse(topic: string): string | undefined {
+  const explicitCourse = (store.params.course || classroomCourse.value || '').trim()
+  if (explicitCourse) return explicitCourse
+
+  const courses = knowledgeCourses.value
+  if (courses.length === 1) return courses[0].courseName
+
+  const topicKey = compactCourseText(topic)
+  if (!topicKey) return undefined
+  const matched = courses.find((course) => {
+    const courseKey = compactCourseText(course.courseName)
+    return Boolean(courseKey && (topicKey.includes(courseKey) || courseKey.includes(topicKey)))
+  })
+  return matched?.courseName
+}
+
 const statusTone = computed<'neutral' | 'success' | 'warning' | 'danger'>(() => {
   switch (store.gen.status) {
     case 'streaming':
@@ -438,8 +472,10 @@ async function onGenerate() {
   activeIdx.value = 0
   try {
     // 注入设置中的 PPT 模型、API Key 和 Base URL（设置优先）
+    const resolvedCourse = resolvePptKnowledgeCourse(store.params.topic)
     const paramsWithModel = {
       ...store.params,
+      course: resolvedCourse || store.params.course,
       provider_id: settingStore.settings.ppt_provider,
       provider_type: settingStore.getPptProviderType(),
       model: settingStore.settings.ppt_model || store.params.model,
