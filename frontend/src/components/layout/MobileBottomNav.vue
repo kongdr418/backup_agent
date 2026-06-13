@@ -19,7 +19,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   Presentation,
-  Video,
   FolderOpen,
   Settings,
 } from 'lucide-vue-next'
@@ -30,7 +29,6 @@ const tabs = [
   { path: '/', label: '仪表盘', icon: LayoutDashboard },
   { path: '/chat', label: '对话', icon: MessageSquare },
   { path: '/ppt-studio', label: 'PPT', icon: Presentation },
-  { path: '/video-studio', label: '微课', icon: Video },
   { path: '/library', label: '文件库', icon: FolderOpen },
   { path: '/settings', label: '设置', icon: Settings },
 ]

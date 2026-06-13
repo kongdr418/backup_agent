@@ -167,7 +167,7 @@ const primary = [
     icon: MessageSquare,
     iconBg: 'bg-forest-pale',
     iconFg: 'text-brand-forest',
-    desc: '多智能体协同生成讲义、习题、思维导图、图文、微课视频',
+    desc: '多智能体协同生成讲义、习题、思维导图和图文内容',
   },
   {
     label: 'PPT 工作台',

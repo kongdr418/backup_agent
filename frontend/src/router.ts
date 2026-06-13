@@ -24,12 +24,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'PPT 工作台' },
       },
       {
-        path: 'video-studio',
-        name: 'video-studio',
-        component: () => import('./views/VideoStudioView.vue'),
-        meta: { title: '微课视频' },
-      },
-      {
         path: 'interactive-classroom',
         name: 'interactive-classroom-home',
         component: () => import('./views/InteractiveClassroomHomeView.vue'),

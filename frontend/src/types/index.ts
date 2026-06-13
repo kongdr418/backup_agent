@@ -9,7 +9,6 @@ export type ChatRole = 'user' | 'assistant'
 export type ChatMessageType =
   | 'text'
   | 'markdown'
-  | 'ppt_preview'
   | 'graphic_image'
   | 'video_audio'
   | 'mindmap'
@@ -94,7 +93,6 @@ export type FileType =
   | 'content_audio'
   | 'content_image'
   | 'svg_ppt'
-  | 'video'
 
 export interface GeneratedFile {
   id: string

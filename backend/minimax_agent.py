@@ -1,7 +1,7 @@
 """
 智创空间 - 多智能体智慧课堂的对话调度 Agent
 使用大模型 API（MiniMax / DeepSeek / Anthropic 等多家适配）。
-负责课堂内对话路由、意图分析与多种学习资源（PPT、讲义、讨论、图文、微课视频）的生成调度。
+负责课堂内对话路由、意图分析与多种学习资源（PPT、讲义、讨论、图文、视频脚本）的生成调度。
 """
 
 import requests
@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Generator, Optional
 from openai import OpenAI
 from generators.ppt_generator import PPTGenerator
-from ppt_preview import generate_text_preview, PPTPreviewer
 from generators.lecture_generator import LectureGenerator
 from generators.content_generator import ContentGenerator
 from memory_manager import MemoryManager
@@ -52,7 +51,6 @@ class MiniMaxAgent:
             return path
 
         self.ppt_generator = PPTGenerator(output_dir=_udir("generated_ppt"))
-        self.ppt_previewer = PPTPreviewer()
         self.lecture_generator = LectureGenerator(output_dir=_udir("generated_lectures"))
         self.content_generator = ContentGenerator(output_dir=_udir("generated_content"))
         self.course_outline_generator = CourseOutlineGenerator(output_dir=_udir("generated_outlines"))
@@ -142,11 +140,6 @@ class MiniMaxAgent:
         # 检查是否是列出讲义请求
         if re.search(r'(列出|查看|显示).*?讲义', message) or message.lower() in ['list lecture', 'lecture list', '我的讲义']:
             return self._list_lectures()
-
-        # 检查是否是预览请求
-        preview_match = re.search(r'预览[Pp][Pp][Tt][:：]?\s*(.+)?', message)
-        if preview_match or '预览' in message and 'ppt' in message.lower():
-            return self._handle_preview_request(message)
 
         # 检查是否是列出PPT请求
         if re.search(r'(列出|查看|显示).*?[Pp][Pp][Tt]', message) or message.lower() in ['list ppt', 'ppt list', '我的ppt']:
@@ -381,7 +374,6 @@ class MiniMaxAgent:
             size = os.path.getsize(file_path) / 1024  # KB
             result.append(f"{i}. {f} ({size:.1f} KB)")
         
-        result.append("<br>使用 '预览PPT: 文件名' 查看内容")
         return '<br>'.join(result)
     
     def _handle_memory_command(self, message: str):
@@ -709,59 +701,6 @@ class MiniMaxAgent:
         # 对话历史使用 AI 精简
         return self._save_conversation_simple()
 
-    def _handle_preview_request(self, message: str) -> str:
-        """处理预览请求"""
-        import os
-        import re
-        
-        # 尝试提取文件名
-        match = re.search(r'预览[Pp][Pp][Tt][:：]?\s*(.+)', message)
-        
-        ppt_dir = os.path.join(BACKEND_DIR, "generated_ppt")
-        if not os.path.exists(ppt_dir):
-            return "还没有生成任何 PPT 文件。"
-
-        # 过滤掉临时文件（以 ~$ 开头）
-        ppt_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
-        if not ppt_files:
-            return "还没有生成任何 PPT 文件。"
-        
-        # 如果指定了文件名
-        if match:
-            file_hint = match.group(1).strip()
-            # 查找匹配的 PPT
-            for f in ppt_files:
-                if file_hint.lower() in f.lower():
-                    ppt_path = os.path.join(ppt_dir, f)
-                    return self._generate_preview(ppt_path)
-            return f"未找到包含 '{file_hint}' 的 PPT 文件。<br>可用文件：" + ', '.join(ppt_files)
-        
-        # 如果没有指定，预览最新的 PPT
-        latest_ppt = max(ppt_files, key=lambda f: os.path.getmtime(os.path.join(ppt_dir, f)))
-        ppt_path = os.path.join(ppt_dir, latest_ppt)
-        return self._generate_preview(ppt_path)
-    
-    def _generate_preview(self, ppt_path: str) -> str | dict:
-        """生成 PPT 预览"""
-        try:
-            # 尝试生成图片预览
-            preview_data = self.ppt_previewer.get_preview_data(ppt_path)
-            
-            if 'error' in preview_data:
-                # 如果图片预览失败，返回文本预览
-                preview_text = generate_text_preview(ppt_path)
-                return f"📊 PPT 预览<br><br>{preview_text}<br><br>💡 提示：文件位于 {ppt_path}"
-            
-            # 返回预览数据（包含图片）
-            return {
-                'type': 'ppt_preview',
-                'filename': preview_data['filename'],
-                'total_pages': preview_data['total_pages'],
-                'slides': preview_data['slides']
-            }
-        except Exception as e:
-            return f"预览生成失败: {str(e)}"
-    
     def _list_lectures(self) -> str:
         """列出所有生成的讲义"""
         lectures = self.lecture_generator.list_lectures()
@@ -1177,7 +1116,7 @@ class MiniMaxAgent:
     def _create_ppt_with_ai(self, topic: str):
         """
         使用 AI 生成 PPT 内容并创建 PPT 文件
-        返回：生成器，先输出大纲文本，再输出预览数据
+        返回：生成器，先输出大纲文本，再输出生成结果
         """
         # 构建提示词，让 AI 生成 PPT 大纲
         prompt = f'''请为"{topic}"这个主题生成一个PPT大纲。
@@ -1264,8 +1203,8 @@ class MiniMaxAgent:
                 if len(self._generation_history) > 10:
                     self._generation_history.pop(0)
 
-                # 3. 输出文件路径和预览提示
-                completion_msg = f"<br>─────────────────────────<br>✅ PPT 已生成！<br>📄 文件路径: {output_path}<br>📊 共 {len(slides)} 页幻灯片<br><br>💡 提示：点击左侧「预览最新 PPT」按钮查看预览图"
+                # 3. 输出文件路径
+                completion_msg = f"<br>─────────────────────────<br>✅ PPT 已生成！<br>📄 文件路径: {output_path}<br>📊 共 {len(slides)} 页幻灯片"
                 yield completion_msg
             else:
                 yield "❌ 无法解析 AI 生成的 PPT 大纲"
@@ -1287,17 +1226,17 @@ class MiniMaxAgent:
             provider_type: minmax | openai
 
         Returns:
-            完整回复字符串、流式生成器、或 PPT 预览字典
+            完整回复字符串或流式生成器
         """
         model = model or self.model
 
         # 首先检查是否是学习资源生成相关请求（PPT、讲义、图文、视频脚本等）
         teacher_result = self.check_teacher_request(message)
         if teacher_result:
-            # 如果是字典（PPT预览数据），直接返回
+            # 如果是字典，直接返回
             if isinstance(teacher_result, dict):
                 return teacher_result
-            # 如果是生成器（如制作PPT时先输出大纲再输出预览），直接返回
+            # 如果是生成器（如制作PPT时先输出大纲再输出结果），直接返回
             if hasattr(teacher_result, '__iter__') and not isinstance(teacher_result, (str, bytes)):
                 return teacher_result
             # 否则是普通字符串响应
@@ -1688,7 +1627,6 @@ if __name__ == "__main__":
     print("-" * 60)
     print("PPT 功能:")
     print("  制作PPT：主题  - 生成演示文稿")
-    print("  预览PPT        - 查看 PPT 内容")
     print("  列出PPT        - 查看所有 PPT 文件")
     print("-" * 60)
     print("讲义功能:")

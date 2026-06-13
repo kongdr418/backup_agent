@@ -49,7 +49,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   Presentation,
-  Video,
   GraduationCap,
   FolderOpen,
   Settings,
@@ -63,14 +62,13 @@ type NavItem = {
   path: string
   label: string
   icon: unknown
-  hue: 'dashboard' | 'chat' | 'ppt' | 'video' | 'classroom' | 'library' | 'memory' | 'settings'
+  hue: 'dashboard' | 'chat' | 'ppt' | 'classroom' | 'library' | 'memory' | 'settings'
 }
 
 const nav: NavItem[] = [
   { path: '/', label: '仪表盘', icon: LayoutDashboard, hue: 'dashboard' },
   { path: '/chat', label: '对话', icon: MessageSquare, hue: 'chat' },
   { path: '/ppt-studio', label: 'PPT 工作台', icon: Presentation, hue: 'ppt' },
-  { path: '/video-studio', label: '微课', icon: Video, hue: 'video' },
   { path: '/interactive-classroom', label: '智慧课堂', icon: GraduationCap, hue: 'classroom' },
   { path: '/library', label: '文件库', icon: FolderOpen, hue: 'library' },
   // { path: '/memory', label: '记忆', icon: Brain, hue: 'memory' },
@@ -90,7 +88,6 @@ const INDICATOR_COLORS: Record<string, string> = {
   '/': 'var(--nav-dashboard)',
   '/chat': 'var(--nav-chat)',
   '/ppt-studio': 'var(--nav-ppt)',
-  '/video-studio': 'var(--nav-video)',
   '/interactive-classroom': 'var(--nav-classroom)',
   '/library': 'var(--nav-library)',
   '/memory': 'var(--nav-memory)',
@@ -261,7 +258,6 @@ defineExpose({})
 .hue-dashboard { --hue-active: var(--nav-dashboard); }
 .hue-chat { --hue-active: var(--nav-chat); }
 .hue-ppt { --hue-active: var(--nav-ppt); }
-.hue-video { --hue-active: var(--nav-video); }
 .hue-classroom { --hue-active: var(--nav-classroom); }
 .hue-library { --hue-active: var(--nav-library); }
 .hue-memory { --hue-active: var(--nav-memory); }

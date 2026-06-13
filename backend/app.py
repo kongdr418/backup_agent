@@ -15,7 +15,6 @@ from flask_cors import CORS
 import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
-from video_generator import VideoGenerator
 from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
 from learner_profile.profile_agent import ProfileAgent, build_course_id
 from learner_profile.orchestrator import ProfileOrchestrator
@@ -622,10 +621,6 @@ def _build_classroom_tts_config(data=None, classroom=None):
         'voice': voice,
     }
 
-# 视频生成任务追踪（内存字典，job_id → 状态）
-video_jobs = {}
-
-
 def get_request_user_id() -> str:
     """从请求中提取 user_id，校验格式，缺省返回 'anonymous'"""
     uid = ''
@@ -822,7 +817,6 @@ def api_info():
             {'path': '/api/memory/clear', 'method': 'POST', 'description': '清除长期记忆'},
             {'path': '/api/memory/clear-daily', 'method': 'POST', 'description': '清除会话记录'},
             {'path': '/api/memory/search', 'method': 'GET', 'description': '搜索记忆'},
-            {'path': '/api/ppt-preview/<filename>', 'method': 'GET', 'description': 'PPT 预览图'},
             {'path': '/api/graphic/image/<filename>', 'method': 'GET', 'description': '封面图'},
             {'path': '/api/video/audio/<filename>', 'method': 'GET', 'description': '音频文件'},
         ]
@@ -921,83 +915,26 @@ def chat_stream():
         request_logger.info('[STREAM] 调用 agent.chat() - stream=True')
         result = agent.chat(message, stream=True, model=model, api_key=api_key, base_url=base_url, provider_type=provider_type)
 
-        # 优先检查是否是 PPT 预览数据字典（注意：字典也有 __iter__，必须先检查）
-        if isinstance(result, dict) and result.get('type') == 'ppt_preview':
-            request_logger.info('[STREAM] 检测到 PPT 预览数据类型（直接字典）')
-            request_logger.info(f'[STREAM] PPT 共 {result.get("total_pages", 0)} 页，准备分页发送')
-
-            # 1. 发送开始信号（元数据）
-            start_msg = {
-                'type': 'ppt_preview_start',
-                'filename': result.get('filename'),
-                'total_pages': result.get('total_pages'),
-                'message': result.get('message', '')
-            }
-            yield f"data: {json.dumps(start_msg, ensure_ascii=False)}\n\n"
-            request_logger.info(f'[STREAM] 发送 ppt_preview_start: {result.get("filename")}')
-
-            # 2. 逐页发送幻灯片数据（每页单独一条消息，避免大数据被分割）
-            for slide in result.get('slides', []):
-                slide_msg = {
-                    'type': 'ppt_slide',
-                    'page': slide.get('page'),
-                    'base64': slide.get('base64'),
-                    'title': slide.get('title', f'第 {slide.get("page")} 页')
-                }
-                yield f"data: {json.dumps(slide_msg, ensure_ascii=False)}\n\n"
-                request_logger.debug(f'[STREAM] 发送 ppt_slide: page {slide.get("page")}')
-
-            # 3. 发送结束信号
-            yield f"data: {json.dumps({'type': 'ppt_preview_end'}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
-            request_logger.info(f'[STREAM] PPT 预览数据分页发送完成，共 {result.get("total_pages", 0)} 页')
-
         # 检查是否是生成器/迭代器（PPT制作返回生成器：先输出大纲，再输出预览）
-        elif hasattr(result, '__iter__') and not isinstance(result, (str, bytes, dict)):
+        if hasattr(result, '__iter__') and not isinstance(result, (str, bytes, dict)):
             request_logger.info('[STREAM] 检测到生成器/迭代器类型')
             chunk_count = 0
 
             for item in result:
                 chunk_count += 1
 
-                # 情况1：PPT 预览数据字典（制作PPT的最终输出）
-                if isinstance(item, dict) and item.get('type') == 'ppt_preview':
-                    request_logger.info(f'[STREAM] 生成器 item {chunk_count}: PPT 预览数据，共 {item.get("total_pages", 0)} 页')
-
-                    # 1. 发送开始信号（元数据）
-                    start_msg = {
-                        'type': 'ppt_preview_start',
-                        'filename': item.get('filename'),
-                        'total_pages': item.get('total_pages'),
-                        'message': item.get('message', '')
-                    }
-                    yield f"data: {json.dumps(start_msg, ensure_ascii=False)}\n\n"
-
-                    # 2. 逐页发送幻灯片数据
-                    for slide in item.get('slides', []):
-                        slide_msg = {
-                            'type': 'ppt_slide',
-                            'page': slide.get('page'),
-                            'base64': slide.get('base64'),
-                            'title': slide.get('title', f'第 {slide.get("page")} 页')
-                        }
-                        yield f"data: {json.dumps(slide_msg, ensure_ascii=False)}\n\n"
-
-                    # 3. 发送结束信号
-                    yield f"data: {json.dumps({'type': 'ppt_preview_end'}, ensure_ascii=False)}\n\n"
-
-                # 情况2：字符串（大纲文本或其他消息）
-                elif isinstance(item, str):
+                # 情况1：字符串（大纲文本或其他消息）
+                if isinstance(item, str):
                     request_logger.debug(f'[STREAM] 生成器 item {chunk_count}: 字符串，长度 {len(item)}')
                     yield f"data: {json.dumps({'chunk': item}, ensure_ascii=False)}\n\n"
 
-                # 情况3：字典（所有 *_complete 事件统一转发）
+                # 情况2：字典（所有 *_complete 事件统一转发）
                 elif isinstance(item, dict) and item.get('type', '').endswith('_complete'):
                     request_logger.info(f'[STREAM] 生成器 item {chunk_count}: 完成事件 type={item.get("type")}')
                     content_data = item.get('data', {})
                     yield f"data: {json.dumps({'type': item.get('type'), 'data': content_data}, ensure_ascii=False)}\n\n"
 
-                # 情况4：音频数据（单独发送）- 大文件数据在流式传输中可能分割，需要特殊处理
+                # 情况3：音频数据（单独发送）- 大文件数据在流式传输中可能分割，需要特殊处理
                 elif isinstance(item, dict) and item.get('type') == 'video_audio_data':
                     request_logger.info(f'[STREAM] 生成器 item {chunk_count}: 视频音频数据 (base64长度: {len(item.get("audio_base64", ""))})')
                     print(f"[DEBUG APP] 收到音频数据，准备发送，base64长度: {len(item.get('audio_base64', ''))}")
@@ -1008,7 +945,7 @@ def chat_stream():
                     # 分段发送音频数据
                     yield f"data: {json.dumps({'type': 'video_audio_data', 'audio_base64': audio_data, 'audio_filename': audio_filename, 'voiceover_text': voiceover_text}, ensure_ascii=False)}\n\n"
 
-                # 情况5：图片数据（单独发送）
+                # 情况4：图片数据（单独发送）
                 elif isinstance(item, dict) and item.get('type') == 'graphic_image_data':
                     request_logger.info(f'[STREAM] 生成器 item {chunk_count}: 图文图片数据 (base64长度: {len(item.get("image_base64", ""))})')
                     print(f"[DEBUG APP] 收到图片数据，准备发送，base64长度: {len(item.get('image_base64', ''))}")
@@ -2213,30 +2150,6 @@ def get_files():
                     'icon': '🖼️'
                 })
 
-    # 扫描微课视频文件
-    video_dir = _scan_dir(os.path.join(BACKEND_DIR, "generated_videos"), user_id)
-    if os.path.exists(video_dir):
-        for item in os.listdir(video_dir):
-            item_path = os.path.join(video_dir, item)
-            # 跳过临时目录与非目录
-            if not os.path.isdir(item_path) or item.startswith('temp_'):
-                continue
-            video_file = os.path.join(item_path, '07-video.mp4')
-            if os.path.exists(video_file):
-                stat = os.stat(video_file)
-                size_mb = stat.st_size / (1024 * 1024)
-                files.append({
-                    'id': f'video_{item}',
-                    'name': f'{item}.mp4',
-                    'type': 'video',
-                    'type_label': '微课视频',
-                    'path': video_file,
-                    'size': stat.st_size,
-                    'size_formatted': f"{size_mb:.1f} MB" if size_mb >= 1 else f"{stat.st_size / 1024:.1f} KB",
-                    'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    'icon': '🎬'
-                })
-
     # 按时间倒序排列
     files.sort(key=lambda x: x['created'], reverse=True)
 
@@ -2261,9 +2174,6 @@ def delete_file():
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps'
     ]]
-    # 微课视频在 BACKEND_DIR/generated_videos 下
-    video_root = os.path.join(BACKEND_DIR, 'generated_videos')
-    allowed_dirs.append(video_root)
     # SVG PPT 在 BACKEND_DIR/generated_svg_ppt 下
     svg_ppt_root = os.path.join(BACKEND_DIR, 'generated_svg_ppt')
     allowed_dirs.append(svg_ppt_root)
@@ -2275,14 +2185,6 @@ def delete_file():
         return jsonify({'success': False, 'error': '无权删除此文件'}), 403
 
     try:
-        # 视频文件：删除整个父目录（含中间产物）
-        if abs_path.startswith(os.path.abspath(video_root)):
-            parent_dir = os.path.dirname(abs_path)
-            if os.path.isdir(parent_dir) and parent_dir.startswith(os.path.abspath(video_root)):
-                shutil.rmtree(parent_dir)
-                request_logger.info(f'[FILES] 视频目录已删除: {parent_dir}')
-                return jsonify({'success': True, 'message': '视频已删除'})
-
         os.remove(abs_path)
         request_logger.info(f'[FILES] 文件已删除: {file_path}')
         return jsonify({'success': True, 'message': '文件已删除'})
@@ -2358,7 +2260,7 @@ def clear_all_files():
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt', 'generated_videos'
+        'generated_svg_ppt'
     ]
     deleted_count = 0
     errors = []
@@ -2366,8 +2268,6 @@ def clear_all_files():
     for dir_name in allowed_dirs:
         if dir_name == 'generated_svg_ppt':
             dir_path = _scan_dir(os.path.join(BACKEND_DIR, 'generated_svg_ppt'), user_id)
-        elif dir_name == 'generated_videos':
-            dir_path = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
         else:
             dir_path = _scan_dir(os.path.join(GENERATORS_DIR, dir_name), user_id)
         if os.path.exists(dir_path):
@@ -2380,17 +2280,6 @@ def clear_all_files():
                         if os.path.isdir(abs_job) and abs_job.startswith(os.path.abspath(dir_path)):
                             shutil.rmtree(abs_job)
                             deleted_count += 1
-                elif dir_name == 'generated_videos':
-                    # 视频以子目录存储（每个子目录含 07-video.mp4 与中间产物），整个目录删除
-                    for sub in os.listdir(dir_path):
-                        sub_path = os.path.join(dir_path, sub)
-                        abs_sub = os.path.abspath(sub_path)
-                        if os.path.isdir(abs_sub) and abs_sub.startswith(os.path.abspath(dir_path)):
-                            try:
-                                shutil.rmtree(abs_sub)
-                                deleted_count += 1
-                            except Exception as e:
-                                errors.append(f'删除 {abs_sub} 失败: {e}')
                 else:
                     for root, dirs, files in os.walk(dir_path):
                         for f in files:
@@ -2433,7 +2322,7 @@ def download_file():
         'generated_ppt', 'generated_lectures', 'generated_content',
         'generated_outlines', 'generated_speeches', 'generated_exercises',
         'generated_quizzes', 'generated_cards', 'generated_mindmaps',
-        'generated_svg_ppt', 'ppt_previews', 'generated_videos',
+        'generated_svg_ppt',
         os.path.join('generators', 'generated_exercises'),
         os.path.join('generators', 'generated_quizzes'),
         os.path.join('generators', 'generated_lectures'),
@@ -2453,31 +2342,6 @@ def download_file():
     from flask import send_file as flask_send_file
     return flask_send_file(abs_path, as_attachment=True,
                            download_name=os.path.basename(abs_path))
-
-
-@app.route('/api/files/upload', methods=['POST'])
-def upload_file():
-    """上传 PPTX 文件"""
-    if 'file' not in request.files:
-        return jsonify({'success': False, 'error': '没有上传文件'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'success': False, 'error': '文件名为空'}), 400
-
-    if not file.filename.endswith('.pptx'):
-        return jsonify({'success': False, 'error': '只支持 PPTX 文件'}), 400
-
-    # 保存到 uploads 目录（不在文件库扫描范围内）
-    upload_dir = os.path.join(BACKEND_DIR, 'uploads')
-    os.makedirs(upload_dir, exist_ok=True)
-
-    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
-    filepath = os.path.join(upload_dir, filename)
-    file.save(filepath)
-
-    request_logger.info(f'[UPLOAD] 文件已上传: {filepath}')
-    return jsonify({'success': True, 'path': filepath, 'name': filename})
 
 
 @app.route('/api/files/read', methods=['GET'])
@@ -2552,26 +2416,6 @@ def search_memory_api():
     results = memory.search_memory(keyword)
     return jsonify({'results': results})
 
-
-# PPT 预览图加载
-@app.route('/api/ppt-preview/<filename>', methods=['GET'])
-def get_ppt_preview(filename):
-    """加载 PPT 预览图"""
-    import base64
-    from urllib.parse import unquote
-    filename = unquote(filename)
-    # 移除 .pptx 扩展名，因为预览目录是用 stem（有别于 name）创建的
-    name_without_ext = filename.replace('.pptx', '')
-    preview_dir = os.path.join(os.path.dirname(__file__), 'ppt_previews', name_without_ext)
-    slides = []
-    if os.path.exists(preview_dir):
-        for f in sorted(os.listdir(preview_dir)):
-            if f.endswith('.png'):
-                path = os.path.join(preview_dir, f)
-                with open(path, 'rb') as img:
-                    b64 = base64.b64encode(img.read()).decode('utf-8')
-                    slides.append({'page': f.replace('slide_', '').replace('.png', ''), 'data': b64})
-    return jsonify({'slides': slides})
 
 # 图文封面图加载
 @app.route('/api/graphic/image/<filename>', methods=['GET'])
@@ -3054,232 +2898,6 @@ def ppt_svg_clear_all():
     except Exception as e:
         request_logger.error(f'[PPT-SVG] 清空失败: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ==================== PPT 视频生成端点 ====================
-
-@app.route('/api/ppt-video/generate', methods=['POST'])
-def ppt_video_generate():
-    """
-    将 PPTX 文件转换为带配音和字幕的说课视频
-
-    请求体:
-    {
-        "pptx_path": "PPT 文件路径（可选，默认从最新生成的 PPT 获取）",
-        "topic": "视频主题（可选）",
-        "voice": "配音语音（默认: mimo_default，可选: 冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）"
-    }
-    """
-    data = request.json or {}
-    user_id = get_request_user_id()
-
-    # 同步内容生成模型配置到 shared_config（LLM 讲稿生成需要）
-    _apply_content_llm_config(data)
-
-    # 获取 PPTX 路径
-    pptx_path = data.get('pptx_path')
-    topic = data.get('topic')
-    tts_provider = data.get('tts_provider', '')
-    voice = data.get('voice', '')
-    # 根据 provider 强制使用正确音色
-    default_voices = {'mimo-tts': 'mimo_default', 'openai-tts': 'alloy', 'glm-tts': 'tongtong'}
-    valid_voices = {v['id'] for v in TTS_PROVIDERS.get(tts_provider, {}).get('voices', [])}
-    if not voice or voice not in valid_voices:
-        voice = default_voices.get(tts_provider, 'mimo_default')
-    tts_api_key = data.get('tts_api_key', '')
-    tts_base_url = data.get('tts_base_url', '')
-    tts_model = data.get('tts_model', '')
-
-    # 如果没有指定路径，尝试获取最新生成的 PPT
-    if not pptx_path:
-        # 从 generated_ppt 目录获取最新的 pptx 文件
-        ppt_dir = _scan_dir(os.path.join(GENERATORS_DIR, 'generated_ppt'), user_id)
-        if os.path.exists(ppt_dir):
-            pptx_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
-            if pptx_files:
-                # 按修改时间排序，取最新的
-                pptx_files.sort(key=lambda f: os.path.getmtime(os.path.join(ppt_dir, f)), reverse=True)
-                pptx_path = os.path.join(ppt_dir, pptx_files[0])
-
-    if not pptx_path or not os.path.exists(pptx_path):
-        return jsonify({'success': False, 'error': '未找到 PPT 文件'}), 400
-
-    # 生成 job_id（用于任务追踪）
-    job_topic = topic or os.path.splitext(os.path.basename(pptx_path))[0]
-    job_id = f"{datetime.now().strftime('%Y-%m-%d')}-{job_topic.replace(' ', '_').replace('/', '_')}"
-
-    # 注册任务到追踪字典
-    tracking_key = f"{user_id}:{job_id}"
-    video_jobs[tracking_key] = {
-        'status': 'generating',
-        'progress': 0,
-        'message': '准备开始...',
-        'pptx_path': pptx_path,
-        'voice': voice,
-    }
-
-    def _run_generation():
-        """在后台线程中执行视频生成"""
-        try:
-            # 加载用户设置的 TTS 配置
-            memory = get_memory_manager()
-            config = memory.get_config()
-            saved_settings = config.get('content_settings', {})
-            # 兼容旧版本：minimax-tts → mimo-tts
-            saved_tts_provider = saved_settings.get('tts_provider', '')
-            if saved_tts_provider == 'minimax-tts':
-                saved_tts_provider = 'mimo-tts'
-
-            tts_config = {
-                'provider': tts_provider or saved_tts_provider or 'mimo-tts',
-                'api_key': tts_api_key,
-                'base_url': tts_base_url or saved_settings.get('tts_base_url') or TTS_PROVIDERS.get(tts_provider, {}).get('defaultBaseUrl', ''),
-                'model': tts_model or saved_settings.get('tts_model') or (TTS_PROVIDERS.get(tts_provider, {}).get('models', [{}])[0].get('id', '')),
-                'voice': voice,
-            }
-            video_workspace = _user_output_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
-            generator = VideoGenerator(workspace_dir=video_workspace, tts_config=tts_config)
-
-            def progress_callback(progress, message):
-                if tracking_key in video_jobs:
-                    video_jobs[tracking_key]['progress'] = progress
-                    video_jobs[tracking_key]['message'] = message
-                yield ""  # 占位，保持生成器格式
-
-            result = generator.generate_video(
-                pptx_path=pptx_path,
-                topic=topic,
-                voice=voice,
-                progress_callback=progress_callback
-            )
-
-            # 消费生成器，触发实际执行
-            for r in result:
-                pass
-
-            if tracking_key in video_jobs:
-                video_jobs[tracking_key]['status'] = 'done'
-                video_jobs[tracking_key]['progress'] = 1.0
-                video_jobs[tracking_key]['message'] = '视频生成完成'
-
-            request_logger.info(f'[PPT-VIDEO] 任务完成: {job_id}')
-
-        except Exception as e:
-            request_logger.error(f'[PPT-VIDEO] 生成失败: {e}')
-            if tracking_key in video_jobs:
-                video_jobs[tracking_key]['status'] = 'error'
-                video_jobs[tracking_key]['message'] = str(e)
-
-    # 启动后台线程，不依赖 HTTP 连接
-    t = threading.Thread(target=_run_generation, daemon=True)
-    t.start()
-
-    # 立即返回 job_id，前端通过轮询获取进度
-    return jsonify({'success': True, 'job_id': job_id})
-
-
-@app.route('/api/ppt-video/status/<job_id>', methods=['GET'])
-def ppt_video_status(job_id):
-    """查询视频生成任务状态"""
-    user_id = get_request_user_id()
-    tracking_key = f"{user_id}:{job_id}"
-    # 先查内存中的活跃任务
-    if tracking_key in video_jobs:
-        job = video_jobs[tracking_key]
-        return jsonify({
-            'status': job['status'],
-            'progress': job['progress'],
-            'message': job['message'],
-        })
-
-    # 内存中没有，检查磁盘上是否已完成
-    video_dir = os.path.join(_scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id), job_id)
-    video_file = os.path.join(video_dir, '07-video.mp4')
-    if os.path.exists(video_file):
-        return jsonify({'status': 'done', 'progress': 1.0, 'message': '视频生成完成'})
-
-    return jsonify({'status': 'not_found', 'progress': 0, 'message': '任务不存在'}), 404
-
-
-@app.route('/api/ppt-video/list', methods=['GET'])
-def ppt_video_list():
-    """列出已生成的视频"""
-    user_id = get_request_user_id()
-    video_dir = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
-    if not os.path.exists(video_dir):
-        return jsonify({'videos': []})
-
-    videos = []
-    for item in os.listdir(video_dir):
-        item_path = os.path.join(video_dir, item)
-        # 跳过临时目录与非目录
-        if not os.path.isdir(item_path) or item.startswith('temp_'):
-            continue
-        video_file = os.path.join(item_path, '07-video.mp4')
-        if os.path.exists(video_file):
-            stat = os.stat(video_file)
-            videos.append({
-                'id': item,
-                'name': item,
-                'path': video_file,
-                'size': stat.st_size,
-                'created': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
-            })
-
-    videos.sort(key=lambda x: x['created'], reverse=True)
-    return jsonify({'videos': videos})
-
-
-@app.route('/api/ppt-video/delete', methods=['POST'])
-def ppt_video_delete():
-    """删除指定的视频（含整个子目录）"""
-    data = request.json or {}
-    video_id = data.get('id', '')
-    user_id = get_request_user_id()
-
-    if not video_id or '/' in video_id or '\\' in video_id or '..' in video_id:
-        return jsonify({'success': False, 'error': '非法的视频 id'}), 400
-
-    video_root = os.path.abspath(_scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id))
-    target = os.path.abspath(os.path.join(video_root, video_id))
-    if not target.startswith(video_root) or not os.path.isdir(target):
-        return jsonify({'success': False, 'error': '视频不存在'}), 404
-
-    try:
-        shutil.rmtree(target)
-        request_logger.info(f'[PPT-VIDEO] 已删除视频目录: {target}')
-        return jsonify({'success': True, 'message': '视频已删除'})
-    except Exception as e:
-        request_logger.error(f'[PPT-VIDEO] 删除失败: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/ppt-video/clear', methods=['POST'])
-def ppt_video_clear():
-    """清空所有视频"""
-    data = request.json or {}
-    if not data.get('confirm'):
-        return jsonify({'success': False, 'error': '需要确认清空操作'}), 400
-    user_id = get_request_user_id()
-
-    video_root = _scan_dir(os.path.join(BACKEND_DIR, 'generated_videos'), user_id)
-    if not os.path.exists(video_root):
-        return jsonify({'success': True, 'deleted_count': 0})
-
-    deleted = 0
-    errors = []
-    for sub in os.listdir(video_root):
-        sub_path = os.path.join(video_root, sub)
-        abs_sub = os.path.abspath(sub_path)
-        if os.path.isdir(abs_sub) and abs_sub.startswith(os.path.abspath(video_root)):
-            try:
-                shutil.rmtree(abs_sub)
-                deleted += 1
-            except Exception as e:
-                errors.append(f'{sub}: {e}')
-
-    request_logger.info(f'[PPT-VIDEO] 已清空 {deleted} 个视频目录')
-    return jsonify({'success': True, 'deleted_count': deleted, 'errors': errors})
 
 
 # ==================== Interactive Classroom API ====================

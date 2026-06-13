@@ -122,7 +122,7 @@
         <!-- 语音合成 -->
         <section class="bg-bg-surface border border-line rounded-card shadow-card">
           <div class="px-5 py-4 border-b border-line/30">
-            <SectionTitle :icon="Volume2" title="语音合成模型" subtitle="PPT 微课视频配音使用的 TTS 模型" />
+            <SectionTitle :icon="Volume2" title="语音合成模型" subtitle="互动课堂语音使用的 TTS 模型" />
           </div>
           <div class="px-5 py-4 space-y-5">
             <div class="space-y-1.5">

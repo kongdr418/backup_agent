@@ -240,7 +240,7 @@ const navItems = [
   { id: 'chat', label: '对话模型', icon: MessageCircle, subtitle: '智能对话使用的模型' },
   { id: 'content', label: '内容生成', icon: FileText, subtitle: '讲稿、大纲、习题、测验等' },
   { id: 'ppt', label: 'PPT 生成', icon: Presentation, subtitle: 'PPT 工作台使用的模型' },
-  { id: 'tts', label: '语音合成', icon: Volume2, subtitle: 'PPT 微课视频配音' },
+  { id: 'tts', label: '语音合成', icon: Volume2, subtitle: '互动课堂语音' },
   { id: 'cover', label: '小红书封面', icon: ImageIcon, subtitle: '封面图比例与风格' },
 ]
 const currentSection = computed(() => navItems.find((n) => n.id === activeSection.value) ?? null)

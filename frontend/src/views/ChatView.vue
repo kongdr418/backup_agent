@@ -123,7 +123,7 @@
               v-if="messages.length === 0"
               :icon="Sparkles"
               title="开始一段新对话"
-              description="输入主题，让多智能体协同生成讲义、习题、思维导图、图文或微课视频。"
+              description="输入主题，让多智能体协同生成讲义、习题、思维导图或图文内容。"
             />
 
             <ChatMessage

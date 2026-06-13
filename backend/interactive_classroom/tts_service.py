@@ -4,19 +4,17 @@ import asyncio
 import os
 from typing import Any, Awaitable, Callable
 
-from video_generator import VideoGenerator
+from tts_adapter import TTSAdapter
 
 
 class ClassroomTTSService:
-    """Thin wrapper that reuses VideoGenerator provider adapters."""
+    """Thin wrapper around shared classroom TTS provider adapters."""
 
     def __init__(self, output_dir: str, tts_config: dict[str, Any]) -> None:
-        self.generator = VideoGenerator(workspace_dir=output_dir, tts_config=tts_config)
+        self.adapter = TTSAdapter(tts_config)
 
     def _file_extension(self) -> str:
-        if self.generator.tts_provider == "edge-tts":
-            return "mp3"
-        return "wav"
+        return self.adapter.file_extension()
 
     def synthesize_action(self, action_id: str, text: str, output_dir: str) -> str:
         """同步版本：合成单个 action 的 TTS，写到 output_dir。
@@ -28,7 +26,7 @@ class ClassroomTTSService:
             return ""
 
         os.makedirs(output_dir, exist_ok=True)
-        audio_bytes = self.generator._generate_tts_audio(text, self.generator.tts_voice)  # noqa: SLF001
+        audio_bytes = self.adapter.generate_audio(text, self.adapter.tts_voice)
         filename = f"{action_id}.{self._file_extension()}"
         path = os.path.join(output_dir, filename)
         with open(path, "wb") as f:

@@ -22,12 +22,6 @@
       </div>
 
       <!-- 各种内容卡(摘要 chip) -->
-      <PptPreviewCard
-        v-else-if="message.type === 'ppt_preview'"
-        :data="message.data"
-        :is-expanded="isExpanded"
-        @toggle="toggleExpand"
-      />
       <GraphicImageCard
         v-else-if="message.type === 'graphic_image'"
         :data="message.data"
@@ -112,7 +106,6 @@ import {
   RotateCcw,
 } from 'lucide-vue-next'
 import type { ChatMessage } from '@/types'
-import PptPreviewCard from './PptPreviewCard.vue'
 import GraphicImageCard from './GraphicImageCard.vue'
 import VideoAudioCard from './VideoAudioCard.vue'
 import ContentResultCard from './ContentResultCard.vue'
