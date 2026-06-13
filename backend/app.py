@@ -46,6 +46,11 @@ from interactive_classroom.next_lesson_service import (
     clean_next_lesson_list,
     clean_next_lesson_text,
 )
+from interactive_classroom.lineage_service import (
+    inherit_classroom_lineage,
+    resolve_classroom_lineage,
+    safe_classroom_ref,
+)
 from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
 from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path, resolve_knowledge_evidence, _compact_text_key
 from interactive_classroom.event_service import (
@@ -1711,70 +1716,15 @@ app.register_blueprint(create_ppt_routes_blueprint(
 # ==================== Interactive Classroom API ====================
 
 def _safe_classroom_ref(value: str) -> bool:
-    return bool(re.match(r'^[a-zA-Z0-9_-]{1,128}$', value or ''))
+    return safe_classroom_ref(value)
 
 
 def _resolve_classroom_lineage(data: dict) -> dict | None:
-    course_root_id = (data.get('course_root_id') or '').strip()
-    parent_classroom_id = (data.get('parent_classroom_id') or '').strip()
-    lesson_kind = (data.get('lesson_kind') or '').strip() or (
-        'next_lesson' if parent_classroom_id else 'root'
-    )
-    if course_root_id and not _safe_classroom_ref(course_root_id):
-        return None
-    if parent_classroom_id and not _safe_classroom_ref(parent_classroom_id):
-        return None
-    if not re.match(r'^[a-zA-Z0-9_-]{1,40}$', lesson_kind):
-        return None
-    try:
-        lesson_depth = max(0, min(20, int(data.get('lesson_depth', 0) or 0)))
-    except (TypeError, ValueError):
-        lesson_depth = 0
-    try:
-        lesson_index = max(1, min(500, int(data.get('lesson_index', 1) or 1)))
-    except (TypeError, ValueError):
-        lesson_index = 1
-    return {
-        'course_root_id': course_root_id,
-        'parent_classroom_id': parent_classroom_id,
-        'lesson_depth': lesson_depth,
-        'lesson_index': lesson_index,
-        'lesson_kind': lesson_kind,
-    }
+    return resolve_classroom_lineage(data)
 
 
 def _inherit_classroom_lineage(user_id: str, lineage: dict, course: str) -> tuple[dict, str]:
-    parent_id = (lineage.get('parent_classroom_id') or '').strip()
-    if not parent_id:
-        return lineage, course
-    parent = CLASSROOM_STORAGE.load_classroom(user_id, parent_id)
-    if parent is None:
-        return lineage, course
-
-    inherited = dict(lineage)
-    inherited['course_root_id'] = (
-        inherited.get('course_root_id')
-        or parent.get('course_root_id')
-        or parent.get('id')
-        or parent_id
-    )
-    try:
-        parent_depth = int(parent.get('lesson_depth', 0) or 0)
-    except (TypeError, ValueError):
-        parent_depth = 0
-    try:
-        parent_index = int(parent.get('lesson_index', 1) or 1)
-    except (TypeError, ValueError):
-        parent_index = 1
-    if int(inherited.get('lesson_depth', 0) or 0) <= 0:
-        inherited['lesson_depth'] = parent_depth + 1
-    if int(inherited.get('lesson_index', 1) or 1) <= 1:
-        inherited['lesson_index'] = parent_index + 1
-
-    inherited_course = course
-    if not inherited_course or inherited_course == '通用课程':
-        inherited_course = parent.get('course') or parent.get('topic') or course
-    return inherited, inherited_course
+    return inherit_classroom_lineage(CLASSROOM_STORAGE, user_id, lineage, course)
 
 
 def interactive_classroom_generate():
