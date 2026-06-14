@@ -16,6 +16,9 @@ from interactive_classroom.generator import (
     InteractiveClassroomGenerator,
     _emit_ordered_ready_scenes,
     _emit_progress,
+    _extract_svg_highlight_targets,
+    _fallback_teaching_segments,
+    _select_teaching_targets,
     _synthesize_scene_speech_actions,
 )
 from interactive_classroom.generator import _derive_slide_title
@@ -144,6 +147,201 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertIn("scene_slide_002", covered_ids)
         self.assertNotIn("CHEMISTRY EXPLORATION", question_blob)
         self.assertNotIn("探索元素周期表", question_blob)
+
+    def test_selects_teaching_targets_across_full_slide_not_only_front_labels(self) -> None:
+        texts = [
+            "人工神经元的工作原理",
+            "神经元处理流程",
+            "输入信号",
+            "x₁",
+            "x₂",
+            "x₃",
+            "多个输入",
+            "权重",
+            "w₁",
+            "w₂",
+            "w₃",
+            "重要性",
+            "求和",
+            "Σ(xᵢ × wᵢ)",
+            "+ 偏置 b",
+            "激活函数",
+            "σ(z)",
+            "输出 y",
+            "0 或 1",
+            "核心步骤：",
+            "1. 接收多个输入信号（x₁, x₂, x₃...）",
+            "2. 乘以对应权重，加权求和",
+            "3. 通过激活函数判断",
+            "4. 输出激活或抑制信号",
+            "🎯 生活类比",
+            "📐 数学表达",
+            "✨ 核心要点",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(texts)
+        ]
+
+        selected = _select_teaching_targets(targets, limit=16)
+        selected_text = "\n".join(str(target["text"]) for target in selected)
+
+        self.assertIn("求和", selected_text)
+        self.assertIn("激活函数", selected_text)
+        self.assertIn("输出 y", selected_text)
+        self.assertIn("📐 数学表达", selected_text)
+        self.assertIn("✨ 核心要点", selected_text)
+        self.assertNotIn("w₁", selected_text)
+
+    def test_extracts_highlight_targets_deep_enough_for_full_process_slides(self) -> None:
+        svg = """
+        <svg>
+          <text x="10" y="20">PAGE 03 / 06</text>
+          <text x="10" y="40">人工神经元的工作原理</text>
+          <text x="10" y="60">神经元处理流程</text>
+          <text x="10" y="80">输入信号</text>
+          <text x="10" y="100">x₁</text>
+          <text x="10" y="120">x₂</text>
+          <text x="10" y="140">x₃</text>
+          <text x="10" y="160">多个输入</text>
+          <text x="10" y="180">权重</text>
+          <text x="10" y="200">w₁</text>
+          <text x="10" y="220">w₂</text>
+          <text x="10" y="240">w₃</text>
+          <text x="10" y="260">重要性</text>
+          <text x="10" y="280">求和</text>
+          <text x="10" y="300">Σ(xᵢ × wᵢ)</text>
+          <text x="10" y="320">激活函数</text>
+          <text x="10" y="340">输出 y</text>
+          <text x="10" y="360">📐 数学表达</text>
+          <text x="10" y="380">✨ 核心要点</text>
+        </svg>
+        """
+
+        target_text = "\n".join(
+            str(target["text"])
+            for target in _extract_svg_highlight_targets(svg)
+        )
+
+        self.assertIn("求和", target_text)
+        self.assertIn("激活函数", target_text)
+        self.assertIn("输出 y", target_text)
+        self.assertIn("📐 数学表达", target_text)
+        self.assertIn("✨ 核心要点", target_text)
+
+    def test_fallback_teaching_segments_cover_full_neuron_process(self) -> None:
+        svg_texts = [
+            "人工神经元的工作原理",
+            "神经元处理流程",
+            "输入信号",
+            "x₁",
+            "x₂",
+            "x₃",
+            "多个输入",
+            "权重",
+            "重要性",
+            "求和",
+            "Σ(xᵢ × wᵢ)",
+            "偏置 b",
+            "激活函数",
+            "σ(z)",
+            "输出 y",
+            "核心步骤：",
+            "1. 接收多个输入信号（x₁, x₂, x₃...）",
+            "2. 乘以对应权重，加权求和",
+            "3. 通过激活函数判断",
+            "4. 输出激活或抑制信号",
+            "📐 数学表达",
+            "z = Σ(xᵢ × wᵢ) + b",
+            "y = σ(z) = 1/(1 + e⁻ᶻ)",
+            "✨ 核心要点",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(svg_texts)
+        ]
+        manuscript = (
+            "那么，一个人工神经元到底在做什么呢？我们可以把它想象成一个简单的决策单元。"
+            "它接收来自其他神经元的多个输入信号，每个信号都有一个重要性权重，就像我们做决定时会综合考虑不同意见的份量。"
+            "然后它会对所有加权输入求和，并通过一个“激活函数”来判断这个总和是否足够强，从而决定是否要“激活”并向外传递一个输出信号。"
+        )
+
+        segments = _fallback_teaching_segments(
+            "人工神经元的工作原理",
+            manuscript,
+            targets,
+            svg_texts,
+        )
+        speech = "\n".join(str(segment["text"]) for segment in segments)
+        target_text = "\n".join(
+            next(target["text"] for target in targets if target["id"] == segment["target_id"])
+            for segment in segments
+        )
+
+        self.assertIn("输入信号", speech)
+        self.assertIn("权重", speech)
+        self.assertIn("求和", speech)
+        self.assertIn("激活函数", speech)
+        self.assertIn("输出信号", speech)
+        self.assertIn("z = Σ", speech)
+        self.assertIn("y = σ", speech)
+        self.assertIn("输出 y", target_text)
+        self.assertNotIn("最后看“x₁”", speech)
+
+    def test_fallback_teaching_segments_cover_learning_mechanism_svg_cards(self) -> None:
+        svg_texts = [
+            "核心概念",
+            "神经网络的\"学习\"机制",
+            "通过反向传播算法，网络自动调整权重，逐步提升准确率",
+            "随机初始化",
+            "权重随机设置",
+            "输出是错的",
+            "训练数据",
+            "大量标注样本",
+            "如猫狗图片",
+            "计算误差",
+            "对比预测与真实",
+            "量化错误程度",
+            "反向传播",
+            "自动调整权重",
+            "梯度下降优化",
+            "🔄 反复迭代，直到准确率达标",
+            "关键要点",
+            "网络开始时权重随机",
+            "初始输出完全不准确",
+            "这是学习的起点",
+            "数据驱动",
+            "上万张标注图片作为教材",
+            "每张图片告诉网络正确答案",
+            "对比预测与真实标签",
+            "核心算法自动调整权重",
+            "反复迭代持续优化",
+            "最终达到高准确率",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(svg_texts)
+        ]
+        manuscript = (
+            "神经网络最关键的部分在于“学习”。一开始，网络内部连接的权重是随机设置的，给出的输出也是错的。"
+            "通过向它展示大量的例子（比如上万张标注好的猫和狗的图片），并告诉它每次判断错了多少，网络就能利用一种叫做“反向传播”的算法来自动调整那些权重。"
+            "这个过程反复进行，直到它能够做出非常准确的判断。"
+        )
+
+        segments = _fallback_teaching_segments(
+            "神经网络的学习机制",
+            manuscript,
+            targets,
+            svg_texts,
+        )
+        speech = "\n".join(str(segment["text"]) for segment in segments)
+
+        self.assertIn("随机初始化", speech)
+        self.assertIn("训练数据", speech)
+        self.assertIn("计算预测和真实答案之间的误差", speech)
+        self.assertIn("反向传播", speech)
+        self.assertIn("反复迭代", speech)
+        self.assertIn("准确率达标", speech)
 
     def test_derives_stable_slide_title_from_svg_filename_before_svg_text(self) -> None:
         title = _derive_slide_title(

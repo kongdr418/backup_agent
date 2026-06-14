@@ -409,6 +409,20 @@ def _split_speech_segments(text: str, limit: int = 6) -> list[str]:
     return segments or [cleaned]
 
 
+def _merge_short_speech_segments(segments: list[str], min_chars: int = 24) -> list[str]:
+    merged: list[str] = []
+    idx = 0
+    while idx < len(segments):
+        current = segments[idx]
+        if len(current) < min_chars and idx + 1 < len(segments):
+            current = f"{current}{segments[idx + 1]}"
+            idx += 2
+        else:
+            idx += 1
+        merged.append(current)
+    return merged
+
+
 def _parse_svg_number(attrs: str, name: str, default: float = 0) -> float:
     match = re.search(rf'\b{name}\s*=\s*["\']\s*([-+]?\d+(?:\.\d+)?)', attrs, flags=re.I)
     if not match:
@@ -424,7 +438,7 @@ def _svg_text_content(raw: str) -> str:
     return _clean_text(raw)
 
 
-def _extract_svg_highlight_targets(svg: str, limit: int = 12) -> list[dict[str, Any]]:
+def _extract_svg_highlight_targets(svg: str, limit: int = 48) -> list[dict[str, Any]]:
     """从 SVG 文本节点提取可高亮目标，并估算 bbox。
 
     当前 PPT 引擎输出的 SVG 文本多数带 x/y/font-size。浏览器端会优先用
@@ -464,6 +478,95 @@ def _extract_svg_highlight_targets(svg: str, limit: int = 12) -> list[dict[str, 
         if len(targets) >= limit:
             break
     return targets
+
+
+def _is_low_signal_teaching_target(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return True
+    if re.fullmatch(r"[xw]\s*[₀-₉0-9]+", cleaned, flags=re.I):
+        return True
+    if re.fullmatch(r"[a-z]\s*[₀-₉0-9]?", cleaned, flags=re.I):
+        return True
+    if re.fullmatch(r"\d+\s*/\s*\d+", cleaned):
+        return True
+    return False
+
+
+def _teaching_target_score(text: str) -> int:
+    cleaned = _clean_text(text)
+    score = 0
+    if re.search(r"[\u4e00-\u9fff]", cleaned):
+        score += 4
+    if re.search(r"(核心|步骤|流程|要点|类比|数学|表达|公式|输入|权重|求和|偏置|激活|输出|判断)", cleaned):
+        score += 6
+    if re.search(r"(Σ|σ|=|\+|×)", cleaned):
+        score += 3
+    if re.match(r"^\d+[.、]\s*", cleaned):
+        score += 4
+    if _is_low_signal_teaching_target(cleaned):
+        score -= 8
+    return score
+
+
+def _select_teaching_targets(targets: list[dict[str, Any]], limit: int = 28) -> list[dict[str, Any]]:
+    """选择给讲稿 LLM 的高亮目标，避免只截 SVG DOM 前几个碎片。
+
+    SVG 文本通常按视觉顺序展开，前面可能连续出现 x1/x2/x3/w1 这类局部标注。
+    如果直接 `targets[:8]`，讲稿模型会看不到后面的求和、激活函数、输出和核心要点。
+    这里优先保留高信息目标，并从整页目标中做有序采样，保证前中后内容都能进入 prompt。
+    """
+    if len(targets) <= limit:
+        return targets
+
+    selected_indexes: set[int] = set()
+    scored = [
+        (idx, _teaching_target_score(str(target.get("text") or "")))
+        for idx, target in enumerate(targets)
+    ]
+
+    for idx, score in sorted(scored, key=lambda item: (-item[1], item[0])):
+        if score <= 0:
+            continue
+        selected_indexes.add(idx)
+        if len(selected_indexes) >= limit:
+            break
+
+    if len(selected_indexes) < min(limit, len(targets)):
+        step = max(1, len(targets) // limit)
+        for idx in range(0, len(targets), step):
+            selected_indexes.add(idx)
+            if len(selected_indexes) >= limit:
+                break
+
+    if len(selected_indexes) < min(limit, len(targets)):
+        for idx, _score in scored:
+            selected_indexes.add(idx)
+            if len(selected_indexes) >= limit:
+                break
+
+    return [targets[idx] for idx in sorted(selected_indexes)]
+
+
+def _visible_text_lines_for_prompt(
+    svg_texts: list[str],
+    targets: list[dict[str, Any]] | None = None,
+    limit: int = 48,
+) -> list[str]:
+    lines: list[str] = []
+    target_texts = [str(target.get("text") or "") for target in (targets or [])]
+    for text in [*svg_texts, *target_texts]:
+        cleaned = _clean_text(text)
+        if (
+            not cleaned
+            or cleaned in lines
+            or re.search(r"\bpage\s*\d+\s*/\s*\d+\b", cleaned, flags=re.I)
+        ):
+            continue
+        lines.append(cleaned)
+        if len(lines) >= limit:
+            break
+    return lines
 
 
 def _match_text_score(segment: str, target_text: str) -> int:
@@ -559,7 +662,7 @@ def _normalize_teaching_segments(
     elif is_last:
         max_segments, max_segment_chars, max_total_chars = 3, 110, 260
     else:
-        max_segments, max_segment_chars, max_total_chars = 4, 120, 360
+        max_segments, max_segment_chars, max_total_chars = 5, 220, 760
 
     result: list[dict[str, Any]] = []
     used_chars = 0
@@ -616,6 +719,102 @@ def _build_highlight_cues_from_teaching_segments(segments: list[dict[str, Any]])
     return cues
 
 
+def _target_for_teaching_text(
+    text: str,
+    targets: list[dict[str, Any]],
+    used_target_ids: set[str],
+) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    best_score = 0
+    text_key = re.sub(r"[\W_]+", "", text.lower(), flags=re.UNICODE)
+    for target in targets:
+        target_id = str(target.get("id") or "")
+        target_text = str(target.get("text") or "")
+        if not target_id or target_id in used_target_ids or _is_low_signal_teaching_target(target_text):
+            continue
+        target_key = re.sub(r"[\W_]+", "", target_text.lower(), flags=re.UNICODE)
+        score = _match_text_score(text, target_text) + max(0, _teaching_target_score(target_text) // 4)
+        if target_key and target_key in text_key:
+            score += 20
+        if "输出" in text and "输出" in target_text:
+            score += 30
+        if "激活" in text and "激活" in target_text:
+            score += 20
+        if "求和" in text and "求和" in target_text:
+            score += 20
+        if score > best_score:
+            best = target
+            best_score = score
+
+    if best is not None and best_score > 0:
+        return best
+
+    for target in targets:
+        target_id = str(target.get("id") or "")
+        target_text = str(target.get("text") or "")
+        if target_id and target_id not in used_target_ids and not _is_low_signal_teaching_target(target_text):
+            return target
+    return None
+
+
+def _build_process_summary_text(svg_texts: list[str]) -> str:
+    visible_text = " ".join(_visible_text_lines_for_prompt(svg_texts, limit=48))
+    has_process = all(term in visible_text for term in ("输入", "权重")) and any(
+        term in visible_text for term in ("求和", "激活函数", "输出")
+    )
+    if not has_process:
+        return ""
+
+    formula = "右侧公式里的 z 对应加权求和加偏置，y=σ(z) 对应经过激活函数后的输出。"
+    if "z = Σ" in visible_text and "y = σ" in visible_text:
+        formula = "右侧公式 z = Σ(xᵢ × wᵢ) + b 对应加权求和，y = σ(z) 对应激活后的输出。"
+    return (
+        "把流程连起来看：多个输入先乘以对应权重并加上偏置完成求和，"
+        "再交给激活函数判断，最后得到输出 y，也就是激活或抑制信号。"
+        f"{formula}"
+    )
+
+
+def _build_formula_summary_text(svg_texts: list[str], targets: list[dict[str, Any]] | None = None) -> str:
+    target_text = " ".join(str(target.get("text") or "") for target in (targets or []))
+    visible_text = f"{' '.join(_visible_text_lines_for_prompt(svg_texts, targets, limit=48))} {target_text}"
+    if "z = Σ" not in visible_text and "y = σ" not in visible_text:
+        return ""
+    return (
+        "页面右侧的数学表达可以对应到这条流程："
+        "z = Σ(xᵢ × wᵢ) + b 表示把输入按权重求和并加上偏置，"
+        "y = σ(z) 表示激活函数把结果转换成最终输出。"
+    )
+
+
+def _build_learning_process_summary_text(
+    svg_texts: list[str],
+    targets: list[dict[str, Any]] | None = None,
+) -> str:
+    visible_text = " ".join(_visible_text_lines_for_prompt(svg_texts, targets, limit=64))
+    has_learning_process = all(
+        term in visible_text
+        for term in ("随机初始化", "训练数据", "计算误差", "反向传播")
+    )
+    if not has_learning_process:
+        return ""
+
+    ending = (
+        "下方关键要点对应三件事：随机权重是学习起点，标注数据提供正确答案，"
+        "反向传播持续调整权重，最终把准确率推高。"
+    )
+    if "反复迭代" in visible_text:
+        ending = (
+            "这条虚线强调训练不是一次完成的，而是反复迭代：随机权重是起点，"
+            "标注数据提供正确答案，反向传播持续调整权重，直到准确率达标。"
+        )
+    return (
+        "把这一页的流程图按顺序串起来：先随机初始化权重，所以一开始输出可能是错的；"
+        "再用大量带标签的训练数据做教材；接着计算预测和真实答案之间的误差；"
+        f"最后通过反向传播自动调整权重。{ending}"
+    )
+
+
 def _fallback_teaching_segments(
     title: str,
     manuscript_note: str,
@@ -625,7 +824,7 @@ def _fallback_teaching_segments(
     is_intro: bool = False,
     is_last: bool = False,
 ) -> list[dict[str, Any]]:
-    source_targets = targets[:5]
+    source_targets = _select_teaching_targets(targets, limit=24)
     if not source_targets:
         source_targets = [
             {"id": f"hl_{idx + 1:03d}", "text": text}
@@ -652,6 +851,65 @@ def _fallback_teaching_segments(
             is_intro=True,
             is_last=False,
         )
+
+    if note:
+        used_target_ids: set[str] = set()
+        result: list[dict[str, Any]] = []
+        note_segments = _merge_short_speech_segments(_split_speech_segments(note, limit=6))
+        for idx, segment in enumerate(note_segments[:5]):
+            target = _target_for_teaching_text(segment, source_targets, used_target_ids)
+            if target is None:
+                continue
+            used_target_ids.add(str(target["id"]))
+            result.append(
+                {
+                    "target_id": target["id"],
+                    "mode": "spotlight" if idx == 0 else "outline",
+                    "text": segment,
+                }
+            )
+
+        process_summary = _build_process_summary_text(svg_texts)
+        if process_summary and not any(_segments_are_similar(process_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(process_summary, source_targets, used_target_ids)
+            if target is not None:
+                used_target_ids.add(str(target["id"]))
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": process_summary,
+                    }
+                )
+        formula_summary = _build_formula_summary_text(svg_texts, targets)
+        if formula_summary and not any(_segments_are_similar(formula_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(formula_summary, source_targets, used_target_ids)
+            if target is not None:
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": formula_summary,
+                    }
+                )
+        learning_summary = _build_learning_process_summary_text(svg_texts, targets)
+        if learning_summary and not any(_segments_are_similar(learning_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(learning_summary, source_targets, used_target_ids)
+            if target is not None:
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": learning_summary,
+                    }
+                )
+
+        if result:
+            return _normalize_teaching_segments(
+                result,
+                is_intro=False,
+                is_last=is_last,
+            )
 
     result: list[dict[str, Any]] = []
     for idx, target in enumerate(source_targets):
@@ -1098,12 +1356,15 @@ class InteractiveClassroomGenerator:
         title: str,
         manuscript_note: str,
         targets: list[dict[str, Any]],
+        svg_texts: list[str],
         student_profile: dict[str, str] | None = None,
         is_intro: bool = False,
     ) -> str:
         target_lines = []
-        for target in targets[:8]:
+        prompt_targets = _select_teaching_targets(targets)
+        for target in prompt_targets:
             target_lines.append(f"- id: {target.get('id')}｜text: {target.get('text')}")
+        visible_lines = [f"- {text}" for text in _visible_text_lines_for_prompt(svg_texts, targets)]
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
         position = "first" if page_index == 1 else ("last" if page_index == page_total else "middle")
         is_last = page_total > 1 and page_index == page_total
@@ -1120,7 +1381,7 @@ class InteractiveClassroomGenerator:
             )
         else:
             length_rules = (
-                "2. 输出 2 到 4 个 segments，总计不超过 360 个中文字符；每段 45 到 120 个中文字符。\n"
+                "2. 输出 3 到 5 个 segments，总计不超过 760 个中文字符；每段 45 到 220 个中文字符。\n"
                 "3. 每段只讲一个新增信息点，不要换一种说法重复上一段。"
             )
         return f"""你是智创空间智慧课堂的授课脚本设计智能体。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
@@ -1133,6 +1394,9 @@ class InteractiveClassroomGenerator:
 
 ## 原始 PPT 备注/讲稿
 {manuscript_note or "无"}
+
+## 本页可见文字
+{chr(10).join(visible_lines) or "无"}
 
 ## 可高亮目标
 {chr(10).join(target_lines) or "无"}
@@ -1149,6 +1413,7 @@ class InteractiveClassroomGenerator:
 7. 讲稿必须和当前 target 的文字实际对应：讲“图像分类”就绑定“图像分类”，讲“目标检测”就绑定“目标检测”。
 8. 第一段或真正强调“重点/核心/关键”的段落 mode 用 "spotlight"，其他用 "outline"。
 9. 中间页不要寒暄；第一页仅在封面页自然开场；最后一页可简短总结。
+10. 中间页如果出现流程、步骤、公式、输出或核心要点，必须覆盖前中后关键环节，不要只讲开头几个标签。
 
 ## JSON 格式
 {{
@@ -1203,6 +1468,7 @@ class InteractiveClassroomGenerator:
                         title=title,
                         manuscript_note=manuscript_note,
                         targets=targets,
+                        svg_texts=svg_texts,
                         student_profile=student_profile,
                         is_intro=is_intro,
                     )
