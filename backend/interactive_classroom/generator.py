@@ -259,6 +259,54 @@ def _clean_knowledge_point(value: str) -> str:
     return text
 
 
+def _scene_text_values(scene: ClassroomScene) -> list[str]:
+    content = scene.content or {}
+    extracted = content.get("extracted_text", [])
+    values = [scene.title, *scene.knowledge_points]
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
+    return [_clean_text(str(value)) for value in values if _clean_text(str(value))]
+
+
+def _is_decorative_quiz_text(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return True
+    lower = text.lower()
+    if re.fullmatch(r"\d{4}[年/-]\d{1,2}(?:[月/-]\d{1,2})?", text):
+        return True
+    if re.search(r"(欢迎来到|今天我们|今天，?我们|一起探索|开启.*之旅|探索.*之旅|从.*开始探索)", text):
+        return True
+    if re.search(r"(welcome|exploration|journey)", lower) and not re.search(r"[\u4e00-\u9fff]", text):
+        return True
+    if (
+        not re.search(r"[\u4e00-\u9fff]", text)
+        and " " in text
+        and len(text) <= 48
+        and re.fullmatch(r"[A-Z0-9][A-Z0-9 &:/+_.-]+", text)
+    ):
+        return True
+    return False
+
+
+def _quiz_points_from_scene(scene: ClassroomScene) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    title = _clean_text(scene.title)
+    for value in [*scene.knowledge_points, *_scene_text_values(scene)]:
+        text = _clean_knowledge_point(value)
+        if (
+            not text
+            or text == title
+            or text in seen
+            or _is_decorative_quiz_text(text)
+        ):
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
 def _derive_slide_title(idx: int, filename: str, svg_texts: list[str], manuscript_note: str = "") -> str:
     # 1) 优先从讲稿（manuscript）提炼标题 —— 讲稿是对本页内容最准确的概括
     if manuscript_note:
@@ -315,10 +363,20 @@ def _brief(text: str, max_len: int = 220) -> str:
 
 def _speech_text_from_manuscript(text: str, max_len: int = 900) -> str:
     """保留比摘要更完整的备注讲稿，供课堂 TTS 与底部讲稿使用。"""
-    cleaned = _clean_text(text)
+    cleaned = _soften_repetitive_classroom_opening(_clean_text(text))
     if len(cleaned) <= max_len:
         return cleaned
     return cleaned[:max_len].rstrip("，。；、 ") + "。"
+
+
+def _soften_repetitive_classroom_opening(text: str) -> str:
+    """避免每页语音都读成同一套“同学们，今天我们...”开场。"""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"^同学们(?:好)?[，,、\s]*", "", cleaned)
+    cleaned = re.sub(r"^今天(?:这节课)?(?:我们|咱们)(?:来|要|一起)?", "这一页我们", cleaned)
+    return cleaned.strip()
 
 
 def _split_speech_segments(text: str, limit: int = 6) -> list[str]:
@@ -673,6 +731,8 @@ def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]
             part = _clean_text(part)
             if len(part) < 8:
                 continue
+            if _is_decorative_quiz_text(part):
+                continue
             if part not in snippets:
                 snippets.append(part[:90])
             if len(snippets) >= max_items:
@@ -754,7 +814,9 @@ def _is_intro_slide(scene: ClassroomScene, *, is_first_slide: bool = False) -> b
     title = (scene.title or "").strip()
     title_lower = title.lower()
     points = [p.strip() for p in scene.knowledge_points if p.strip()]
-    combined = f"{title_lower} {' '.join(points).lower()}"
+    visible_texts = _scene_text_values(scene)
+    combined_raw = f"{title} {' '.join(points)} {' '.join(visible_texts)}"
+    combined = combined_raw.lower()
 
     # Signal A: 标题命中关键词 → 直接判定为开场页
     for kw in INTRO_SLIDE_KEYWORDS:
@@ -772,11 +834,18 @@ def _is_intro_slide(scene: ClassroomScene, *, is_first_slide: bool = False) -> b
     if is_first_slide and len(points) == 0:
         return True
 
+    # Signal D: 首页 + 欢迎/探索之旅/装饰英文标题等封面话术 → 判定为开场页
+    if is_first_slide and (
+        re.search(r"(欢迎来到|今天我们|今天，?我们|一起探索|开启.*之旅|探索.*之旅|从.*开始探索)", combined_raw)
+        or any(_is_decorative_quiz_text(text) for text in visible_texts)
+    ):
+        return True
+
     return False
 
 
 def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False) -> bool:
-    text = " ".join([scene.title, *scene.knowledge_points]).lower()
+    text = " ".join([scene.title, *_quiz_points_from_scene(scene)]).lower()
     if not text.strip():
         return False  # 空标题+空知识点的页面不是有效的出题源
     if _is_intro_slide(scene, is_first_slide=is_first_slide):
@@ -1319,25 +1388,31 @@ class InteractiveClassroomGenerator:
         # 过滤开场/目录页，避免生成无意义题目
         eligible_scenes = [
             s for i, s in enumerate(slide_scenes)
-            if not _is_intro_slide(s, is_first_slide=(i == 0))
+            if _is_quiz_source_scene(s, is_first_slide=(i == 0))
         ]
         if not eligible_scenes:
             # 兜底：如果全部被过滤，跳过第一页使用剩余页面
             eligible_scenes = slide_scenes[1:] if len(slide_scenes) > 1 else slide_scenes
-        titles = [scene.title for scene in eligible_scenes if scene.title]
+        titles = [
+            scene.title
+            for scene in eligible_scenes
+            if scene.title and not _is_decorative_quiz_text(scene.title)
+        ]
         all_points: list[str] = []
         for scene in eligible_scenes:
-            all_points.extend([point for point in scene.knowledge_points if point and point != scene.title])
+            all_points.extend(_quiz_points_from_scene(scene))
 
         questions: list[dict[str, Any]] = []
         for scene in eligible_scenes[:3]:
-            key_points = [point for point in scene.knowledge_points if point and point != scene.title]
+            key_points = _quiz_points_from_scene(scene)
             snippets = _scene_text_snippets(scene)
-            primary_point = key_points[0] if key_points else (scene.title or topic)
+            primary_point = key_points[0] if key_points else (
+                scene.title if scene.title and not _is_decorative_quiz_text(scene.title) else topic
+            )
             other_points = [
                 point
                 for point in [*all_points, *titles]
-                if point and point not in {primary_point, scene.title}
+                if point and point not in {primary_point, scene.title} and not _is_decorative_quiz_text(point)
             ]
 
             if snippets:
@@ -1422,12 +1497,25 @@ class InteractiveClassroomGenerator:
                     break
             if len(speech_text) > 320:
                 speech_text = speech_text[:320].rstrip("，。；、 ") + "…"
+            knowledge_points = [
+                point for point in _quiz_points_from_scene(scene)
+                if not _is_decorative_quiz_text(point)
+            ][:8]
+            extracted_texts = (
+                [
+                    _clean_text(str(item))
+                    for item in extracted
+                    if _clean_text(str(item)) and not _is_decorative_quiz_text(str(item))
+                ][:16]
+                if isinstance(extracted, list)
+                else []
+            )
             summaries.append(
                 {
                     "scene_id": scene.id,
                     "title": scene.title,
-                    "knowledge_points": scene.knowledge_points[:8],
-                    "extracted_text": extracted[:16] if isinstance(extracted, list) else [],
+                    "knowledge_points": knowledge_points,
+                    "extracted_text": extracted_texts,
                     "speech_excerpt": speech_text,
                 }
             )
@@ -1587,8 +1675,19 @@ class InteractiveClassroomGenerator:
             return []
 
         scene_points: list[str] = []
+        decorative_terms: list[str] = []
         for scene in scenes:
-            scene_points.extend([scene.title, *scene.knowledge_points])
+            if scene.title and not _is_decorative_quiz_text(scene.title):
+                scene_points.append(scene.title)
+            scene_points.extend(_quiz_points_from_scene(scene))
+            decorative_terms.extend(
+                text for text in _scene_text_values(scene)
+                if _is_decorative_quiz_text(text)
+            )
+        decorative_terms = [
+            term for term in dict.fromkeys(decorative_terms)
+            if len(term) >= 4
+        ][:20]
 
         questions: list[dict[str, Any]] = []
         for module in modules:
@@ -1599,6 +1698,8 @@ class InteractiveClassroomGenerator:
                 if not text:
                     continue
                 if _question_has_scene_index(text):
+                    continue
+                if any(term in text for term in decorative_terms):
                     continue
 
                 # 修复：原先不过滤 LLM 直给的 knowledge_point，导致 "page 15 关键点：xxx"
@@ -1617,6 +1718,8 @@ class InteractiveClassroomGenerator:
                         "",
                     )
                 if not knowledge_point:
+                    knowledge_point = topic
+                if _is_decorative_quiz_text(knowledge_point):
                     knowledge_point = topic
 
                 qtype_raw = str(row.get("type", "单选题"))

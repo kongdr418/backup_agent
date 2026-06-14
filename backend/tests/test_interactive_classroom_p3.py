@@ -89,6 +89,36 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertNotIn("scene_slide_004", covered_ids)
         self.assertNotIn("scene_slide_005", covered_ids)
 
+    def test_skips_cover_slide_decorative_text_as_quiz_source(self) -> None:
+        scenes = [
+            _slide(
+                1,
+                "今天我们将一起探索化...",
+                ["CHEMISTRY EXPLORATION", "探索元素周期表", "化学家的地图，物质世界的钥匙", "2023年10月"],
+            ),
+            _slide(2, "周期表的基本结构", ["周期", "族", "原子序数"]),
+            _slide(3, "元素性质的周期性", ["金属性", "非金属性", "原子半径"]),
+        ]
+
+        result = self.generator._insert_quiz_scenes("元素周期表", scenes)  # noqa: SLF001
+
+        quiz_scenes = [scene for scene in result if scene.type == "quiz"]
+        covered_ids = [
+            scene_id
+            for quiz in quiz_scenes
+            for scene_id in quiz.content["covered_scene_ids"]
+        ]
+        question_blob = "\n".join(
+            question["question"]
+            for quiz in quiz_scenes
+            for question in quiz.content["questions"]
+        )
+
+        self.assertNotIn("scene_slide_001", covered_ids)
+        self.assertIn("scene_slide_002", covered_ids)
+        self.assertNotIn("CHEMISTRY EXPLORATION", question_blob)
+        self.assertNotIn("探索元素周期表", question_blob)
+
     def test_derives_stable_slide_title_from_svg_filename_before_svg_text(self) -> None:
         title = _derive_slide_title(
             idx=8,
@@ -349,6 +379,46 @@ class InteractiveClassroomP3Test(unittest.TestCase):
 
         self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
         self.assertTrue(quiz_scene.content["questions"])
+
+    def test_rejects_llm_quiz_about_cover_decoration_terms(self) -> None:
+        class CoverDecorationQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
+                return """
+                {
+                  "modules": [
+                    {
+                      "title": "CHEMISTRY EXPLORATION",
+                      "questions": [
+                        {
+                          "num": "1",
+                          "type": "单选题",
+                          "text": "关于“CHEMISTRY EXPLORATION”，以下哪一项最能说明本节要求掌握的判断依据？",
+                          "options": ["A. 化学家的地图，物质世界的钥匙", "B. 理解物质世界构成的钥匙", "C. CHEMISTRY EXPLORATION", "D. 探索元素周期表"],
+                          "answer": "B",
+                          "analysis": "应关注知识点而不是封面标签。",
+                          "knowledge_point": "CHEMISTRY EXPLORATION"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=CoverDecorationQuizGenerator(),
+        )
+        scenes = [
+            _slide(1, "今天我们将一起探索化...", ["CHEMISTRY EXPLORATION", "探索元素周期表"]),
+            _slide(2, "周期表的基本结构", ["周期", "族", "原子序数"]),
+        ]
+
+        quiz_scene = generator._build_quiz_scene(1, 2, "元素周期表", scenes)  # noqa: SLF001
+
+        self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
+        question_blob = "\n".join(q["question"] for q in quiz_scene.content["questions"])
+        self.assertNotIn("CHEMISTRY EXPLORATION", question_blob)
 
     def test_preserves_html_tag_literals_in_llm_quiz_options(self) -> None:
         class HtmlTagQuizGenerator:

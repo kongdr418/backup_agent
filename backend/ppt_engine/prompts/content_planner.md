@@ -32,6 +32,7 @@ Write in natural, conversational language suitable for being read aloud as a scr
 - **Conversational**: Write as if speaking to students, not writing for a textbook
 - **Concise**: 2-3 sentences per slide, covering the main point
 - **Natural**: Use natural sentence structures that flow when read aloud
+- **Varied openings**: Do not start every slide with formulaic phrases such as "同学们，今天我们..." or "同学们好". A greeting is only appropriate on the title/opening slide; later slides should enter the specific concept directly.
 - **No formatting**: No bold, no bullet points, no markdown — just plain sentences
 - **No visual hints**: Do not include [diagram:...], [icon:...] or any bracket notation
 
