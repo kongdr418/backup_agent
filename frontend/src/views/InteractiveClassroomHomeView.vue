@@ -198,7 +198,7 @@
           <div class="knowledge-card">
             <div class="knowledge-card-head">
               <h3>已导入资料</h3>
-              <span class="knowledge-card-meta">{{ courseKnowledgeDocuments.length }} 份</span>
+              <span class="knowledge-card-meta">{{ courseKnowledgeDocuments.length }} 份 · 点击查看详情</span>
             </div>
             <div v-if="courseKnowledgeDocuments.length === 0" class="knowledge-empty">
               暂无已导入资料
@@ -208,26 +208,51 @@
                 v-for="document in courseKnowledgeDocuments"
                 :key="document.id"
                 class="knowledge-document-item"
+                :class="{ expanded: expandedKnowledgeDocumentId === document.id }"
               >
-                <div class="knowledge-document-main">
-                  <div class="knowledge-document-title">{{ document.title }}</div>
-                  <div class="knowledge-document-meta">
-                    <span>{{ document.courseName }}</span>
-                    <span v-if="document.createdAt">{{ formatCreatedAt(document.createdAt) }}</span>
-                    <span v-else>{{ document.fileName }}</span>
+                <div class="knowledge-document-row">
+                  <button
+                    class="knowledge-document-toggle"
+                    :aria-expanded="expandedKnowledgeDocumentId === document.id"
+                    :aria-controls="`knowledge-document-detail-${document.id}`"
+                    @click="toggleKnowledgeDocument(document.id)"
+                  >
+                    <div class="knowledge-document-main">
+                      <div class="knowledge-document-title">{{ document.title }}</div>
+                      <div class="knowledge-document-meta">
+                        <span>{{ document.courseName }}</span>
+                        <span v-if="document.createdAt">{{ formatCreatedAt(document.createdAt) }}</span>
+                        <span v-else>{{ document.fileName }}</span>
+                        <span>{{ document.knowledgePointCount }} 个知识点</span>
+                      </div>
+                    </div>
+                    <ChevronDown
+                      class="knowledge-document-chevron"
+                      :class="{ expanded: expandedKnowledgeDocumentId === document.id }"
+                    />
+                  </button>
+                  <button
+                    class="knowledge-document-delete"
+                    title="删除此资料"
+                    aria-label="删除此资料"
+                    @click="deleteCourseKnowledgeDoc(document)"
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
+                <div
+                  v-if="expandedKnowledgeDocumentId === document.id"
+                  :id="`knowledge-document-detail-${document.id}`"
+                  class="knowledge-document-detail"
+                >
+                  <div class="knowledge-document-stats">
+                    <span>模块 {{ document.moduleCount }}</span>
+                    <span>课次 {{ document.lessonCount }}</span>
+                    <span>知识点 {{ document.knowledgePointCount }}</span>
                   </div>
+                  <p v-if="document.summary" class="knowledge-document-summary">{{ document.summary }}</p>
+                  <p v-else class="knowledge-document-summary muted">暂无资料摘要</p>
                 </div>
-                <div class="knowledge-document-stats">
-                  <span>模块 {{ document.moduleCount }}</span>
-                  <span>课次 {{ document.lessonCount }}</span>
-                  <span>知识点 {{ document.knowledgePointCount }}</span>
-                </div>
-                <p v-if="document.summary" class="knowledge-document-summary">{{ document.summary }}</p>
-                <button
-                  class="knowledge-document-delete"
-                  title="删除此资料"
-                  @click="deleteCourseKnowledgeDoc(document)"
-                >删除</button>
               </article>
             </div>
           </div>
@@ -361,6 +386,7 @@ import {
   ArrowRight,
   BookOpen,
   CalendarDays,
+  ChevronDown,
   Clock3,
   FolderOpen,
   GraduationCap,
@@ -406,6 +432,7 @@ import {
 } from '@/utils/learnerProfile'
 import { classroomUnitCountLabel, classroomUnitLabel } from '@/utils/classroomLessonDisplay'
 import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
+import { toggleExpandedKnowledgeDocument } from '@/utils/courseKnowledgeDocumentList'
 import {
   buildCoursewareClassroomSeed,
   getGeneratedPptJobId,
@@ -451,6 +478,7 @@ const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
 const courseKnowledgeDocuments = ref<CourseKnowledgeDocumentSummary[]>([])
 const courseKnowledgeCourses = ref<CourseKnowledgeCourseSummary[]>([])
+const expandedKnowledgeDocumentId = ref<string | null>(null)
 const expandedCourseIds = ref<Record<string, boolean>>({})
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
@@ -671,6 +699,13 @@ function resetCourseKnowledgeFile() {
   knowledgeInputKey.value += 1
 }
 
+function toggleKnowledgeDocument(documentId: string) {
+  expandedKnowledgeDocumentId.value = toggleExpandedKnowledgeDocument(
+    expandedKnowledgeDocumentId.value,
+    documentId,
+  )
+}
+
 async function loadCourseKnowledge() {
   knowledgeLoading.value = true
   courseKnowledgeError.value = ''
@@ -681,6 +716,12 @@ async function loadCourseKnowledge() {
     ])
     courseKnowledgeDocuments.value = documents
     courseKnowledgeCourses.value = courses
+    if (
+      expandedKnowledgeDocumentId.value &&
+      !documents.some((document) => document.id === expandedKnowledgeDocumentId.value)
+    ) {
+      expandedKnowledgeDocumentId.value = null
+    }
   } catch (err) {
     courseKnowledgeError.value = err instanceof Error ? err.message : '课程资料加载失败'
   } finally {
@@ -1633,12 +1674,74 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.knowledge-document-list {
+  max-height: 430px;
+  padding-right: 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
+}
+
+.knowledge-document-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.knowledge-document-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.24);
+}
+
 .knowledge-summary-item,
 .knowledge-document-item {
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.82);
+}
+
+.knowledge-summary-item {
   padding: 14px;
+}
+
+.knowledge-document-item {
+  overflow: hidden;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.knowledge-document-item:hover,
+.knowledge-document-item.expanded {
+  border-color: rgba(45, 80, 22, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.knowledge-document-row {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: stretch;
+}
+
+.knowledge-document-toggle {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 10px 8px 10px 12px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.knowledge-document-toggle:focus-visible,
+.knowledge-document-delete:focus-visible {
+  outline: 2px solid rgba(45, 80, 22, 0.32);
+  outline-offset: -2px;
+}
+
+.knowledge-document-main {
+  min-width: 0;
 }
 
 .knowledge-summary-title,
@@ -1646,6 +1749,12 @@ onBeforeUnmount(() => {
   color: var(--ink-primary);
   font-size: 14px;
   font-weight: 700;
+}
+
+.knowledge-document-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .knowledge-summary-stats,
@@ -1659,6 +1768,36 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.knowledge-document-meta {
+  margin-top: 4px;
+  gap: 5px 12px;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.knowledge-document-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-tertiary);
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+
+.knowledge-document-chevron.expanded {
+  transform: rotate(180deg);
+  color: var(--forest);
+}
+
+.knowledge-document-detail {
+  border-top: 1px dashed rgba(100, 116, 139, 0.18);
+  padding: 0 14px 13px;
+}
+
+.knowledge-document-detail .knowledge-document-stats {
+  margin-top: 11px;
+}
+
 .knowledge-document-summary {
   margin: 10px 0 0;
   color: var(--ink-secondary);
@@ -1666,20 +1805,30 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
+.knowledge-document-summary.muted {
+  color: var(--ink-tertiary);
+}
+
 .knowledge-document-delete {
-  margin-top: 8px;
-  padding: 2px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
-  color: #dc2626;
-  font-size: 12px;
+  width: 36px;
+  border: 0;
+  border-left: 1px solid rgba(15, 23, 42, 0.05);
+  background: transparent;
+  color: var(--ink-tertiary);
   cursor: pointer;
+  display: grid;
+  place-items: center;
   transition: background 0.15s, color 0.15s;
 }
+
+.knowledge-document-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
 .knowledge-document-delete:hover {
-  background: #dc2626;
-  color: #fff;
+  background: rgba(220, 38, 38, 0.07);
+  color: #dc2626;
 }
 
 .history-panel {

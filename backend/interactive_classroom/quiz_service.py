@@ -66,6 +66,32 @@ def _parse_short_answer_score(raw: str) -> dict[str, Any]:
     return {"score": score, "feedback": feedback[:500], "covered_points": covered[:8]}
 
 
+def _filter_supported_covered_points(
+    grade: dict[str, Any],
+    *,
+    reference_answer: str,
+    student_answer: str,
+) -> dict[str, Any]:
+    """移除没有出现在参考答案或学生作答中的“已覆盖要点”。
+
+    covered_points 只是面向学生的解释字段，不应因为模型对该字段做了同义改写
+    或额外发挥，就重新执行一次完整评分请求。
+    """
+    support_text = re.sub(
+        r"[\W_]+",
+        "",
+        f"{reference_answer} {student_answer}".lower(),
+        flags=re.UNICODE,
+    )
+    supported: list[str] = []
+    for point in grade.get("covered_points", []):
+        point_text = str(point).strip()
+        point_key = re.sub(r"[\W_]+", "", point_text.lower(), flags=re.UNICODE)
+        if point_key and point_key in support_text:
+            supported.append(point_text)
+    return {**grade, "covered_points": supported}
+
+
 async def llm_grade_short_answer(
     question: dict[str, Any],
     student_answer: str,
@@ -120,42 +146,54 @@ async def llm_grade_short_answer(
             else None
         ),
     )
-    last_critic: dict[str, Any] = {}
-    for attempt in range(2):
-        try:
-            raw = await asyncio.to_thread(
-                content_llm_call,
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.2,
-                # reasoning 模型（如 mimo-v2.5）会用掉绝大部分 token 预算
-                # 在"思考"上。600 token 不够（实测 reasoning_tokens=599 时
-                # content 被截断为空）。提到 1500 留余量给 JSON 输出。
-                max_tokens=1500,
-                model=cfg.get("content_model", ""),
-                api_key=cfg.get("content_api_key", ""),
-                base_url=cfg.get("content_base_url", ""),
-                provider_type=cfg.get("content_provider_type", ""),
-            )
-        except Exception:
-            break
-        grade = _parse_short_answer_score(raw or "")
-        review = critic.review_short_answer_grade(
-            grade=grade,
-            reference_answer=reference,
-            student_answer=student_answer,
+    try:
+        raw = await asyncio.to_thread(
+            content_llm_call,
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.2,
+            # reasoning 模型（如 mimo-v2.5）会用掉绝大部分 token 预算
+            # 在"思考"上。600 token 不够（实测 reasoning_tokens=599 时
+            # content 被截断为空）。提到 1500 留余量给 JSON 输出。
+            max_tokens=1500,
+            model=cfg.get("content_model", ""),
+            api_key=cfg.get("content_api_key", ""),
+            base_url=cfg.get("content_base_url", ""),
+            provider_type=cfg.get("content_provider_type", ""),
         )
-        last_critic = review.to_dict()
-        if review.passed:
-            grade["review_required"] = False
-            grade["critic"] = {
-                **last_critic,
-                "retried": attempt > 0,
-                "fallback": False,
-            }
-            return grade
+    except Exception:
+        return {
+            "score": None,
+            "feedback": "评分服务暂时不可用，请稍后复核。",
+            "covered_points": [],
+            "review_required": True,
+            "critic": {
+                "retried": False,
+                "fallback": True,
+            },
+        }
+    grade = _parse_short_answer_score(raw or "")
+    grade = _filter_supported_covered_points(
+        grade,
+        reference_answer=reference,
+        student_answer=student_answer,
+    )
+    review = critic.review_short_answer_grade(
+        grade=grade,
+        reference_answer=reference,
+        student_answer=student_answer,
+    )
+    last_critic = review.to_dict()
+    if review.passed:
+        grade["review_required"] = False
+        grade["critic"] = {
+            **last_critic,
+            "retried": False,
+            "fallback": False,
+        }
+        return grade
 
     return {
         "score": None,
@@ -164,7 +202,7 @@ async def llm_grade_short_answer(
         "review_required": True,
         "critic": {
             **last_critic,
-            "retried": bool(last_critic),
+            "retried": False,
             "fallback": True,
         },
     }

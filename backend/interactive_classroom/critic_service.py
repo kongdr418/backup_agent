@@ -4,6 +4,7 @@ import json
 import re
 import time
 from dataclasses import asdict, dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Callable
 
 
@@ -73,9 +74,28 @@ class GroundingContext:
         haystack = _compact_key(self.combined_text)
         if not haystack:
             return False
-        return needle in haystack or any(
+        if needle in haystack or any(
             len(part) >= 2 and part in haystack
             for part in re.split(r"[\s，。；、：:（）()\-]+", str(value or ""))
+        ):
+            return True
+        if len(needle) < 6:
+            return False
+
+        needle_bigrams = {
+            needle[index : index + 2]
+            for index in range(len(needle) - 1)
+        }
+        if not needle_bigrams:
+            return False
+        supported_bigrams = {
+            gram
+            for gram in needle_bigrams
+            if gram in haystack
+        }
+        return (
+            len(supported_bigrams) >= 4
+            and len(supported_bigrams) / len(needle_bigrams) >= 0.45
         )
 
 
@@ -230,15 +250,25 @@ class ClassroomCriticService:
         segments: list[dict[str, Any]],
         valid_target_ids: set[str],
         grounding: GroundingContext,
+        is_intro: bool = False,
+        is_last: bool = False,
     ) -> CriticResult:
         started = time.perf_counter()
         issues: list[str] = []
         if self.mode != "off" and grounding.level == "none":
             issues.append("missing_grounding")
+        min_segments = 1 if is_intro or is_last else 2
+        max_segments = 2 if is_intro else (3 if is_last else 4)
+        max_total_chars = 140 if is_intro else (260 if is_last else 360)
         if not segments:
             issues.append("missing_segments")
-        elif len(segments) < 2:
+        elif len(segments) < min_segments:
             issues.append("insufficient_segments")
+        if len(segments) > max_segments:
+            issues.append("too_many_segments")
+        if sum(len(_clean_text(segment.get("text"))) for segment in segments) > max_total_chars:
+            issues.append("intro_too_verbose" if is_intro else "speech_too_long")
+        normalized_texts: list[str] = []
         for segment in segments:
             target_id = str(segment.get("target_id") or "").strip()
             text = _clean_text(segment.get("text"))
@@ -248,6 +278,17 @@ class ClassroomCriticService:
                 issues.append("segment_too_short")
             if _contains_profile_leakage(text):
                 issues.append("profile_leakage")
+            text_key = _compact_key(text)
+            if text_key and any(
+                (
+                    min(len(text_key), len(previous)) >= 18
+                    and (text_key in previous or previous in text_key)
+                )
+                or SequenceMatcher(None, text_key, previous).ratio() >= 0.82
+                for previous in normalized_texts
+            ):
+                issues.append("duplicate_segment")
+            normalized_texts.append(text_key)
         return self._finish_review(
             started=started,
             grounding=grounding,

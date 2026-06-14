@@ -32,6 +32,8 @@ Write in natural, conversational language suitable for being read aloud as a scr
 - **Conversational**: Write as if speaking to students, not writing for a textbook
 - **Concise**: 2-3 sentences per slide, covering the main point
 - **Natural**: Use natural sentence structures that flow when read aloud
+- **元信息必须有来源**: 只有用户明确提供的学校、学院、单位、教研组、讲师、作者、学年、学期、日期、班级、课程编号等信息才可以保留。用户未提供时，禁止猜测、补全或生成类似“2025-2026 学年第二学期”“人工智能教研组”“主讲教师：XXX”的占位式内容。
+- **缺失时直接省略**: 不要为了让封面、结尾或页脚看起来更完整而虚构署名、组织、时间或版权信息。没有可靠来源时只保留课程标题、可选副标题和与主题直接相关的介绍。
 - **Varied openings**: Do not start every slide with formulaic phrases such as "同学们，今天我们..." or "同学们好". A greeting is only appropriate on the title/opening slide; later slides should enter the specific concept directly.
 - **No formatting**: No bold, no bullet points, no markdown — just plain sentences
 - **No visual hints**: Do not include [diagram:...], [icon:...] or any bracket notation
