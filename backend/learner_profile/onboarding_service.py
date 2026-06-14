@@ -32,23 +32,23 @@ FIELD_QUESTIONS = {
 
 OPTION_ALIASES = {
     "learning_stage": {
-        "大一": ("大一", "大学一年级"),
-        "大二": ("大二", "大学二年级"),
-        "大三": ("大三", "大学三年级"),
-        "大四": ("大四", "大学四年级"),
+        "大一": ("大一", "大学一年级", "本科一年级", "本科第一年"),
+        "大二": ("大二", "大学二年级", "本科二年级", "本科第二年"),
+        "大三": ("大三", "大学三年级", "本科三年级", "本科第三年"),
+        "大四": ("大四", "大学四年级", "本科四年级", "本科第四年"),
         "硕士": ("硕士", "研究生", "研一", "研二", "研三"),
         "博士": ("博士", "博一", "博二", "博三", "博四"),
         "专升本": ("专升本",),
     },
     "learning_basis": {
-        "零基础": ("零基础", "小白", "没学过", "从未学过", "完全不会"),
+        "零基础": ("零基础", "小白", "没学过", "从未学过", "完全不会", "刚开始学", "刚入门"),
         "有基础": ("有基础", "基础一般", "学过一些", "接触过", "略懂"),
         "进阶学习": ("进阶学习", "进阶", "深入学习", "比较熟练", "熟练掌握"),
     },
     "goal": {
         "概念理解": ("概念理解", "理解概念", "弄懂原理", "掌握原理"),
         "考试通过": ("考试通过", "通过考试", "备考", "考研", "期末考试"),
-        "项目实战": ("项目实战", "完成项目", "做项目", "项目实践"),
+        "项目实战": ("项目实战", "完成项目", "做项目", "项目实践", "项目落地", "做出作品"),
         "能力提升": ("能力提升", "提升能力", "提高水平", "查漏补缺"),
     },
     "content_style": {
@@ -80,6 +80,22 @@ OPTION_ALIASES = {
 }
 
 MULTI_SELECT_FIELDS = {"content_style", "interest_directions"}
+
+COGNITIVE_STYLE_BY_CONTENT_STYLE = {
+    "图解": "visual_structure",
+    "案例": "example_based",
+    "步骤推导": "step_by_step",
+    "对比辨析": "comparison",
+    "代码实操": "hands_on",
+    "精简总结": "text_summary",
+}
+
+BACKGROUND_HINT_RE = re.compile(
+    r"(专业|课程|学过|学习过|修过|上过|接触过|背景|方向|Python|python|Java|C语言|"
+    r"MySQL|数据库|数据结构|操作系统|计算机网络|机器学习|深度学习|爬虫|软工|软件工程)"
+)
+
+DIFFICULTY_HINT_RE = re.compile(r"(难度|偏基础|基础一点|简单|入门|中等|适中|挑战|困难|高难度|进阶难度)")
 
 
 def _extract_json(value: str) -> dict[str, Any]:
@@ -148,6 +164,16 @@ def _normalize_option(field: str, value: Any) -> str | list[str]:
     return matches[0] if len(matches) == 1 else ""
 
 
+def _new_trait_entry() -> dict[str, Any]:
+    return {
+        "weight": 1,
+        "confidence": 1,
+        "source": "self_reported",
+        "status": "confirmed",
+        "evidence_ids": [],
+    }
+
+
 class ProfileOnboardingService:
     def __init__(self, llm_call: Callable[..., str] | None = None) -> None:
         self.llm_call = llm_call
@@ -166,12 +192,11 @@ class ProfileOnboardingService:
         llm_result: dict[str, Any] = {}
 
         if messages and messages[-1].get("role") == "user":
-            if current_before:
-                self._apply_fallback_answer(
-                    draft,
-                    current_before,
-                    messages[-1].get("content", ""),
-                )
+            local_extracted = self._extract_locally(
+                messages[-1].get("content", ""),
+                current_before,
+            )
+            self._merge_extracted(draft, local_extracted)
             current_after_local = self._next_missing_field(draft)
             if current_after_local == current_before:
                 llm_result = self._extract_with_llm(draft, messages, llm_config or {})
@@ -181,9 +206,9 @@ class ProfileOnboardingService:
         current_field = self._next_missing_field(draft)
         completed = current_field == ""
         if completed:
-            reply = "画像信息已经比较完整，请检查下方画像草稿。确认无误后即可保存。"
+            reply = self._build_completion_reply(draft)
         else:
-            reply = FIELD_QUESTIONS[current_field]
+            reply = self._build_next_question(draft, current_field)
 
         return {
             "reply": reply,
@@ -249,6 +274,50 @@ class ProfileOnboardingService:
         except Exception:
             return {}
         return _extract_json(raw)
+
+    @staticmethod
+    def _extract_locally(answer: str, current_field: str) -> dict[str, Any]:
+        text = _clean_text(answer)
+        extracted: dict[str, Any] = {
+            "basic": {},
+            "preferences": {},
+            "cognitive_preferences": [],
+            "interest_directions": [],
+        }
+        if not text:
+            return extracted
+
+        for field in ("learning_stage", "learning_basis"):
+            normalized = _normalize_option(field, text)
+            if normalized:
+                extracted["basic"][field] = normalized
+
+        for field in ("goal", "tutoring_style"):
+            normalized = _normalize_option(field, text)
+            if normalized:
+                extracted["preferences"][field] = normalized
+        if current_field == "preferred_difficulty" or DIFFICULTY_HINT_RE.search(text):
+            normalized = _normalize_option("preferred_difficulty", text)
+            if normalized:
+                extracted["preferences"]["preferred_difficulty"] = normalized
+
+        styles = _normalize_option("content_style", text)
+        if styles:
+            extracted["preferences"]["content_style"] = styles
+            extracted["cognitive_preferences"] = [
+                COGNITIVE_STYLE_BY_CONTENT_STYLE[style]
+                for style in styles
+                if style in COGNITIVE_STYLE_BY_CONTENT_STYLE
+            ]
+
+        interests = _normalize_option("interest_directions", text)
+        if interests:
+            extracted["interest_directions"] = interests
+
+        if current_field == "background" or BACKGROUND_HINT_RE.search(text):
+            extracted["basic"]["background"] = "暂无补充" if text in {"没有", "无"} else text
+
+        return extracted
 
     @staticmethod
     def _ensure_shape(draft: dict[str, Any]) -> None:
@@ -333,13 +402,7 @@ class ProfileOnboardingService:
         for key in cognitive:
             if key not in COGNITIVE_PREFERENCE_KEYS:
                 continue
-            draft["global_traits"]["cognitive_preferences"][key] = {
-                "weight": 1,
-                "confidence": 1,
-                "source": "self_reported",
-                "status": "confirmed",
-                "evidence_ids": [],
-            }
+            draft["global_traits"]["cognitive_preferences"][key] = _new_trait_entry()
 
         interests = _normalize_option(
             "interest_directions",
@@ -349,11 +412,7 @@ class ProfileOnboardingService:
             draft["global_traits"]["interest_directions"] = [
                 {
                     "label": label,
-                    "weight": 1,
-                    "confidence": 1,
-                    "source": "self_reported",
-                    "status": "confirmed",
-                    "evidence_ids": [],
+                    **_new_trait_entry(),
                 }
                 for label in interests
             ]
@@ -385,14 +444,57 @@ class ProfileOnboardingService:
             draft["global_traits"]["interest_directions"] = [
                 {
                     "label": label,
-                    "weight": 1,
-                    "confidence": 1,
-                    "source": "self_reported",
-                    "status": "confirmed",
-                    "evidence_ids": [],
+                    **_new_trait_entry(),
                 }
                 for label in interests
             ]
+
+    @staticmethod
+    def _build_next_question(draft: dict[str, Any], field: str) -> str:
+        basic = draft["basic"]
+        preferences = draft["preferences"]
+        stage = basic.get("learning_stage")
+        goal = preferences.get("goal")
+        styles = preferences.get("content_style") or []
+
+        if field == "learning_basis" and stage:
+            return f"收到，你现在是{stage}。那你对接下来要学的内容算是零基础、有基础，还是想进阶学习？"
+        if field == "background" and basic.get("learning_basis"):
+            return "为了后面推荐更贴合一点，可以说说你的专业、学过的课程，或者最近做过的小项目吗？"
+        if field == "goal":
+            return "你希望这份学习画像主要服务哪类目标：理解概念、通过考试、做项目实战，还是整体能力提升？"
+        if field == "content_style" and goal:
+            return f"明白，目标偏向{goal}。你更喜欢哪种讲法？可以直接说几个，比如图解、案例、步骤推导、对比辨析、代码实操、精简总结。"
+        if field == "preferred_difficulty":
+            style_text = "、".join(styles)
+            if style_text:
+                return f"我会记住你偏好{style_text}。内容难度你希望偏基础、中等，还是更有挑战？"
+        if field == "tutoring_style":
+            return "我再确认一下辅导节奏：你更喜欢引导式、分步讲解、直接反馈，还是启发提问？"
+        if field == "interest_directions":
+            return "最后补一个兴趣方向，后面课堂案例会用得上。你更关注人工智能应用、软件开发、数据分析、工程实践，还是生活应用？可多选。"
+        return FIELD_QUESTIONS[field]
+
+    @staticmethod
+    def _build_completion_reply(draft: dict[str, Any]) -> str:
+        basic = draft["basic"]
+        preferences = draft["preferences"]
+        interests = [
+            item.get("label", "")
+            for item in draft["global_traits"].get("interest_directions", [])
+            if isinstance(item, dict) and item.get("label")
+        ]
+        style_text = "、".join(preferences.get("content_style") or [])
+        interest_text = "、".join(interests) or "通用学习场景"
+        return (
+            "我整理好了："
+            f"你目前是{basic.get('learning_stage')}，基础判断为{basic.get('learning_basis')}；"
+            f"背景是{basic.get('background')}；"
+            f"学习目标偏{preferences.get('goal')}，适合用{style_text}来组织内容；"
+            f"难度先按{preferences.get('preferred_difficulty')}，辅导方式偏{preferences.get('tutoring_style')}；"
+            f"兴趣方向会优先贴近{interest_text}。"
+            "你可以看下方画像草稿，确认无误后保存；如果哪里不像你，就继续补充或修正。"
+        )
 
     @staticmethod
     def _next_missing_field(draft: dict[str, Any]) -> str:
