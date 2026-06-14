@@ -12,6 +12,7 @@ if BACKEND_DIR not in sys.path:
 
 import app as backend_app
 from interactive_classroom.generator import InteractiveClassroomGenerator
+from interactive_classroom.next_lesson_service import build_next_lesson_plan
 from interactive_classroom.schema import ClassroomAction, ClassroomScene
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.storage import ClassroomStorage
@@ -115,6 +116,74 @@ class InteractiveClassroomNextLessonTest(unittest.TestCase):
         )
 
         self.assertEqual(404, response.status_code)
+
+    def test_next_lesson_ignores_unrelated_course_knowledge_context(self) -> None:
+        classroom = {
+            "id": "cls_nn",
+            "topic": "神经网络",
+            "course": "神经网络",
+            "lesson_index": 1,
+            "lesson_depth": 0,
+        }
+        report = {
+            "score": 90,
+            "weak_points": [],
+            "strong_points": ["前向传播"],
+            "learned_points": ["神经元", "激活函数"],
+        }
+        cloud_context = {
+            "course_name": "云计算与大数据技术",
+            "summary": "介绍云计算平台与大数据处理。",
+            "lessons": [
+                {"lesson_id": "l1", "title": "云计算概述"},
+                {"lesson_id": "l2", "title": "虚拟化技术"},
+            ],
+            "knowledge_points": [
+                {"knowledge_point_id": "kp_cloud", "label": "云计算"},
+                {"knowledge_point_id": "kp_vm", "label": "虚拟化"},
+            ],
+        }
+
+        plan = build_next_lesson_plan(classroom, report, {}, cloud_context, {})
+
+        self.assertEqual("神经网络进阶应用", plan["topic"])
+        self.assertEqual([], plan["course_knowledge_points"])
+        self.assertNotIn("云计算概述", plan["ppt_notes"])
+        self.assertNotIn("虚拟化技术", plan["ppt_notes"])
+        self.assertNotIn("课程简介：介绍云计算平台与大数据处理。", plan["ppt_notes"])
+
+    def test_next_lesson_uses_matching_course_outline(self) -> None:
+        classroom = {
+            "id": "cls_cloud",
+            "topic": "云计算概述",
+            "course": "云计算与大数据技术",
+            "lesson_index": 1,
+            "lesson_depth": 0,
+        }
+        report = {
+            "score": 88,
+            "weak_points": [],
+            "strong_points": ["云服务模型"],
+            "learned_points": ["IaaS", "PaaS"],
+        }
+        cloud_context = {
+            "course_name": "云计算与大数据技术",
+            "summary": "介绍云计算平台与大数据处理。",
+            "lessons": [
+                {"lesson_id": "l1", "title": "云计算概述"},
+                {"lesson_id": "l2", "title": "虚拟化技术"},
+            ],
+            "knowledge_points": [
+                {"knowledge_point_id": "kp_cloud", "label": "云计算"},
+                {"knowledge_point_id": "kp_vm", "label": "虚拟化"},
+            ],
+        }
+
+        plan = build_next_lesson_plan(classroom, report, {}, cloud_context, {})
+
+        self.assertEqual("虚拟化技术", plan["topic"])
+        self.assertEqual("虚拟化技术", plan["course_lesson_title"])
+        self.assertIn("课程大纲相关课次：云计算概述、虚拟化技术", plan["ppt_notes"])
 
     def test_generator_accepts_next_lesson_lineage(self) -> None:
         generator = InteractiveClassroomGenerator(

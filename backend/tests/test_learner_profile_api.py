@@ -194,6 +194,62 @@ class LearnerProfileApiTest(unittest.TestCase):
         self.assertIn("云计算", notes)
         self.assertIn("Hadoop", notes)
 
+    def test_ppt_generation_notes_ignore_unrelated_vector_only_course_match(self) -> None:
+        class OvereagerVectorIndex:
+            def query_scores(self, user_id, course_id, chunks, topic):  # noqa: ANN001
+                return {chunk["chunk_id"]: 0.99 for chunk in chunks}
+
+        course_id = "course_cloud"
+        self.course_knowledge_storage.save_course_map(
+            "user_1",
+            {
+                "courses": [
+                    {
+                        "course_id": course_id,
+                        "course_name": "云计算与大数据技术",
+                        "summary": "课程要求学生掌握云计算和大数据分析。",
+                        "lessons": [
+                            {"lesson_id": "lesson_cloud", "title": "云计算概述"},
+                            {"lesson_id": "lesson_vm", "title": "虚拟化技术"},
+                        ],
+                        "knowledge_points": [
+                            {"knowledge_point_id": "kp_cloud", "label": "云计算"},
+                            {"knowledge_point_id": "kp_hadoop", "label": "Hadoop"},
+                        ],
+                    }
+                ]
+            },
+        )
+        self.course_knowledge_storage.save_chunk_index(
+            "user_1",
+            course_id,
+            [
+                {
+                    "chunk_id": "chunk_cloud",
+                    "chunk_type": "lesson",
+                    "section": "云计算与大数据技术",
+                    "text": "云计算平台、虚拟化、Hadoop 和大数据处理。",
+                    "keywords": ["云计算", "虚拟化", "Hadoop"],
+                    "knowledge_point_ids": ["kp_cloud", "kp_hadoop"],
+                    "evidence_label": "云计算与大数据技术",
+                }
+            ],
+        )
+        backend_app.COURSE_KNOWLEDGE_RETRIEVER = CourseKnowledgeRetriever(
+            self.tempdir.name,
+            storage=self.course_knowledge_storage,
+            vector_index=OvereagerVectorIndex(),
+        )
+
+        notes = backend_app._resolve_ppt_generation_notes(
+            {"topic": "神经网络"},
+            "user_1",
+        )
+
+        self.assertNotIn("## 课程知识库参考", notes)
+        self.assertNotIn("云计算", notes)
+        self.assertNotIn("虚拟化技术", notes)
+
 
 if __name__ == "__main__":
     unittest.main()

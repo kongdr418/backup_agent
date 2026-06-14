@@ -426,7 +426,9 @@ class CourseKnowledgeRetriever:
             ranked = self._rank_chunks(user_id, course_id, chunks, topic)
             if not ranked:
                 continue
-            top_score = ranked[0][0] if ranked else 0.0
+            top_score, _, top_keyword_score, _ = ranked[0]
+            if top_keyword_score <= 0:
+                continue
             if top_score > best_top_score:
                 best_top_score = top_score
                 best_course = course

@@ -27,6 +27,40 @@ def clean_next_lesson_list(values: Any, max_items: int = 6) -> list[str]:
     return result
 
 
+def _text_overlap_score(left: str, right: str) -> float:
+    left_key = _compact_text_key(left)
+    right_key = _compact_text_key(right)
+    if not left_key or not right_key:
+        return 0.0
+    if left_key in right_key or right_key in left_key:
+        return min(len(left_key), len(right_key)) / max(len(left_key), len(right_key), 1)
+    left_chars = set(left_key)
+    right_chars = set(right_key)
+    return len(left_chars & right_chars) / max(len(left_chars | right_chars), 1)
+
+
+def _course_context_matches_lesson(
+    *,
+    course: str,
+    topic: str,
+    knowledge_context: dict | None,
+) -> bool:
+    if not knowledge_context:
+        return False
+    course_name = clean_next_lesson_text(knowledge_context.get("course_name"), 120)
+    if course_name and (
+        _text_overlap_score(course, course_name) >= 0.45
+        or _text_overlap_score(topic, course_name) >= 0.45
+    ):
+        return True
+    lesson_titles = [
+        clean_next_lesson_text(lesson.get("title"), 120)
+        for lesson in knowledge_context.get("lessons", [])
+        if isinstance(lesson, dict)
+    ]
+    return any(_compact_text_key(title) == _compact_text_key(topic) for title in lesson_titles)
+
+
 def build_next_lesson_plan(
     classroom: dict,
     report: dict,
@@ -57,10 +91,15 @@ def build_next_lesson_plan(
         6,
     )
 
-    course_lessons = (knowledge_context or {}).get("lessons", [])
+    use_course_context = _course_context_matches_lesson(
+        course=course,
+        topic=topic,
+        knowledge_context=knowledge_context,
+    )
+    course_lessons = (knowledge_context or {}).get("lessons", []) if use_course_context else []
     course_kp_labels = [
         kp.get("label", "")
-        for kp in (knowledge_context or {}).get("knowledge_points", [])
+        for kp in ((knowledge_context or {}).get("knowledge_points", []) if use_course_context else [])
         if kp.get("label")
     ]
 
@@ -150,7 +189,7 @@ def build_next_lesson_plan(
         f"错误模式：{'、'.join(error_targets) or '暂无稳定错误模式'}",
     ]
 
-    course_summary = (knowledge_context or {}).get("summary", "")
+    course_summary = (knowledge_context or {}).get("summary", "") if use_course_context else ""
     if course_summary:
         ppt_notes_lines.append(f"课程简介：{course_summary}")
     if course_lessons:
