@@ -166,15 +166,17 @@ class ProfileOnboardingService:
         llm_result: dict[str, Any] = {}
 
         if messages and messages[-1].get("role") == "user":
-            llm_result = self._extract_with_llm(draft, messages, llm_config or {})
-            if isinstance(llm_result.get("extracted"), dict):
-                self._merge_extracted(draft, llm_result["extracted"])
-            elif current_before:
+            if current_before:
                 self._apply_fallback_answer(
                     draft,
                     current_before,
                     messages[-1].get("content", ""),
                 )
+            current_after_local = self._next_missing_field(draft)
+            if current_after_local == current_before:
+                llm_result = self._extract_with_llm(draft, messages, llm_config or {})
+                if isinstance(llm_result.get("extracted"), dict):
+                    self._merge_extracted(draft, llm_result["extracted"])
 
         current_field = self._next_missing_field(draft)
         completed = current_field == ""
