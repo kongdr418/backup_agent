@@ -223,6 +223,39 @@ def build_discussion_context(classroom: dict[str, Any], played_scene_ids: list[s
     return "\n".join(line for line in lines if line.strip())
 
 
+def normalize_discussion_request(data: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    played_scene_ids = data.get("played_scene_ids") or []
+    messages = data.get("messages") or []
+    if not isinstance(played_scene_ids, list):
+        return None, "played_scene_ids 非法"
+    if not isinstance(messages, list) or not messages:
+        return None, "messages 不能为空"
+
+    normalized_messages = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        role = (item.get("role") or "").strip()
+        content = (item.get("content") or "").strip()
+        if role in {"user", "assistant"} and content:
+            normalized_messages.append({"role": role, "content": content})
+    if not normalized_messages:
+        return None, "messages 不能为空"
+
+    return {
+        "played_scene_ids": [
+            str(scene_id).strip()
+            for scene_id in played_scene_ids
+            if str(scene_id).strip()
+        ],
+        "messages": normalized_messages,
+        "trigger": (data.get("trigger") or "manual").strip() or "manual",
+        "quick_action": (data.get("quick_action") or "").strip(),
+        "current_scene_id": (data.get("current_scene_id") or "").strip(),
+        "multi_agent": bool(data.get("multi_agent")),
+    }, None
+
+
 def build_compact_outline(
     classroom: dict[str, Any],
     current_scene_id: str = "",

@@ -16,7 +16,7 @@ import requests
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
 from learner_profile.storage import LearnerProfileStorage, PPT_LEARNING_STRATEGY_TITLE
-from learner_profile.profile_agent import ProfileAgent, build_course_id
+from learner_profile.profile_agent import ProfileAgent
 from learner_profile.orchestrator import ProfileOrchestrator
 from learner_profile.onboarding_service import ProfileOnboardingService
 from learner_profile.routes import create_learner_profile_blueprint
@@ -41,34 +41,20 @@ from interactive_classroom.critic_service import (
     normalize_critic_mode,
 )
 from interactive_classroom.practice_service import ClassroomPracticeService
-from interactive_classroom.next_lesson_service import (
-    build_next_lesson_plan,
-    clean_next_lesson_list,
-    clean_next_lesson_text,
-)
+from interactive_classroom.runtime_service import ClassroomRuntimeService
 from interactive_classroom.lineage_service import (
     inherit_classroom_lineage,
     resolve_classroom_lineage,
     safe_classroom_ref,
 )
-from interactive_classroom.quiz_service import evaluate_quiz_scene, evaluate_quiz_scene_async
-from interactive_classroom.report_service import build_classroom_report, refresh_report_learning_path, resolve_knowledge_evidence, _compact_text_key
-from interactive_classroom.event_service import (
-    create_quiz_submitted_event,
-    create_short_answer_scored_event,
-    create_scene_reviewed_event,
-    create_recommended_task_opened_event,
-    create_recommended_task_completed_event,
-    create_classroom_completed_event,
-    record_event,
-)
+from interactive_classroom.report_service import _compact_text_key
 from interactive_classroom.discussion_service import (
     generate_discussion_reply,
     generate_discussion_reply_stream,
     generate_multi_agent_discussion_reply_stream,
     generate_multi_agent_discussion_turns,
+    normalize_discussion_request,
 )
-from interactive_classroom.tts_service import ClassroomTTSService
 from file_library.routes import create_file_library_blueprint
 import json
 import os
@@ -389,6 +375,19 @@ def _classroom_completion_service() -> ClassroomCompletionService:
         profile_agent=PROFILE_AGENT,
         profile_orchestrator=PROFILE_ORCHESTRATOR,
         course_knowledge_retriever=COURSE_KNOWLEDGE_RETRIEVER,
+        logger=request_logger,
+    )
+
+
+def _classroom_runtime_service() -> ClassroomRuntimeService:
+    return ClassroomRuntimeService(
+        classroom_storage=CLASSROOM_STORAGE,
+        learner_profile_storage=LEARNER_PROFILE_STORAGE,
+        profile_agent=PROFILE_AGENT,
+        course_knowledge_retriever=COURSE_KNOWLEDGE_RETRIEVER,
+        practice_service=CLASSROOM_PRACTICE_SERVICE,
+        completion_service=_classroom_completion_service(),
+        build_tts_config=_build_classroom_tts_config,
         logger=request_logger,
     )
 
@@ -2060,99 +2059,26 @@ def interactive_classroom_answer(classroom_id):
     if scene is None or scene.get('type') != 'quiz':
         return jsonify({'success': False, 'error': 'quiz scene 不存在'}), 404
 
-    # 是否含简答题？有则必须用异步评估器走 LLM 评分
     has_short_answer = any(
         str(q.get('type', '')) == 'short_answer'
         for q in scene.get('content', {}).get('questions', [])
     )
     llm_config = _resolve_content_llm_request_config(data) if has_short_answer else None
 
-    if has_short_answer:
-        try:
-            eval_result = asyncio.run(
-                evaluate_quiz_scene_async(scene, answers, llm_config=llm_config)
-            )
-        except Exception as exc:
-            request_logger.exception(f'[INTERACTIVE-CLASSROOM] /answer LLM 评分失败: {exc}')
-            # 评分失败时降级到同步评估器（只评单选/多选，简答题跳过）
-            eval_result = evaluate_quiz_scene(scene, answers)
-    else:
-        eval_result = evaluate_quiz_scene(scene, answers)
-
-    CLASSROOM_STORAGE.save_answers(
+    result = _classroom_runtime_service().submit_answer(
         user_id=user_id,
         classroom_id=classroom_id,
+        classroom=classroom,
+        scene=scene,
         scene_id=scene_id,
-        answers_payload={'answers': answers, 'evaluation': eval_result},
+        answers=answers,
+        request_data=data,
+        llm_config=llm_config,
     )
-
-    # ---- P7: 记录学习事件 ----
-    course_id = classroom.get('course', '') or classroom.get('topic', '')
-    try:
-        # quiz_submitted 事件
-        quiz_event = create_quiz_submitted_event(
-            user_id=user_id,
-            classroom_id=classroom_id,
-            scene_id=scene_id,
-            course_id=course_id,
-            eval_result=eval_result,
-            answers=answers,
-        )
-        record_event(CLASSROOM_STORAGE, quiz_event)
-
-        # 每道简答题单独记录 short_answer_scored
-        for result in eval_result.get('results', []):
-            if result.get('score') is not None and result.get('feedback') is not None:
-                sa_event = create_short_answer_scored_event(
-                    user_id=user_id,
-                    classroom_id=classroom_id,
-                    scene_id=scene_id,
-                    course_id=course_id,
-                    question_id=result.get('question_id', ''),
-                    knowledge_point=result.get('knowledge_point', ''),
-                    grade={
-                        'score': result.get('score', 0),
-                        'feedback': result.get('feedback', ''),
-                        'covered_points': result.get('covered_points', []),
-                    },
-                )
-                record_event(CLASSROOM_STORAGE, sa_event)
-    except Exception:
-        request_logger.warning('[INTERACTIVE-CLASSROOM] 学习事件记录失败（不影响答题流程）', exc_info=True)
-
-    feedback_action = {
-        'id': f'feedback_{scene_id}',
-        'type': 'quiz_feedback',
-        'agent_id': 'teacher',
-        'text': eval_result.get('feedback_text', ''),
-        'audio_url': '',
-    }
-
-    feedback_text = feedback_action['text']
-    if feedback_text:
-        try:
-            audio_dir = CLASSROOM_STORAGE.audio_dir(user_id, classroom_id)
-            tts = ClassroomTTSService(
-                output_dir=audio_dir,
-                tts_config=_build_classroom_tts_config(data=data, classroom=classroom),
-            )
-            filename = tts.synthesize_action(feedback_action['id'], feedback_text, audio_dir)
-            if filename:
-                feedback_action['audio_url'] = (
-                    f'/api/interactive-classroom/{classroom_id}/audio/{filename}'
-                )
-        except Exception:
-            feedback_action['audio_url'] = ''
 
     return jsonify({
         'success': True,
-        'score': eval_result.get('score', 0),
-        'correct': eval_result.get('correct', 0),
-        'total': eval_result.get('total', 0),
-        'earned_points': eval_result.get('earned_points', 0),
-        'total_points': eval_result.get('total_points', 0),
-        'results': eval_result.get('results', []),
-        'feedback_action': feedback_action,
+        **result,
     })
 
 
@@ -2165,100 +2091,12 @@ def interactive_classroom_report(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
-    _backfill_practice_created_events(user_id, classroom)
-    answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
-    events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
-    course_id = build_course_id(course_name)
-    course_profile = profile.get('courses', {}).get(course_id, {})
-    if answers.get('scenes'):
-        report = build_classroom_report(
-            classroom,
-            answers,
-            events,
-            course_profile=course_profile,
-            storage=CLASSROOM_STORAGE,
-            user_id=user_id,
-        )
-    else:
-        cached_report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
-        if cached_report is not None:
-            report = refresh_report_learning_path(cached_report, events, CLASSROOM_STORAGE, user_id)
-        else:
-            report = build_classroom_report(
-                classroom,
-                answers,
-                events,
-                course_profile=course_profile,
-                storage=CLASSROOM_STORAGE,
-                user_id=user_id,
-            )
-
-    topic = classroom.get('topic', '')
-    try:
-        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-            user_id, course_name, topic,
-        )
-    except Exception as exc:
-        request_logger.warning(
-            '[REPORT] knowledge_retrieval_failed classroom_id=%s error=%s',
-            classroom_id, type(exc).__name__,
-        )
-        knowledge_context = None
-    report['knowledge_evidence'] = resolve_knowledge_evidence(
-        report.get('knowledge_summary', {}),
-        knowledge_context,
-        classroom,
-    )
-
-    try:
-        proposals = _analyze_classroom_profile_updates(
-            user_id,
-            classroom,
-            report,
-            events,
-            knowledge_context=knowledge_context,
-        )
-    except Exception as exc:
-        request_logger.warning(
-            '[REPORT] profile_update_analysis_failed classroom_id=%s error=%s',
-            classroom_id, type(exc).__name__,
-        )
-        proposals = []
-    report['profile_update_count'] = len(proposals)
-    report['profile_update_ids'] = [row.get('id') for row in proposals if row.get('id')]
-    CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
-    LEARNER_PROFILE_STORAGE.record_recommendations(
-        user_id,
-        classroom_id,
-        course_id,
-        report.get('recommended_tasks', []),
-    )
-    return jsonify({'success': True, 'report': report})
-
-
-def _backfill_practice_created_events(user_id: str, classroom: dict) -> None:
-    CLASSROOM_PRACTICE_SERVICE.backfill_practice_created_events(
+    report = _classroom_runtime_service().build_report_for_classroom(
         user_id=user_id,
+        classroom_id=classroom_id,
         classroom=classroom,
     )
-
-
-def _analyze_classroom_profile_updates(
-    user_id: str,
-    classroom: dict,
-    report: dict,
-    events: list[dict],
-    knowledge_context: dict | None = None,
-) -> list[dict]:
-    return _classroom_completion_service().analyze_profile_updates(
-        user_id,
-        classroom,
-        report,
-        events,
-        knowledge_context,
-    )
+    return jsonify({'success': True, 'report': report})
 
 
 def interactive_classroom_create_practice(classroom_id):
@@ -2274,104 +2112,21 @@ def interactive_classroom_create_practice(classroom_id):
     classroom = CLASSROOM_STORAGE.load_classroom(user_id, classroom_id)
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
-    report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
-    if report is None:
-        answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
-        events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
-        course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
-        report = build_classroom_report(
-            classroom,
-            answers,
-            events,
-            course_profile=course_profile,
-            storage=CLASSROOM_STORAGE,
-            user_id=user_id,
-        )
-        CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
-
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    strategy = PROFILE_AGENT.build_generation_strategy(
-        profile,
-        classroom.get('course') or classroom.get('topic') or '通用课程',
-    )
     try:
-        practice = CLASSROOM_PRACTICE_SERVICE.create_practice(
+        practice = _classroom_runtime_service().create_practice_from_recommendation(
             user_id=user_id,
-            source_classroom=classroom,
-            report=report,
+            classroom_id=classroom_id,
+            classroom=classroom,
             task_id=task_id,
             task_type=task_type,
-            generation_strategy=strategy,
         )
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
-    completion_event = create_recommended_task_completed_event(
-        user_id=user_id,
-        classroom_id=classroom_id,
-        course_id=classroom.get('course') or classroom.get('topic') or '',
-        task_id=task_id,
-        task_type=task_type,
-        knowledge_points=practice.get('knowledge_points', []),
-        result={
-            'status': 'practice_created',
-            'practice_classroom_id': practice.get('id', ''),
-        },
-    )
-    record_event(CLASSROOM_STORAGE, completion_event)
-    answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
-    events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
-    course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
-    if answers.get('scenes'):
-        report = build_classroom_report(
-            classroom,
-            answers,
-            events,
-            course_profile=course_profile,
-            storage=CLASSROOM_STORAGE,
-            user_id=user_id,
-        )
-    else:
-        report = refresh_report_learning_path(report, events, CLASSROOM_STORAGE, user_id)
-    CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
-    LEARNER_PROFILE_STORAGE.record_recommendations(
-        user_id,
-        classroom_id,
-        build_course_id(course_name),
-        report.get('recommended_tasks', []),
-    )
     return jsonify({
         'success': True,
         'classroom_id': practice.get('id'),
         'classroom': practice,
     }), 201
-
-
-def _clean_next_lesson_text(value, max_length=160):
-    return clean_next_lesson_text(value, max_length)
-
-
-def _clean_next_lesson_list(values, max_items=6):
-    return clean_next_lesson_list(values, max_items)
-
-
-def _build_next_lesson_plan(
-    classroom,
-    report,
-    overrides,
-    knowledge_context=None,
-    generation_strategy=None,
-):
-    return build_next_lesson_plan(
-        classroom,
-        report,
-        overrides,
-        knowledge_context,
-        generation_strategy,
-    )
 
 
 def interactive_classroom_next_lesson_plan(classroom_id):
@@ -2382,47 +2137,12 @@ def interactive_classroom_next_lesson_plan(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
-    report = CLASSROOM_STORAGE.load_report(user_id, classroom_id)
-    if report is None:
-        answers = CLASSROOM_STORAGE.load_answers(user_id, classroom_id)
-        events = CLASSROOM_STORAGE.load_events(user_id, classroom_id)
-        profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-        course_name = classroom.get('course') or classroom.get('topic') or '通用课程'
-        course_profile = profile.get('courses', {}).get(build_course_id(course_name), {})
-        report = build_classroom_report(
-            classroom,
-            answers,
-            events,
-            course_profile=course_profile,
-            storage=CLASSROOM_STORAGE,
-            user_id=user_id,
-        )
-        CLASSROOM_STORAGE.save_report(user_id, classroom_id, report)
-
     data = request.json or {}
-    course_name = classroom.get('course') or classroom.get('topic') or ''
-    topic = classroom.get('topic', '')
-    try:
-        knowledge_context = COURSE_KNOWLEDGE_RETRIEVER.retrieve_course_context(
-            user_id, course_name, topic,
-        )
-    except Exception as exc:
-        request_logger.warning(
-            '[NEXT-LESSON] knowledge_retrieval_failed classroom_id=%s error=%s',
-            classroom_id, type(exc).__name__,
-        )
-        knowledge_context = None
-    profile = LEARNER_PROFILE_STORAGE.load_profile(user_id)
-    generation_strategy = PROFILE_AGENT.build_generation_strategy(
-        profile,
-        course_name or topic or '通用课程',
-    )
-    plan = _build_next_lesson_plan(
-        classroom,
-        report,
-        data,
-        knowledge_context,
-        generation_strategy,
+    plan = _classroom_runtime_service().build_next_lesson_plan_for_classroom(
+        user_id=user_id,
+        classroom_id=classroom_id,
+        classroom=classroom,
+        overrides=data,
     )
     return jsonify({'success': True, 'plan': plan})
 
@@ -2451,61 +2171,23 @@ def interactive_classroom_record_event(classroom_id):
     if classroom is None:
         return jsonify({'success': False, 'error': '课堂不存在'}), 404
 
-    course_id = classroom.get('course', '') or classroom.get('topic', '')
     extra = data.get('payload') or {}
 
     try:
-        if event_type == 'scene_reviewed':
-            scene = next((s for s in classroom.get('scenes', []) if s.get('id') == scene_id), None)
-            event = create_scene_reviewed_event(
-                user_id=user_id,
-                classroom_id=classroom_id,
-                scene_id=scene_id,
-                course_id=course_id,
-                knowledge_points=scene.get('knowledge_points', []) if scene else [],
-                review_count=int(extra.get('review_count', 1)),
-            )
-        elif event_type == 'recommended_task_opened':
-            event = create_recommended_task_opened_event(
-                user_id=user_id,
-                classroom_id=classroom_id,
-                course_id=course_id,
-                task_id=extra.get('task_id', ''),
-                task_type=extra.get('task_type', ''),
-                knowledge_points=extra.get('knowledge_points', []),
-            )
-        elif event_type == 'recommended_task_completed':
-            event = create_recommended_task_completed_event(
-                user_id=user_id,
-                classroom_id=classroom_id,
-                course_id=course_id,
-                task_id=extra.get('task_id', ''),
-                task_type=extra.get('task_type', ''),
-                knowledge_points=extra.get('knowledge_points', []),
-                result=extra.get('result', {}),
-            )
-        elif event_type == 'classroom_completed':
-            event = create_classroom_completed_event(
-                user_id=user_id,
-                classroom_id=classroom_id,
-                course_id=course_id,
-                quiz_total=int(extra.get('quiz_total', 0)),
-                answered_total=int(extra.get('answered_total', 0)),
-            )
-        else:
-            return jsonify({'success': False, 'error': f'不支持的 event_type: {event_type}'}), 400
-
-        saved = record_event(CLASSROOM_STORAGE, event)
-        if event_type == 'classroom_completed':
-            _handle_classroom_completion(user_id, classroom)
+        saved = _classroom_runtime_service().record_learning_event(
+            user_id=user_id,
+            classroom_id=classroom_id,
+            classroom=classroom,
+            event_type=event_type,
+            scene_id=scene_id,
+            payload=extra,
+        )
         return jsonify({'success': True, 'event': saved.to_dict()})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
     except Exception as exc:
         request_logger.exception(f'[INTERACTIVE-CLASSROOM] /event 记录失败: {exc}')
         return jsonify({'success': False, 'error': '事件记录失败'}), 500
-
-
-def _handle_classroom_completion(user_id: str, classroom: dict) -> None:
-    _classroom_completion_service().handle_completion(user_id, classroom)
 
 
 def interactive_classroom_list_events(classroom_id):
@@ -2528,30 +2210,10 @@ def interactive_classroom_list_events(classroom_id):
 
 def interactive_classroom_discuss(classroom_id):
     user_id = get_request_user_id()
-
     data = request.json or {}
-    played_scene_ids = data.get('played_scene_ids') or []
-    messages = data.get('messages') or []
-    trigger = (data.get('trigger') or 'manual').strip() or 'manual'
-    quick_action = (data.get('quick_action') or '').strip()
-    current_scene_id = (data.get('current_scene_id') or '').strip()
-    multi_agent = bool(data.get('multi_agent'))
-
-    if not isinstance(played_scene_ids, list):
-        return jsonify({'success': False, 'error': 'played_scene_ids 非法'}), 400
-    if not isinstance(messages, list) or not messages:
-        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
-
-    normalized_messages = []
-    for item in messages:
-        if not isinstance(item, dict):
-            continue
-        role = (item.get('role') or '').strip()
-        content = (item.get('content') or '').strip()
-        if role in {'user', 'assistant'} and content:
-            normalized_messages.append({'role': role, 'content': content})
-    if not normalized_messages:
-        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
+    discussion, error = normalize_discussion_request(data)
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
 
     classroom, error_response = _resolve_discussion_classroom(user_id, classroom_id)
     if error_response is not None:
@@ -2560,14 +2222,14 @@ def interactive_classroom_discuss(classroom_id):
 
     llm_config = _resolve_content_llm_request_config(data)
 
-    if multi_agent:
+    if discussion['multi_agent']:
         turns = generate_multi_agent_discussion_turns(
             classroom=classroom,
-            played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
-            conversation=normalized_messages,
-            trigger=trigger,
-            quick_action=quick_action,
-            current_scene_id=current_scene_id,
+            played_scene_ids=discussion['played_scene_ids'],
+            conversation=discussion['messages'],
+            trigger=discussion['trigger'],
+            quick_action=discussion['quick_action'],
+            current_scene_id=discussion['current_scene_id'],
             llm_config=llm_config,
         )
         return jsonify({
@@ -2575,7 +2237,7 @@ def interactive_classroom_discuss(classroom_id):
             'assistant_message': turns[-1] if turns else {
                 'role': 'assistant',
                 'content': '',
-                'trigger': trigger,
+                'trigger': discussion['trigger'],
             },
             'assistant_messages': turns,
             'auto_advance_paused': True,
@@ -2583,11 +2245,11 @@ def interactive_classroom_discuss(classroom_id):
 
     reply = generate_discussion_reply(
         classroom=classroom,
-        played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
-        conversation=normalized_messages,
-        trigger=trigger,
-        quick_action=quick_action,
-        current_scene_id=current_scene_id,
+        played_scene_ids=discussion['played_scene_ids'],
+        conversation=discussion['messages'],
+        trigger=discussion['trigger'],
+        quick_action=discussion['quick_action'],
+        current_scene_id=discussion['current_scene_id'],
         llm_config=llm_config,
     )
     return jsonify({
@@ -2595,7 +2257,7 @@ def interactive_classroom_discuss(classroom_id):
         'assistant_message': {
             'role': 'assistant',
             'content': reply,
-            'trigger': trigger,
+            'trigger': discussion['trigger'],
         },
         'auto_advance_paused': True,
     })
@@ -2606,30 +2268,10 @@ def interactive_classroom_discuss_stream(classroom_id):
     data: {"chunk": "..."}\\n\\n ... data: {"done": true}\\n\\n
     """
     user_id = get_request_user_id()
-
     data = request.json or {}
-    played_scene_ids = data.get('played_scene_ids') or []
-    messages = data.get('messages') or []
-    trigger = (data.get('trigger') or 'manual').strip() or 'manual'
-    quick_action = (data.get('quick_action') or '').strip()
-    current_scene_id = (data.get('current_scene_id') or '').strip()
-    multi_agent = bool(data.get('multi_agent'))
-
-    if not isinstance(played_scene_ids, list):
-        return jsonify({'success': False, 'error': 'played_scene_ids 非法'}), 400
-    if not isinstance(messages, list) or not messages:
-        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
-
-    normalized_messages = []
-    for item in messages:
-        if not isinstance(item, dict):
-            continue
-        role = (item.get('role') or '').strip()
-        content = (item.get('content') or '').strip()
-        if role in {'user', 'assistant'} and content:
-            normalized_messages.append({'role': role, 'content': content})
-    if not normalized_messages:
-        return jsonify({'success': False, 'error': 'messages 不能为空'}), 400
+    discussion, error = normalize_discussion_request(data)
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
 
     classroom, error_response = _resolve_discussion_classroom(user_id, classroom_id)
     if error_response is not None:
@@ -2640,25 +2282,25 @@ def interactive_classroom_discuss_stream(classroom_id):
 
     def generate():
         try:
-            if multi_agent:
+            if discussion['multi_agent']:
                 for event in generate_multi_agent_discussion_reply_stream(
                     classroom=classroom,
-                    played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
-                    conversation=normalized_messages,
-                    trigger=trigger,
-                    quick_action=quick_action,
-                    current_scene_id=current_scene_id,
+                    played_scene_ids=discussion['played_scene_ids'],
+                    conversation=discussion['messages'],
+                    trigger=discussion['trigger'],
+                    quick_action=discussion['quick_action'],
+                    current_scene_id=discussion['current_scene_id'],
                     llm_config=llm_config,
                 ):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             else:
                 for chunk in generate_discussion_reply_stream(
                     classroom=classroom,
-                    played_scene_ids=[str(scene_id).strip() for scene_id in played_scene_ids if str(scene_id).strip()],
-                    conversation=normalized_messages,
-                    trigger=trigger,
-                    quick_action=quick_action,
-                    current_scene_id=current_scene_id,
+                    played_scene_ids=discussion['played_scene_ids'],
+                    conversation=discussion['messages'],
+                    trigger=discussion['trigger'],
+                    quick_action=discussion['quick_action'],
+                    current_scene_id=discussion['current_scene_id'],
                     llm_config=llm_config,
                 ):
                     yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
