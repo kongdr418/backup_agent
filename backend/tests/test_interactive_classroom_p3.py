@@ -65,6 +65,32 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertTrue(all(scene.knowledge_points for scene in quiz_scenes))
         self.assertTrue(all(scene.content["questions"] for scene in quiz_scenes))
 
+    def test_renumbers_quizzes_when_an_earlier_quiz_generation_fails(self) -> None:
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+            _slide(4, "案例分析", ["案例步骤"]),
+            _slide(5, "综合应用", ["迁移练习"]),
+        ]
+        original_build_quiz_scene = self.generator._build_quiz_scene  # noqa: SLF001
+
+        def flaky_build_quiz_scene(**kwargs):  # noqa: ANN001
+            if kwargs["quiz_index"] == 1:
+                return None
+            return original_build_quiz_scene(**kwargs)
+
+        self.generator._build_quiz_scene = flaky_build_quiz_scene  # type: ignore[method-assign]  # noqa: SLF001
+
+        result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
+
+        quiz_scenes = [scene for scene in result if scene.type == "quiz"]
+        self.assertEqual(1, len(quiz_scenes))
+        self.assertEqual("scene_quiz_001", quiz_scenes[0].id)
+        self.assertEqual("随堂测验 1：测试主题", quiz_scenes[0].title)
+        self.assertEqual(["scene_slide_004", "scene_slide_005"], quiz_scenes[0].content["covered_scene_ids"])
+        self.assertTrue(all(q["id"].startswith("q1_") for q in quiz_scenes[0].content["questions"]))
+
     def test_skips_wrap_up_and_discussion_slides_as_quiz_sources(self) -> None:
         scenes = [
             _slide(1, "Spring Boot 核心价值", ["自动配置", "起步依赖"]),

@@ -2149,15 +2149,13 @@ class InteractiveClassroomGenerator:
         )
         _raise_if_cancelled(cancel_check)
         if not questions:
-            if self.llm_quiz_enabled:
-                return None
             questions = self._build_quiz_questions(
                 topic,
                 scenes,
                 max_questions=max_questions,
                 qid_prefix=qid_prefix,
             )
-        quiz_source = "llm_json" if self.llm_quiz_enabled else "slide_text"
+        quiz_source = "llm_json" if self.llm_quiz_enabled and not critic_summary.get("fallback") else "slide_text"
         knowledge_points: list[str] = []
         for scene in scenes:
             for point in [scene.title, *scene.knowledge_points]:
@@ -2178,6 +2176,24 @@ class InteractiveClassroomGenerator:
             },
             actions=[],
         )
+
+    @staticmethod
+    def _renumber_quiz_scenes(scenes: list[ClassroomScene], topic: str) -> None:
+        quiz_index = 1
+        for scene in scenes:
+            if scene.type != "quiz":
+                continue
+
+            scene.id = f"scene_quiz_{quiz_index:03d}"
+            scene.title = f"随堂测验 {quiz_index}：{topic}"
+
+            questions = scene.content.get("questions", []) if isinstance(scene.content, dict) else []
+            if isinstance(questions, list):
+                for question_number, question in enumerate(questions, start=1):
+                    if isinstance(question, dict):
+                        question["id"] = f"q{quiz_index}_{question_number}"
+
+            quiz_index += 1
 
     def build_practice_quiz_scene(
         self,
@@ -2571,6 +2587,7 @@ class InteractiveClassroomGenerator:
                 quiz_scene = quiz_by_index.get(int(item))
                 if quiz_scene is not None:
                     result.append(quiz_scene)
+        self._renumber_quiz_scenes(result, topic)
         return result
 
     def generate(
