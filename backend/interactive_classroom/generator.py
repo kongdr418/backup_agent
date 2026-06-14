@@ -1146,6 +1146,34 @@ def _question_has_scene_index(text: str) -> bool:
     return bool(re.search(r"第\s*\d+\s*个讲解场景", text or ""))
 
 
+def _is_meta_practice_question_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(学习报告|报告建议|课堂建议|推荐优先复习|被推荐优先复习|推荐原因|掌握证据|本次课堂报告|复习范围|应围绕哪些核心方面)",
+            _clean_text(text),
+        )
+    )
+
+
+def _practice_evidence_by_point(assessment: dict[str, Any]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    evidence_rows = assessment.get("practice_evidence", [])
+    if not isinstance(evidence_rows, list):
+        return result
+    for row in evidence_rows:
+        if not isinstance(row, dict):
+            continue
+        point = _clean_text(str(row.get("point") or ""))
+        snippets = [
+            _clean_text(str(value))
+            for value in row.get("snippets", [])
+            if _clean_text(str(value))
+        ][:8]
+        if point:
+            result[point] = snippets
+    return result
+
+
 QUIZ_SOURCE_SKIP_KEYWORDS = (
     "课程总结",
     "总结",
@@ -1995,6 +2023,7 @@ class InteractiveClassroomGenerator:
 1c. **禁止页面位置匹配题**：不要问"第几页/第几个讲解场景主要围绕什么"、"哪个页面标题是什么"、"某知识点出现在哪一页"。题目必须考概念辨析、判断依据、应用步骤、错因修正或迁移应用。
 1d. **禁止通用套话题**：不得使用“关于 X，以下哪项最能说明本节要求掌握的判断依据”“遇到与 X 相关的新题时应该优先采用哪种步骤”等可替换任意主题的模板。题干必须写出当前页面中的具体对象、条件、过程或因果关系。
 1e. 每道题的正确答案和解析都必须能从页面文字直接核对；如果页面依据不足以支撑一道高质量题，就减少题量，不得用目录词、机构名、页码、章节编号或其他页面碎片凑选项。
+1f. **禁止学习报告/推荐任务元题**：不要问“根据学习报告建议”“课堂建议应围绕哪些方面”“学生被推荐优先复习哪些内容”“推荐原因是什么”。题目必须直接考学生对知识点本身的理解、判断或应用。
 2. 单选题为主，可少量多选题；每题 4 个选项，干扰项要像真实学生会混淆的错误理解。
    **多选题识别强约束**：如果题干含「以下哪些」「下列哪些」「哪些选项」「哪些是」「多选」等表述，**必须**把 `type` 设为「多选题」并给 `answer` 多个字母（如 "A,C"）。否则前端 UI 会按单选渲染，题干和交互对不上。
 3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面编号（如"第 2 页"）或关键点。不要使用任何内部 ID。
@@ -2158,6 +2187,8 @@ class InteractiveClassroomGenerator:
                 if not text:
                     continue
                 if _question_has_scene_index(text):
+                    continue
+                if _is_meta_practice_question_text(text):
                     continue
                 if any(term in text for term in decorative_terms):
                     continue
@@ -2486,22 +2517,18 @@ class InteractiveClassroomGenerator:
             for value in assessment.get("practice_diagnostic_notes", [])
             if _clean_text(str(value))
         ][:5]
+        evidence_by_point = _practice_evidence_by_point(assessment)
         source_scenes = [
             ClassroomScene(
                 id=f"practice_source_{idx:03d}",
                 type="slide",
-                title=point,
+                title=f"补强材料 {idx}",
                 order=idx,
                 knowledge_points=[point],
                 content={
                     "extracted_text": [
                         point,
-                        self._practice_strategy_instruction(
-                            point,
-                            task_type,
-                            generation_strategy,
-                        ),
-                        *diagnostic_notes,
+                        *evidence_by_point.get(point, []),
                     ]
                 },
                 actions=[],

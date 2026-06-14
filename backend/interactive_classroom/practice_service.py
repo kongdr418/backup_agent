@@ -13,6 +13,56 @@ from interactive_classroom.schema import InteractiveClassroom
 from interactive_classroom.storage import ClassroomStorage
 
 
+def _clean_practice_text(value: Any, max_length: int = 160) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:max_length].strip()
+
+
+def _collect_practice_evidence(
+    source_classroom: dict[str, Any],
+    knowledge_points: list[str],
+    target_scene_ids: list[str],
+) -> list[dict[str, Any]]:
+    scenes = [
+        scene
+        for scene in source_classroom.get("scenes", [])
+        if isinstance(scene, dict) and scene.get("type") == "slide"
+    ]
+    if target_scene_ids:
+        wanted = set(target_scene_ids)
+        prioritized = [scene for scene in scenes if scene.get("id") in wanted]
+        scenes = prioritized or scenes
+
+    evidence: list[dict[str, Any]] = []
+    for point in knowledge_points:
+        point_text = _clean_practice_text(point, 80)
+        snippets: list[str] = []
+        for scene in scenes:
+            content = scene.get("content") if isinstance(scene.get("content"), dict) else {}
+            values: list[Any] = [
+                scene.get("title", ""),
+                *scene.get("knowledge_points", []),
+                *content.get("extracted_text", []),
+            ]
+            for action in scene.get("actions", []):
+                if isinstance(action, dict):
+                    values.append(action.get("text", ""))
+
+            joined = " ".join(_clean_practice_text(value, 240) for value in values if _clean_practice_text(value))
+            if point_text and point_text not in joined:
+                continue
+            for value in values:
+                text = _clean_practice_text(value, 160)
+                if text and text not in snippets:
+                    snippets.append(text)
+                if len(snippets) >= 6:
+                    break
+            if snippets:
+                break
+        evidence.append({"point": point_text, "snippets": snippets[:6]})
+    return evidence
+
+
 class ClassroomPracticeService:
     def __init__(
         self,
@@ -93,6 +143,16 @@ class ClassroomPracticeService:
                     low_mastery.append(f"{point}掌握度{row.get('mastery')}%")
             if low_mastery:
                 diagnostic_notes.append(f"掌握证据：{'；'.join(low_mastery[:4])}")
+        target_scene_ids = [
+            str(value).strip()
+            for value in task.get("target_scene_ids", [])
+            if str(value).strip()
+        ][:8]
+        practice_evidence = _collect_practice_evidence(
+            source_classroom,
+            knowledge_points,
+            target_scene_ids,
+        )
 
         practice_strategy = dict(generation_strategy or {})
         assessment_strategy = (
@@ -102,6 +162,8 @@ class ClassroomPracticeService:
         )
         if diagnostic_notes:
             assessment_strategy["practice_diagnostic_notes"] = diagnostic_notes
+        if practice_evidence:
+            assessment_strategy["practice_evidence"] = practice_evidence
         assessment_strategy["practice_focus_points"] = knowledge_points
         assessment_strategy["practice_task_type"] = task_type
         practice_strategy["assessment_strategy"] = assessment_strategy

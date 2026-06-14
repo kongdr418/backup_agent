@@ -343,6 +343,121 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertIn("反复迭代", speech)
         self.assertIn("准确率达标", speech)
 
+    def test_practice_quiz_filters_learning_report_meta_questions(self) -> None:
+        class MetaPracticeQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count, **kwargs):  # noqa: ANN001
+                return """
+                {
+                  "modules": [
+                    {
+                      "title": "补强练习",
+                      "questions": [
+                        {
+                          "num": "1",
+                          "type": "单选题",
+                          "text": "根据学习报告的建议，学生被推荐优先复习以下哪些内容？",
+                          "options": ["A. 神经网络的起源与灵感", "B. 编程框架", "C. 硬件配置", "D. 历史人物"],
+                          "answer": "A",
+                          "analysis": "学习报告建议优先复习该内容。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        },
+                        {
+                          "num": "2",
+                          "type": "单选题",
+                          "text": "人工神经网络的设计灵感主要来源于什么？",
+                          "options": ["A. 生物神经网络的结构和工作方式", "B. 数字电路的门逻辑组合", "C. 流体力学规律", "D. 遗传信息编码"],
+                          "answer": "A",
+                          "analysis": "课堂内容说明人工神经网络受到生物神经网络启发。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=MetaPracticeQuizGenerator(),
+        )
+
+        scene = generator.build_practice_quiz_scene(
+            topic="神经网络",
+            knowledge_points=["神经网络的起源与灵感"],
+            task_type="practice_weak_points",
+            generation_strategy={
+                "assessment_strategy": {
+                    "practice_diagnostic_notes": ["学习报告建议：优先复习神经网络的起源与灵感"],
+                    "practice_evidence": [
+                        {
+                            "point": "神经网络的起源与灵感",
+                            "snippets": ["人工神经网络受到生物神经网络结构和工作方式启发"],
+                        }
+                    ],
+                }
+            },
+        )
+        question_text = "\n".join(q["question"] for q in scene.content["questions"])
+
+        self.assertNotIn("学习报告", question_text)
+        self.assertIn("人工神经网络的设计灵感", question_text)
+
+    def test_practice_quiz_context_excludes_diagnostic_notes_from_page_text(self) -> None:
+        class CapturingPracticeQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count, **kwargs):  # noqa: ANN001
+                self.slide_summaries = slide_summaries
+                return """
+                {
+                  "modules": [
+                    {
+                      "questions": [
+                        {
+                          "type": "单选题",
+                          "text": "人工神经网络的设计灵感主要来源于什么？",
+                          "options": ["A. 生物神经网络的结构和工作方式", "B. 数字电路", "C. 历史人物", "D. 硬件配置"],
+                          "answer": "A",
+                          "analysis": "课堂证据说明它受到生物神经网络启发。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        quiz_generator = CapturingPracticeQuizGenerator()
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=quiz_generator,
+        )
+
+        generator.build_practice_quiz_scene(
+            topic="神经网络",
+            knowledge_points=["神经网络的起源与灵感"],
+            task_type="practice_weak_points",
+            generation_strategy={
+                "assessment_strategy": {
+                    "practice_diagnostic_notes": ["学习报告建议：优先复习神经网络的起源与灵感"],
+                    "practice_evidence": [
+                        {
+                            "point": "神经网络的起源与灵感",
+                            "snippets": ["人工神经网络受到生物神经网络结构和工作方式启发"],
+                        }
+                    ],
+                }
+            },
+        )
+
+        page_text = "\n".join(
+            text
+            for summary in quiz_generator.slide_summaries
+            for text in summary.get("extracted_text", [])
+        )
+        self.assertIn("人工神经网络受到生物神经网络结构和工作方式启发", page_text)
+        self.assertNotIn("学习报告建议", page_text)
+
     def test_derives_stable_slide_title_from_svg_filename_before_svg_text(self) -> None:
         title = _derive_slide_title(
             idx=8,
