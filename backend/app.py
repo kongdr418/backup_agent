@@ -324,15 +324,20 @@ def get_agent(session_id: str, model: str = None, user_id: str = 'anonymous') ->
 
 def _apply_content_llm_config(data: dict):
     """将请求中的内容生成模型配置同步到 shared_config，使讲稿/大纲/习题等生成器使用正确模型"""
-    content_model = data.get('content_model', '')
-    content_api_key = data.get('content_api_key', '')
-    content_base_url = data.get('content_base_url', '')
-    content_provider_type = data.get('content_provider_type', '')
-    # 服务端 API Key 回退
-    if not content_api_key and content_model:
-        pid, _, _ = _get_provider_for_model(content_model)
-        if pid and pid in SERVER_API_KEYS:
+    content_model = (data.get('content_model') or '').strip()
+    content_api_key = data.get('content_api_key') or ''
+    content_base_url = (data.get('content_base_url') or '').strip()
+    content_provider_type = (data.get('content_provider_type') or '').strip()
+
+    if content_model:
+        pid, provider, _ = _get_provider_for_model(content_model)
+        if not content_api_key and pid and pid in SERVER_API_KEYS:
             content_api_key = SERVER_API_KEYS[pid]
+        if provider:
+            if not content_base_url:
+                content_base_url = provider.get('defaultBaseUrl', '') or ''
+            if not content_provider_type:
+                content_provider_type = provider.get('type', '') or ''
     if content_model or content_api_key or content_base_url or content_provider_type:
         try:
             from generators.shared_config import set_content_llm_config

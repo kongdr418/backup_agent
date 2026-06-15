@@ -59,7 +59,7 @@
           <div class="px-5 py-4 space-y-5">
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-ink-2">服务商</label>
-              <n-select v-model:value="settings.content_provider" :options="openaiProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('content', v)" />
+              <n-select v-model:value="settings.content_provider" :options="llmProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('content', v)" />
             </div>
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-ink-2">API Key<span v-if="contentProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
@@ -93,7 +93,7 @@
           <div class="px-5 py-4 space-y-5">
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-ink-2">服务商</label>
-              <n-select v-model:value="settings.ppt_provider" :options="openaiProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('ppt', v)" />
+              <n-select v-model:value="settings.ppt_provider" :options="llmProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('ppt', v)" />
             </div>
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-ink-2">API Key<span v-if="pptProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
@@ -254,9 +254,9 @@ const providerOptions = computed(() =>
   Object.values(store.providers).map((p: ProviderInfo) => ({
     label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`, value: p.id,
   })))
-const openaiProviderOptions = computed(() =>
+const llmProviderOptions = computed(() =>
   Object.values(store.providers)
-    .filter((p: ProviderInfo) => p.type === 'openai' || p.type === 'anthropic')
+    .filter((p: ProviderInfo) => ['openai', 'anthropic', 'minimax'].includes(p.type))
     .map((p) => ({ label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`, value: p.id })))
 
 function moduleProvider(m: ModuleKey) {

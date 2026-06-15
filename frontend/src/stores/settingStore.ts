@@ -113,6 +113,7 @@ export const useSettingStore = defineStore('setting', () => {
             'https://dashscope.aliyuncs.com/compatible-mode/v1',
             'https://api.siliconflow.cn/v1',
             'https://api.minimax.chat/v1/text/chatcompletion_v2',
+            'https://api.minimax.chat/v1',
             'https://spark-api-open.xf-yun.com/x2/',
             'https://spark-api-open.xf-yun.com/v2/',
           ]
