@@ -662,7 +662,7 @@ def _normalize_teaching_segments(
     elif is_last:
         max_segments, max_segment_chars, max_total_chars = 3, 110, 260
     else:
-        max_segments, max_segment_chars, max_total_chars = 5, 220, 760
+        max_segments, max_segment_chars, max_total_chars = 4, 130, 420
 
     result: list[dict[str, Any]] = []
     used_chars = 0
@@ -799,20 +799,80 @@ def _build_learning_process_summary_text(
     if not has_learning_process:
         return ""
 
-    ending = (
-        "下方关键要点对应三件事：随机权重是学习起点，标注数据提供正确答案，"
-        "反向传播持续调整权重，最终把准确率推高。"
-    )
     if "反复迭代" in visible_text:
-        ending = (
-            "这条虚线强调训练不是一次完成的，而是反复迭代：随机权重是起点，"
-            "标注数据提供正确答案，反向传播持续调整权重，直到准确率达标。"
+        return (
+            "把流程按顺序串起来：先随机初始化权重；再用训练数据给出正确答案；"
+            "接着计算预测和真实答案之间的误差；最后通过反向传播调整权重，"
+            "并反复迭代直到准确率达标。"
         )
     return (
-        "把这一页的流程图按顺序串起来：先随机初始化权重，所以一开始输出可能是错的；"
-        "再用大量带标签的训练数据做教材；接着计算预测和真实答案之间的误差；"
-        f"最后通过反向传播自动调整权重。{ending}"
+        "把流程按顺序串起来：先随机初始化权重，所以一开始输出可能是错的；"
+        "再用训练数据做教材；接着计算预测和真实答案之间的误差；"
+        "最后通过反向传播持续调整权重。"
     )
+
+
+def _supplement_teaching_segments_from_targets(
+    result: list[dict[str, Any]],
+    source_targets: list[dict[str, Any]],
+    *,
+    title: str,
+    min_segments: int = 3,
+) -> None:
+    """用页面可见高亮目标补足过短讲稿，避免 TTS 只读一句话就结束。"""
+    if not source_targets:
+        return
+
+    used_target_ids = {str(item.get("target_id") or "") for item in result}
+    existing_text = " ".join(str(item.get("text") or "") for item in result)
+    target_limit = min(len(source_targets), max(min_segments, len(result)))
+    for idx, target in enumerate(source_targets):
+        if len(result) >= target_limit:
+            break
+        target_id = str(target.get("id") or "").strip()
+        target_text = _clean_text(str(target.get("text") or ""))
+        if (
+            not target_id
+            or not target_text
+            or target_id in used_target_ids
+            or _is_low_signal_teaching_target(target_text)
+        ):
+            continue
+        if target_text in existing_text and len(result) >= 2:
+            continue
+
+        variant = len(result) % 3
+        if idx == 0 and not result:
+            text = (
+                f"这一页我们先把视线放到“{target_text}”。"
+                f"它是理解“{title or target_text}”这页内容的入口，"
+                "先抓住它回答的问题，再看后续概念如何展开。"
+            )
+            mode = "spotlight"
+        elif variant == 0:
+            text = (
+                f"接着看“{target_text}”。"
+                f"把它和“{title or source_targets[0].get('text') or '本页主题'}”联系起来，"
+                "先判断它描述的是对象、任务还是方法，再用一个具体场景复述它的作用。"
+            )
+            mode = "outline"
+        elif variant == 1:
+            text = (
+                f"再关注“{target_text}”。"
+                "这里更适合从学习任务角度理解：它通常对应一个需要完成的判断或处理步骤，"
+                "所以听到例子时要先找输入信息，再看最终要得到什么结果。"
+            )
+            mode = "outline"
+        else:
+            text = (
+                f"最后看“{target_text}”。"
+                "请把它和前面概念做一次区分：它关注的范围、输出形式和应用场景各不相同。"
+                "能说清这三个差别，就说明你已经抓住本页结构。"
+            )
+            mode = "outline"
+        result.append({"target_id": target_id, "mode": mode, "text": text})
+        used_target_ids.add(target_id)
+        existing_text = f"{existing_text} {text}"
 
 
 def _fallback_teaching_segments(
@@ -860,12 +920,20 @@ def _fallback_teaching_segments(
             target = _target_for_teaching_text(segment, source_targets, used_target_ids)
             if target is None:
                 continue
+            segment_text = segment
+            if len(_clean_text(segment_text)) < 12:
+                target_text = _clean_text(str(target.get("text") or title or "本页主题"))
+                segment_text = (
+                    f"{segment_text}"
+                    f"这里先抓住“{target_text}”这个核心词：它是本页其它概念的上位主题，"
+                    "后面几个关键词都可以围绕它来判断用途和区别。"
+                )
             used_target_ids.add(str(target["id"]))
             result.append(
                 {
                     "target_id": target["id"],
                     "mode": "spotlight" if idx == 0 else "outline",
-                    "text": segment,
+                    "text": segment_text,
                 }
             )
 
@@ -905,6 +973,12 @@ def _fallback_teaching_segments(
                 )
 
         if result:
+            _supplement_teaching_segments_from_targets(
+                result,
+                source_targets,
+                title=title,
+                min_segments=3,
+            )
             return _normalize_teaching_segments(
                 result,
                 is_intro=False,
@@ -1409,8 +1483,9 @@ class InteractiveClassroomGenerator:
             )
         else:
             length_rules = (
-                "2. 输出 3 到 5 个 segments，总计不超过 760 个中文字符；每段 45 到 220 个中文字符。\n"
-                "3. 每段只讲一个新增信息点，不要换一种说法重复上一段。"
+                "2. 输出 3 到 4 个 segments，总计不超过 420 个中文字符；每段 45 到 130 个中文字符。\n"
+                "3. 每段只讲一个当前页面能看到的具体结构、标签、流程箭头、实验卡片或目标条，"
+                "不要写跨页总结、职业发展展望或泛泛的学习鸡汤。"
             )
         return f"""你是智创空间智慧课堂的授课脚本设计智能体。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
 
@@ -1442,6 +1517,8 @@ class InteractiveClassroomGenerator:
 8. 第一段或真正强调“重点/核心/关键”的段落 mode 用 "spotlight"，其他用 "outline"。
 9. 中间页不要寒暄；第一页仅在封面页自然开场；最后一页可简短总结。
 10. 中间页如果出现流程、步骤、公式、输出或核心要点，必须覆盖前中后关键环节，不要只讲开头几个标签。
+11. 如果页面有编号、卡片或底部目标条，至少选择其中两个具体元素讲清楚它们的关系；不要把它们合并成一段大而空的总结。
+12. 不要主动补充页面没有出现的信息；不要使用“为未来学习和职业发展做好准备”这类泛化结尾。
 
 ## JSON 格式
 {{
@@ -1711,7 +1788,9 @@ class InteractiveClassroomGenerator:
             content={"extracted_text": svg_texts},
         )
         is_intro = _is_intro_slide(intro_probe, is_first_slide=idx == 1) or (
-            idx == 1 and len(svg_texts) <= 2
+            idx == 1
+            and len(svg_texts) <= 2
+            and not manuscript_note
         )
         teaching_result = self._generate_teaching_segments(
             page_index=idx,
