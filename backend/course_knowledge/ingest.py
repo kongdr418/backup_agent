@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import re
+import threading
 import uuid
 import zipfile
 from collections import OrderedDict
@@ -115,6 +116,8 @@ class CourseKnowledgeIngestor:
         self.storage = storage or CourseKnowledgeStorage(backend_dir, now_provider=now_provider)
         self.now_provider = now_provider or _now_iso
         self.vector_index = vector_index
+        self._vector_jobs: set[tuple[str, str]] = set()
+        self._vector_jobs_lock = threading.Lock()
 
     def _sync_vector_index(
         self,
@@ -136,6 +139,40 @@ class CourseKnowledgeIngestor:
                 course_id,
                 type(exc).__name__,
             )
+
+    def _schedule_vector_index_sync(
+        self,
+        user_id: str,
+        course_id: str,
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        if self.vector_index is None:
+            return
+        job_key = (user_id, course_id)
+        with self._vector_jobs_lock:
+            if job_key in self._vector_jobs:
+                logger.info("[BGE] index_sync_already_running course_id=%s", course_id)
+                return
+            self._vector_jobs.add(job_key)
+
+        def run() -> None:
+            try:
+                self._sync_vector_index(user_id, course_id, chunks)
+            finally:
+                with self._vector_jobs_lock:
+                    self._vector_jobs.discard(job_key)
+
+        logger.info(
+            "[BGE] index_sync_scheduled course_id=%s chunks=%d",
+            course_id,
+            len(chunks),
+        )
+        thread = threading.Thread(
+            target=run,
+            name=f"course-vector-index-{course_id}",
+            daemon=True,
+        )
+        thread.start()
 
     def ingest_upload(
         self,
@@ -771,7 +808,7 @@ class CourseKnowledgeIngestor:
         chunks = self._build_chunks(course_id, course_documents, documents)
         self.storage.save_course_catalog(user_id, course_id, catalog)
         self.storage.save_chunk_index(user_id, course_id, chunks)
-        self._sync_vector_index(user_id, course_id, chunks)
+        self._schedule_vector_index_sync(user_id, course_id, chunks)
 
         current_course = {
             "course_id": course_id,

@@ -161,10 +161,10 @@ class CourseVectorIndex:
             return {}
         if self.load_valid(user_id, course_id, chunks) is None:
             logger.info(
-                "[BGE] index_missing_or_stale course_id=%s action=rebuild",
+                "[BGE] index_missing_or_stale course_id=%s action=skip_vector",
                 course_id,
             )
-            self.rebuild(user_id, course_id, chunks)
+            return {}
         query_vector = self.embedding_service.encode_query(topic)
         return self.search(user_id, course_id, chunks, query_vector)
 

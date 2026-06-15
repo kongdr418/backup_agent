@@ -18,6 +18,9 @@ class EmbeddingUnavailableError(RuntimeError):
     pass
 
 
+_LOCAL_CACHE_ERROR_TYPES = (OSError, FileNotFoundError, TypeError, ValueError)
+
+
 def _default_model_factory(model_name: str) -> Any:
     import os
     from sentence_transformers import SentenceTransformer
@@ -25,8 +28,12 @@ def _default_model_factory(model_name: str) -> Any:
     # 1. 优先使用本地缓存，避免任何网络请求
     try:
         return SentenceTransformer(model_name, local_files_only=True)
-    except (OSError, FileNotFoundError):
-        logger.info("[BGE] local_cache_miss model=%s, falling back to online", model_name)
+    except _LOCAL_CACHE_ERROR_TYPES as exc:
+        logger.info(
+            "[BGE] local_cache_unavailable model=%s error=%s action=download",
+            model_name,
+            type(exc).__name__,
+        )
 
     # 2. 本地没有缓存，先尝试国内镜像站
     if HF_MIRROR_ENDPOINT:
@@ -73,13 +80,9 @@ class LocalEmbeddingService:
     def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
-        if self._load_error is not None:
-            raise EmbeddingUnavailableError(str(self._load_error)) from self._load_error
         with self._load_lock:
             if self._model is not None:
                 return self._model
-            if self._load_error is not None:
-                raise EmbeddingUnavailableError(str(self._load_error)) from self._load_error
             started_at = time.perf_counter()
             logger.info("[BGE] model_load_start model=%s", self.model_name)
             try:
@@ -93,6 +96,7 @@ class LocalEmbeddingService:
                     type(exc).__name__,
                 )
                 raise EmbeddingUnavailableError(str(exc)) from exc
+            self._load_error = None
             logger.info(
                 "[BGE] model_load_complete model=%s elapsed_ms=%d",
                 self.model_name,
