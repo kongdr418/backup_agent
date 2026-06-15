@@ -11,6 +11,7 @@ from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_r
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "content_planner.md"
 MAX_TOKENS = 49152  # 翻倍：reasoning 模型（如 mimo-v2.5）需要 reasoning + 输出双预算
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])\s*")
 
 
 def _language_guidance(language: str) -> str:
@@ -54,7 +55,40 @@ def _coerce_page_list_to_count(pages: list[str], num_slides: int) -> list[str]:
         head = pages[: num_slides - 1]
         tail = "\n\n".join(pages[num_slides - 1 :]).strip()
         return [*head, tail] if head else [tail]
-    return pages
+
+    expanded = [page.strip() for page in pages if page.strip()]
+    while len(expanded) < num_slides:
+        split_index = _find_splittable_page_index(expanded)
+        if split_index < 0:
+            break
+        first, second = _split_page_content(expanded[split_index])
+        expanded[split_index:split_index + 1] = [first, second]
+    return expanded
+
+
+def _find_splittable_page_index(pages: list[str]) -> int:
+    candidates: list[tuple[int, int]] = []
+    for idx, page in enumerate(pages):
+        sentences = _split_sentences(page)
+        if len(sentences) >= 2:
+            candidates.append((len(page), idx))
+    if not candidates:
+        return -1
+    return max(candidates)[1]
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [part.strip() for part in _SENTENCE_SPLIT_RE.split(text or "") if part.strip()]
+
+
+def _split_page_content(text: str) -> tuple[str, str]:
+    sentences = _split_sentences(text)
+    if len(sentences) < 2:
+        return text, text
+    midpoint = max(1, len(sentences) // 2)
+    first = "".join(sentences[:midpoint]).strip()
+    second = "".join(sentences[midpoint:]).strip()
+    return first or text, second or text
 
 
 def _coerce_manuscript_page_count(manuscript: str, num_slides: int | None) -> str:
