@@ -88,6 +88,9 @@ def _convert_children(parent: Any, ctx: ConvertContext) -> str:
 
 def _convert_element(elem: Any, ctx: ConvertContext) -> str:
     """Dispatch element to appropriate converter."""
+    # Skip XML comments (tag is a function reference for Comment nodes)
+    if not isinstance(elem.tag, str):
+        return ""
     tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
 
     if tag in SKIP_TAGS:

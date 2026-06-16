@@ -16,9 +16,9 @@ from pathlib import Path
 class PPTPreviewer:
     """PPT 预览生成器 - 使用 LibreOffice + Poppler"""
     
-    # 工具路径配置
-    LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
-    PDFTOPPM_PATH = r"D:\poppler\Release-25.12.0-0\poppler-25.12.0\Library\bin\pdftoppm.exe"
+    # 工具路径配置 — 优先从环境变量读取，否则用系统 PATH 查找
+    LIBREOFFICE_PATH = os.environ.get("LIBREOFFICE_PATH") or shutil.which("soffice") or "/usr/bin/soffice"
+    PDFTOPPM_PATH = os.environ.get("PDFTOPPM_PATH") or shutil.which("pdftoppm") or "/usr/bin/pdftoppm"
     
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ppt_previews")):
         self.output_dir = output_dir

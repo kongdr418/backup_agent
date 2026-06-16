@@ -86,7 +86,7 @@ function createCardDocx(cardData, outputPath) {
     }]
   });
 
-  Packer.toBuffer(doc).then(buffer => {
+  return Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync(outputPath, buffer);
     console.log('知识卡片 docx 已生成：' + outputPath);
   });
@@ -99,4 +99,7 @@ if (args.length < 2) {
 }
 
 const cardData = JSON.parse(fs.readFileSync(args[0], 'utf-8'));
-createCardDocx(cardData, args[1]);
+createCardDocx(cardData, args[1]).catch(err => {
+  console.error('生成失败:', err);
+  process.exit(1);
+});

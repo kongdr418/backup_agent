@@ -10,7 +10,7 @@
       </div>
     </div>
 
-    <div class="message-list">
+    <div ref="messageListRef" class="message-list" @wheel.passive="onUserScroll" @scroll="onScrollEvent">
       <div v-if="!messages.length" class="empty-state">
         <p>你可以随时追问这一课已经讲过的内容。</p>
         <p>我会尽量用提示、追问和例子来带你想清楚。</p>
@@ -60,7 +60,7 @@
       </button>
     </div>
 
-    <form class="input-area" @submit.prevent="submit">
+    <form class="input-area" @submit.prevent="handleSubmit">
       <textarea
         v-model="draft"
         class="question-input"
@@ -101,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { ClassroomDiscussionMessage } from '@/api/interactiveClassroom'
@@ -123,6 +123,69 @@ const emit = defineEmits<{
 
 const draft = ref('')
 const quickActions = ['换个例子', '再提示一点', '总结一下']
+const messageListRef = ref<HTMLElement | null>(null)
+
+// ── 智能滚动：对标豆包 ──
+const autoFollow = ref(true)
+
+function isAtBottom(): boolean {
+  const el = messageListRef.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 32
+}
+
+function scrollToBottom(behavior: ScrollBehavior = 'auto') {
+  const el = messageListRef.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight, behavior })
+}
+
+function onUserScroll(event: WheelEvent) {
+  if (event.deltaY < 0) {
+    // 用户向上滚 → 立即终止自动跟随
+    autoFollow.value = false
+  }
+}
+
+function onScrollEvent() {
+  // 用户手动滚回底部 → 恢复自动跟随
+  if (isAtBottom()) {
+    autoFollow.value = true
+  }
+}
+
+// 用户发送新消息 → 重新启用自动跟随并滚到底
+function handleSubmit() {
+  autoFollow.value = true
+  nextTick(() => scrollToBottom('auto'))
+  const content = draft.value.trim()
+  if (!content || props.submitting) return
+  emit('submit', content)
+  draft.value = ''
+}
+
+// 监听消息变化：流式输出时自动跟随
+watch(
+  () => props.messages.length,
+  () => {
+    if (autoFollow.value) {
+      nextTick(() => scrollToBottom('auto'))
+    }
+  },
+)
+
+// 监听最后一条消息内容变化（流式增量）
+watch(
+  () => {
+    const last = props.messages[props.messages.length - 1]
+    return last?.content ?? ''
+  },
+  () => {
+    if (autoFollow.value) {
+      nextTick(() => scrollToBottom('auto'))
+    }
+  },
+)
 
 // 当 messages 末尾是 assistant 时，隐藏"正在思考"指示器，避免双气泡
 const hasStreamingAssistant = computed(
@@ -182,13 +245,6 @@ function onMultiAgentChange(event: Event) {
   emit('update:multi-agent-enabled', checked)
 }
 
-function submit() {
-  const content = draft.value.trim()
-  if (!content || props.submitting) return
-  emit('submit', content)
-  draft.value = ''
-}
-
 function onTextareaKeydown(event: KeyboardEvent) {
   if (!shouldSubmitDiscussionOnEnter({
     key: event.key,
@@ -198,12 +254,14 @@ function onTextareaKeydown(event: KeyboardEvent) {
     return
   }
   event.preventDefault()
-  submit()
+  handleSubmit()
 }
 
 function submitDraft(text: string) {
   const content = text.trim()
   if (!content || props.submitting) return
+  autoFollow.value = true
+  nextTick(() => scrollToBottom('auto'))
   emit('submit', content)
 }
 

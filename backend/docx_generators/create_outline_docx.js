@@ -92,7 +92,7 @@ function createOutlineDocx(outlineData, outputPath) {
     }]
   });
 
-  Packer.toBuffer(doc).then(buffer => {
+  return Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync(outputPath, buffer);
     console.log('课程大纲 docx 已生成：' + outputPath);
   });
@@ -105,4 +105,7 @@ if (args.length < 2) {
 }
 
 const outlineData = JSON.parse(fs.readFileSync(args[0], 'utf-8'));
-createOutlineDocx(outlineData, args[1]);
+createOutlineDocx(outlineData, args[1]).catch(err => {
+  console.error('生成失败:', err);
+  process.exit(1);
+});

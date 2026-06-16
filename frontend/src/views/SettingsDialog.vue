@@ -56,6 +56,9 @@
                 <div v-if="verifyResults.chat" class="result-card" :class="verifyResults.chat!.success ? 'result-success' : 'result-error'">
                   <CheckCircle2 v-if="verifyResults.chat!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.chat!.message }}</span>
                 </div>
+                <p v-if="chatProviderGetKeyUrl" class="text-xs text-ink-4">
+                  从 <a :href="chatProviderGetKeyUrl" target="_blank" class="text-accent underline">{{ chatProvider?.name }}</a> 获取
+                </p>
               </div>
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">Base URL</label>
@@ -73,7 +76,7 @@
             <div v-if="activeSection === 'content'" class="space-y-5 max-w-xl">
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">服务商</label>
-                <n-select v-model:value="settings.content_provider" :options="openaiProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('content', v)" />
+                <n-select v-model:value="settings.content_provider" :options="llmProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('content', v)" />
               </div>
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">API Key<span v-if="contentProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
@@ -85,6 +88,9 @@
                   <button class="btn-outline" :disabled="verifying.content || (!contentConfig.apiKey && !contentProvider?.isServerConfigured)" @click="onTestModuleConnection('content')"><Loader2 v-if="verifying.content" class="w-3.5 h-3.5 animate-spin" /><Zap v-else class="w-3.5 h-3.5" />{{ verifying.content ? '测试中...' : '测试连接' }}</button>
                 </div>
                 <div v-if="verifyResults.content" class="result-card" :class="verifyResults.content!.success ? 'result-success' : 'result-error'"><CheckCircle2 v-if="verifyResults.content!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.content!.message }}</span></div>
+                <p v-if="contentProviderGetKeyUrl" class="text-xs text-ink-4">
+                  从 <a :href="contentProviderGetKeyUrl" target="_blank" class="text-accent underline">{{ contentProvider?.name }}</a> 获取
+                </p>
               </div>
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">Base URL</label>
@@ -98,11 +104,19 @@
               </div>
             </div>
 
+            <!-- ============ 内容可靠性 ============ -->
+            <div v-if="activeSection === 'reliability'" class="max-w-xl">
+              <ClassroomCriticModeControl
+                :model-value="settings.classroom_critic_mode"
+                @update:model-value="onUpdate('classroom_critic_mode', $event)"
+              />
+            </div>
+
             <!-- ============ PPT 生成模型 ============ -->
             <div v-if="activeSection === 'ppt'" class="space-y-5 max-w-xl">
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">服务商</label>
-                <n-select v-model:value="settings.ppt_provider" :options="openaiProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('ppt', v)" />
+                <n-select v-model:value="settings.ppt_provider" :options="llmProviderOptions" :render-label="renderProviderLabel" size="small" class="max-w-md" @update:value="(v: string) => onModuleProviderChange('ppt', v)" />
               </div>
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">API Key<span v-if="pptProvider?.isServerConfigured" class="text-xs text-accent font-normal ml-1">(服务端已配置)</span></label>
@@ -114,6 +128,9 @@
                   <button class="btn-outline" :disabled="verifying.ppt || (!pptConfig.apiKey && !pptProvider?.isServerConfigured)" @click="onTestModuleConnection('ppt')"><Loader2 v-if="verifying.ppt" class="w-3.5 h-3.5 animate-spin" /><Zap v-else class="w-3.5 h-3.5" />{{ verifying.ppt ? '测试中...' : '测试连接' }}</button>
                 </div>
                 <div v-if="verifyResults.ppt" class="result-card" :class="verifyResults.ppt!.success ? 'result-success' : 'result-error'"><CheckCircle2 v-if="verifyResults.ppt!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.ppt!.message }}</span></div>
+                <p v-if="pptProviderGetKeyUrl" class="text-xs text-ink-4">
+                  从 <a :href="pptProviderGetKeyUrl" target="_blank" class="text-accent underline">{{ pptProvider?.name }}</a> 获取
+                </p>
               </div>
               <div class="space-y-1.5">
                 <label class="text-sm font-medium text-ink-2">Base URL</label>
@@ -144,6 +161,9 @@
                     <button class="btn-outline" :disabled="verifying.tts || (!ttsConfigValue.apiKey && !ttsProvider?.isServerConfigured)" @click="onTestTTSConnection()"><Loader2 v-if="verifying.tts" class="w-3.5 h-3.5 animate-spin" /><Zap v-else class="w-3.5 h-3.5" />{{ verifying.tts ? '测试中...' : '测试连接' }}</button>
                   </div>
                   <div v-if="verifyResults.tts" class="result-card" :class="verifyResults.tts!.success ? 'result-success' : 'result-error'"><CheckCircle2 v-if="verifyResults.tts!.success" class="w-4 h-4 mt-0.5 shrink-0" /><XCircle v-else class="w-4 h-4 mt-0.5 shrink-0" /><span>{{ verifyResults.tts!.message }}</span></div>
+                  <p v-if="ttsProviderGetKeyUrl" class="text-xs text-ink-4">
+                    从 <a :href="ttsProviderGetKeyUrl" target="_blank" class="text-accent underline">{{ ttsProvider?.name }}</a> 获取
+                  </p>
                 </div>
                 <div class="space-y-1.5">
                   <label class="text-sm font-medium text-ink-2">Base URL</label>
@@ -208,7 +228,8 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { NSelect, NRadioGroup, NRadioButton, NInput, useMessage } from 'naive-ui'
-import { Settings, MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, X, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
+import { Settings, MessageCircle, FileText, Presentation, Volume2, Image as ImageIcon, ShieldCheck, X, Eye, EyeOff, Zap, Loader2, CheckCircle2, XCircle } from 'lucide-vue-next'
+import ClassroomCriticModeControl from '@/components/settings/ClassroomCriticModeControl.vue'
 import { useSettingStore } from '@/stores/settingStore'
 import { verifyModel } from '@/api/providers'
 import type { ProviderInfo, TTSProviderInfo } from '@/types'
@@ -225,12 +246,13 @@ const showKey = reactive<Record<ModuleKey, boolean>>({ chat: false, content: fal
 const verifying = reactive<Record<ModuleKey, boolean>>({ chat: false, content: false, ppt: false, tts: false })
 const verifyResults = reactive<Record<ModuleKey, { success: boolean; message: string } | null>>({ chat: null, content: null, ppt: null, tts: null })
 
-const activeSection = ref<string>('chat')
+const activeSection = ref<string>('reliability')
 const navItems = [
+  { id: 'reliability', label: '内容可靠性', icon: ShieldCheck, subtitle: '智慧课堂防幻觉检查强度' },
   { id: 'chat', label: '对话模型', icon: MessageCircle, subtitle: '智能对话使用的模型' },
   { id: 'content', label: '内容生成', icon: FileText, subtitle: '讲稿、大纲、习题、测验等' },
   { id: 'ppt', label: 'PPT 生成', icon: Presentation, subtitle: 'PPT 工作台使用的模型' },
-  { id: 'tts', label: '语音合成', icon: Volume2, subtitle: 'PPT 微课视频配音' },
+  { id: 'tts', label: '语音合成', icon: Volume2, subtitle: '互动课堂语音' },
   { id: 'cover', label: '小红书封面', icon: ImageIcon, subtitle: '封面图比例与风格' },
 ]
 const currentSection = computed(() => navItems.find((n) => n.id === activeSection.value) ?? null)
@@ -240,9 +262,38 @@ const PROVIDER_LOGOS: Record<string, string> = {
   moonshot: '/logos/kimi.png', zhipu: '/logos/glm.svg', glm: '/logos/glm.svg',
   qwen: '/logos/qwen.svg', siliconflow: '/logos/siliconflow.svg',
   mimo: '/logos/xiaomi.svg', 'mimo-tts': '/logos/xiaomi.svg',
+  xfyun: '/logos/xfyun.svg', 'xfyun-v2': '/logos/xfyun.svg',
   'edge-tts': '/logos/edge.svg',
 }
 const MONO_LOGOS = new Set(['openai', 'deepseek', 'siliconflow'])
+
+const PROVIDER_GET_KEY_URLS: Record<string, string> = {
+  openai: 'https://platform.openai.com/api-keys',
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  minimax: 'https://platform.minimax.io/user-center/basic-information/interface-key',
+  zhipu: 'https://open.bigmodel.cn/usercenter/apikeys',
+  glm: 'https://open.bigmodel.cn/usercenter/apikeys',
+  moonshot: 'https://platform.moonshot.cn/console/api-keys',
+  qwen: 'https://dashscope.console.aliyun.com/apiKey',
+  siliconflow: 'https://cloud.siliconflow.cn/account/ak',
+  doubao: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+  bytedance: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+  stepfun: 'https://platform.stepfun.com/console/apikey',
+  baichuan: 'https://platform.baichuan-ai.com/console/apikey',
+  yi: 'https://platform.lingyiwanwu.com/apikeys',
+  mistral: 'https://console.mistral.ai/api-keys',
+  groq: 'https://console.groq.com/keys',
+  together: 'https://api.together.xyz/settings/api-keys',
+  deepinfra: 'https://deepinfra.com/dash/api_keys',
+  gitee: 'https://ai.gitee.com/dashboard/api-key',
+  mimo: 'https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/speech-synthesis-v2.5',
+  'mimo-tts': 'https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/speech-synthesis-v2.5',
+  xfyun: 'https://console.xfyun.cn/services/bm3',
+  'xfyun-v2': 'https://console.xfyun.cn/services/bm3',
+  'edge-tts': '',
+}
+const providerGetKeyUrl = (pid: string) => PROVIDER_GET_KEY_URLS[pid] || ''
+
 function renderProviderLabel(option: { label: string; value: string }) {
   const rawId = option.value as string
   const icon = PROVIDER_LOGOS[rawId]
@@ -270,9 +321,9 @@ const providerOptions = computed(() =>
   Object.values(store.providers).map((p: ProviderInfo) => ({
     label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`, value: p.id,
   })))
-const openaiProviderOptions = computed(() =>
+const llmProviderOptions = computed(() =>
   Object.values(store.providers)
-    .filter((p: ProviderInfo) => p.type === 'openai' || p.type === 'anthropic')
+    .filter((p: ProviderInfo) => ['openai', 'anthropic', 'minimax'].includes(p.type))
     .map((p) => ({ label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`, value: p.id })))
 
 function moduleProvider(m: ModuleKey) {
@@ -297,6 +348,11 @@ function moduleModelHint(m: ModuleKey) {
 const chatProvider = moduleProvider('chat'); const chatConfig = moduleConfig('chat'); const chatModelOptions = moduleModelOptions('chat'); const chatModelHint = moduleModelHint('chat')
 const contentProvider = moduleProvider('content'); const contentConfig = moduleConfig('content'); const contentModelOptions = moduleModelOptions('content'); const contentModelHint = moduleModelHint('content')
 const pptProvider = moduleProvider('ppt'); const pptConfig = moduleConfig('ppt'); const pptModelOptions = moduleModelOptions('ppt'); const pptModelHint = moduleModelHint('ppt')
+
+const chatProviderGetKeyUrl = computed(() => providerGetKeyUrl(settings.value.chat_provider))
+const contentProviderGetKeyUrl = computed(() => providerGetKeyUrl(settings.value.content_provider))
+const pptProviderGetKeyUrl = computed(() => providerGetKeyUrl(settings.value.ppt_provider))
+const ttsProviderGetKeyUrl = computed(() => providerGetKeyUrl(settings.value.tts_provider))
 
 const ttsProviderOptions = computed(() => Object.values(store.ttsProviders).map((p: TTSProviderInfo) => ({ label: `${p.name}${p.isServerConfigured ? ' · 已配置' : ''}`, value: p.id })))
 const ttsProvider = computed<TTSProviderInfo | null>(() => store.ttsProviders[settings.value.tts_provider] || null)

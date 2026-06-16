@@ -50,7 +50,7 @@ function createQuizDocx(quizData, outputPath) {
     }]
   });
 
-  Packer.toBuffer(doc).then(buffer => {
+  return Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync(outputPath, buffer);
     console.log('课堂测验 docx 已生成：' + outputPath);
   });
@@ -63,4 +63,7 @@ if (args.length < 2) {
 }
 
 const quizData = JSON.parse(fs.readFileSync(args[0], 'utf-8'));
-createQuizDocx(quizData, args[1]);
+createQuizDocx(quizData, args[1]).catch(err => {
+  console.error('生成失败:', err);
+  process.exit(1);
+});

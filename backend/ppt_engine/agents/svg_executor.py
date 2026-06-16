@@ -7,6 +7,7 @@ a targeted repair prompt is fed back to the LLM (bounded retries).
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -57,12 +58,72 @@ def _extract_svg(text: str) -> str | None:
     match = re.search(r"```(?:svg|xml)?\s*\n(.*?)\n```", text, re.DOTALL)
     if match:
         svg = match.group(1).strip()
+        svg = re.sub(r"^<\?xml[^>]*>\s*", "", svg).strip()
         if svg.startswith("<svg"):
             return svg
     match = re.search(r"(<svg[^>]*>.*?</svg>)", text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return None
+
+
+def _plain_text_lines(text: str, *, limit: int = 4) -> list[str]:
+    lines: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = re.sub(r"<!--.*?-->", "", raw_line)
+        line = re.sub(r"^[#*\-\d.\s、：:]+", "", line).strip()
+        if not line:
+            continue
+        lines.append(line[:42])
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _build_fallback_svg(
+    *,
+    page_num: int,
+    total_pages: int,
+    page_name: str,
+    page_content: str,
+    language: str,
+) -> str:
+    title = _plain_text_lines(page_content, limit=1)
+    heading = title[0] if title else f"Page {page_num}"
+    body_lines = _plain_text_lines(page_content, limit=5)[1:] or [
+        "本页模型生成超时，已保留课程结构。",
+        "可在 PPTist 预览中继续编辑此页内容。",
+    ]
+    if language != "zh" and not title:
+        heading = f"Page {page_num}"
+        body_lines = [
+            "The model response timed out for this slide.",
+            "The deck remains exportable and editable.",
+        ]
+
+    escaped_heading = html.escape(heading)
+    escaped_page_name = html.escape(page_name)
+    text_nodes = []
+    for idx, line in enumerate(body_lines[:4]):
+        y = 265 + idx * 54
+        text_nodes.append(
+            f'<text x="150" y="{y}" font-size="28" fill="#334155">'
+            f'{html.escape(line)}</text>'
+        )
+
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" '
+        'width="1280" height="720" role="img" aria-label="fallback slide">\n'
+        '  <rect width="1280" height="720" fill="#f8fafc"/>\n'
+        '  <rect x="86" y="72" width="1108" height="576" rx="28" fill="#ffffff" '
+        'stroke="#cbd5e1" stroke-width="2"/>\n'
+        '  <rect x="86" y="72" width="10" height="576" fill="#2D5016"/>\n'
+        f'  <!-- Page {page_num}/{total_pages} · {escaped_page_name} -->\n'
+        f'  <text x="150" y="220" font-size="46" font-weight="700" fill="#0f172a">{escaped_heading}</text>\n'
+        f'  {"".join(text_nodes)}\n'
+        '  <text x="150" y="590" font-size="22" fill="#64748b">SVG fallback generated after model response timeout/format failure.</text>\n'
+        '</svg>'
+    )
 
 
 def _compact_text(text: str, limit: int = _COMPACT_CONTEXT_LIMIT) -> str:
@@ -213,6 +274,7 @@ async def _generate_single_page(
     """Generate one SVG page independently (no cross-page context)."""
     page_start = time.monotonic()
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    page_content = re.sub(r"<!--\s*page_type:\s*\w+\s*-->", "", page_content).strip()
     page_name = _make_page_name(page_num, page_content)
     logger.info(
         "[PPT-PERF] stage=svg_generation page=%s/%s status=started name=%s",
@@ -351,9 +413,18 @@ async def _generate_single_page(
         svg_content = _extract_svg(response.content)
 
     if not svg_content:
-        raise RuntimeError(
-            f"Failed to generate parseable SVG for page {page_num}/{total_pages} "
-            f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
+        logger.warning(
+            "[PPT-PERF] stage=svg_generation page=%s/%s step=fallback_svg reason=parseable_svg_missing attempts=%s",
+            page_num,
+            total_pages,
+            MAX_SVG_EXTRACTION_ATTEMPTS,
+        )
+        svg_content = _build_fallback_svg(
+            page_num=page_num,
+            total_pages=total_pages,
+            page_name=page_name,
+            page_content=page_content,
+            language=language,
         )
 
     best_svg = svg_content

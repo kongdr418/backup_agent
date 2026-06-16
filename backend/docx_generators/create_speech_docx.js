@@ -93,7 +93,7 @@ function createSpeechDocx(speechData, outputPath) {
     }]
   });
 
-  Packer.toBuffer(doc).then(buffer => {
+  return Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync(outputPath, buffer);
     console.log('授课讲稿 docx 已生成：' + outputPath);
   });
@@ -106,4 +106,7 @@ if (args.length < 2) {
 }
 
 const speechData = JSON.parse(fs.readFileSync(args[0], 'utf-8'));
-createSpeechDocx(speechData, args[1]);
+createSpeechDocx(speechData, args[1]).catch(err => {
+  console.error('生成失败:', err);
+  process.exit(1);
+});

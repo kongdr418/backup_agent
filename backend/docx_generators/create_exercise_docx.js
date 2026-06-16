@@ -108,7 +108,7 @@ function createExerciseDocx(exerciseData, outputPath) {
     }]
   });
 
-  Packer.toBuffer(doc).then(buffer => {
+  return Packer.toBuffer(doc).then(buffer => {
     fs.writeFileSync(outputPath, buffer);
     console.log('习题集 docx 已生成：' + outputPath);
   });
@@ -154,4 +154,7 @@ const jsonFile = args[0];
 const outputPath = args[1];
 
 const exerciseData = JSON.parse(fs.readFileSync(jsonFile, 'utf-8'));
-createExerciseDocx(exerciseData, outputPath);
+createExerciseDocx(exerciseData, outputPath).catch(err => {
+  console.error('生成失败:', err);
+  process.exit(1);
+});
