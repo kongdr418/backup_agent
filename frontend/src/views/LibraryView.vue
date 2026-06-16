@@ -4,7 +4,7 @@
     <header class="library-header">
       <div class="header-left">
         <h1 class="library-title">文件库</h1>
-        <p class="library-desc">管理多智能体协同生成的所有学习资源 — PPT / 讲义 / 图片 / 音频</p>
+        <p class="library-desc">管理所有 AI 生成的文件 — PPT / 讲义 / 图片 / 音频</p>
       </div>
       <div class="header-actions">
         <button class="action-btn" @click="refresh" title="刷新">
@@ -157,6 +157,7 @@ const allFiles = computed<GeneratedFile[]>(() => fileStore.files)
 const sidebarItems = [
   { value: 'all', label: '全部文件', icon: Files },
   { value: 'ppt', label: 'PPT', icon: Presentation },
+
   { value: 'lecture', label: '讲义', icon: BookOpen },
   { value: 'outline', label: '课程大纲', icon: Network },
   { value: 'speech', label: '讲稿', icon: PenLine },

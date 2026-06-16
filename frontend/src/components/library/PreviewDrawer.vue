@@ -47,6 +47,8 @@
           :name="file.name"
         />
 
+
+
         <!-- PPT: SVG PPT 展示预览图+下载，旧版PPT只显示下载 -->
         <PptThumbnailPreview
           v-else-if="file.type === 'ppt' && isSvgPpt"
@@ -115,6 +117,7 @@ import { fileDownloadUrl } from '@/api/files'
 // Lazy-loaded preview sub-components
 const ImagePreview = defineAsyncComponent(() => import('./preview/ImagePreview.vue'))
 const AudioPreview = defineAsyncComponent(() => import('./preview/AudioPreview.vue'))
+
 const MarkdownPreview = defineAsyncComponent(() => import('./preview/MarkdownPreview.vue'))
 const DocxPreview = defineAsyncComponent(() => import('./preview/DocxPreview.vue'))
 const MindmapPreview = defineAsyncComponent(() => import('./preview/MindmapPreview.vue'))
