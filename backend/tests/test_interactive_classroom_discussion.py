@@ -95,11 +95,14 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         self.storage = ClassroomStorage(self.tempdir.name)
         self.original_storage = backend_app.CLASSROOM_STORAGE
         backend_app.CLASSROOM_STORAGE = self.storage
+        self.original_generation_jobs = dict(backend_app.CLASSROOM_GENERATION_JOBS)
         self.storage.save_classroom("user_1", "classroom_discuss_001", _classroom_payload())
         self.client = backend_app.app.test_client()
 
     def tearDown(self) -> None:
         backend_app.CLASSROOM_STORAGE = self.original_storage
+        backend_app.CLASSROOM_GENERATION_JOBS.clear()
+        backend_app.CLASSROOM_GENERATION_JOBS.update(self.original_generation_jobs)
         self.tempdir.cleanup()
 
     def test_build_discussion_context_uses_only_played_scene_text(self) -> None:
@@ -182,6 +185,40 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         self.assertEqual("assistant", payload["assistant_message"]["role"])
         self.assertIn("while", payload["assistant_message"]["content"])
         self.assertTrue(payload["auto_advance_paused"])
+
+    def test_discussion_route_uses_generating_classroom_preview_context(self) -> None:
+        request_id = "classroom:123e4567-e89b-12d3-a456-426614174000"
+        backend_app.CLASSROOM_GENERATION_JOBS[request_id] = {
+            "request_id": request_id,
+            "status": "running",
+            "topic": "Python 循环",
+            "progress_events": [
+                {
+                    "type": "classroom_progress",
+                    "scene_payload": _classroom_payload()["scenes"][0],
+                }
+            ],
+        }
+
+        with patch(
+            "interactive_classroom.discussion_service.content_llm_call",
+            return_value="这一页正在讲 while 循环的判断条件。",
+        ):
+            resp = self.client.post(
+                f"/api/interactive-classroom/{request_id}/discuss",
+                json={
+                    "user_id": "user_1",
+                    "played_scene_ids": ["scene_slide_001"],
+                    "current_scene_id": "scene_slide_001",
+                    "messages": [{"role": "user", "content": "这页是什么意思？"}],
+                    "trigger": "manual",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertTrue(payload["success"])
+        self.assertIn("while", payload["assistant_message"]["content"])
 
     def test_multi_agent_discussion_generates_fixed_three_turns(self) -> None:
         from interactive_classroom.discussion_service import generate_multi_agent_discussion_turns
@@ -268,6 +305,40 @@ class InteractiveClassroomDiscussionTest(unittest.TestCase):
         self.assertIn('"agent_id": "teacher"', text)
         self.assertIn('"agent_id": "student_peer"', text)
         self.assertIn('"chunk": "同学追问"', text)
+
+    def test_discussion_stream_uses_generating_classroom_preview_context(self) -> None:
+        request_id = "classroom:123e4567-e89b-12d3-a456-426614174001"
+        backend_app.CLASSROOM_GENERATION_JOBS[request_id] = {
+            "request_id": request_id,
+            "status": "running",
+            "topic": "Python 循环",
+            "progress_events": [
+                {
+                    "type": "classroom_progress",
+                    "scene_payload": _classroom_payload()["scenes"][0],
+                }
+            ],
+        }
+
+        with patch(
+            "interactive_classroom.discussion_service.content_llm_call_stream",
+            return_value=iter(["生成中也可以讨论"]),
+        ):
+            resp = self.client.post(
+                f"/api/interactive-classroom/{request_id}/discuss/stream",
+                json={
+                    "user_id": "user_1",
+                    "played_scene_ids": ["scene_slide_001"],
+                    "current_scene_id": "scene_slide_001",
+                    "messages": [{"role": "user", "content": "这页是什么意思？"}],
+                    "trigger": "manual",
+                },
+            )
+            text = resp.get_data(as_text=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("生成中也可以讨论", text)
+        self.assertIn('"done": true', text)
 
     def test_discussion_route_rejects_missing_messages(self) -> None:
         resp = self.client.post(

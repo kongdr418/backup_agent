@@ -4,7 +4,7 @@
     <header class="library-header">
       <div class="header-left">
         <h1 class="library-title">文件库</h1>
-        <p class="library-desc">管理所有 AI 生成的文件 — PPT / 讲义 / 图片 / 音频</p>
+        <p class="library-desc">管理多智能体协同生成的所有学习资源 — PPT / 讲义 / 图片 / 音频</p>
       </div>
       <div class="header-actions">
         <button class="action-btn" @click="refresh" title="刷新">
@@ -133,7 +133,6 @@ import {
   BookOpen,
   PenLine,
   ClipboardList,
-  Video,
   Files,
 } from 'lucide-vue-next'
 
@@ -158,7 +157,6 @@ const allFiles = computed<GeneratedFile[]>(() => fileStore.files)
 const sidebarItems = [
   { value: 'all', label: '全部文件', icon: Files },
   { value: 'ppt', label: 'PPT', icon: Presentation },
-  { value: 'video', label: '微课视频', icon: Video },
   { value: 'lecture', label: '讲义', icon: BookOpen },
   { value: 'outline', label: '课程大纲', icon: Network },
   { value: 'speech', label: '讲稿', icon: PenLine },
@@ -205,8 +203,6 @@ function iconFor(type: string) {
       return Music
     case 'content_image':
       return ImageIcon
-    case 'video':
-      return Video
     default:
       return FileText
   }
@@ -232,8 +228,6 @@ function iconBg(type: string) {
       return 'icon-rose'
     case 'content_audio':
       return 'icon-orange'
-    case 'video':
-      return 'icon-purple'
     default:
       return 'icon-neutral'
   }
@@ -259,15 +253,13 @@ function iconFg(type: string) {
       return 'text-rose'
     case 'content_audio':
       return 'text-orange'
-    case 'video':
-      return 'text-purple'
     default:
       return 'text-neutral'
   }
 }
 
 function canRename(type: string) {
-  return type !== 'svg_ppt' && type !== 'video'
+  return type !== 'svg_ppt'
 }
 
 function toggleMenu(id: string) {
@@ -331,7 +323,7 @@ function askDelete(f: GeneratedFile) {
 function askClearAll() {
   dialog.warning({
     title: '清空全部',
-    content: '将删除全部生成的文件（含微课视频），操作不可恢复。',
+    content: '将删除全部生成的文件，操作不可恢复。',
     positiveText: '清空',
     negativeText: '取消',
     onPositiveClick: async () => {

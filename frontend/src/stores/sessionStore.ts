@@ -16,13 +16,14 @@ export const useSessionStore = defineStore(
       sessions.value.find((s) => s.id === currentSessionId.value),
     )
 
-    function createSession(name?: string): Session {
+    function createSession(name?: string, kind: Session['kind'] = 'chat'): Session {
       const now = Date.now()
       const session: Session = {
         id: uuid(),
         name: name?.trim() || `新对话 ${sessions.value.length + 1}`,
         createdAt: now,
         updatedAt: now,
+        kind,
       }
       sessions.value.unshift(session)
       currentSessionId.value = session.id

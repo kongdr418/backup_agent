@@ -109,6 +109,36 @@ class FakeExtractionRetryLLM(LLMProvider):
         return ProviderInfo(name="fake", display_name="Fake", models=[])
 
 
+class FakeUnparseableLLM(LLMProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat(
+        self,
+        messages: list[LLMMessage],
+        model: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        response_format=None,
+    ) -> LLMResponse:
+        self.calls += 1
+        return LLMResponse(
+            content="I could not produce the SVG in this response.",
+            usage=None,
+            raw=None,
+        )
+
+    async def chat_stream(self, messages, model, *, temperature=0.7, max_tokens=None):
+        raise NotImplementedError
+
+    async def validate(self) -> bool:
+        return True
+
+    def get_provider_info(self) -> ProviderInfo:
+        return ProviderInfo(name="fake", display_name="Fake", models=[])
+
+
 def _run_svg_generation(tmp_path: Path, *, repair_enabled: bool | None) -> tuple[FakeRepairLLM, str]:
     llm = FakeRepairLLM()
 
@@ -184,6 +214,29 @@ def test_extraction_retry_uses_compact_context_without_full_template_refs(tmp_pa
     assert "CONTENT_STYLE_ANCHOR" in retry_text
     assert "Reference Layout Templates" not in retry_text
     assert len(retry_text) < 8000
+
+
+def test_unparseable_svg_generation_falls_back_to_valid_slide(tmp_path: Path):
+    llm = FakeUnparseableLLM()
+
+    async def run() -> str:
+        pages = []
+        async for _page_num, svg in generate_svg_pages(
+            "design spec",
+            "## 继承与多态\n- 父类与子类\n- 方法重写\n- 动态绑定",
+            tmp_path,
+            llm,
+            "fake-model",
+        ):
+            pages.append(svg)
+        return pages[0]
+
+    svg = asyncio.run(run())
+
+    assert llm.calls == 2
+    assert svg.startswith("<svg")
+    assert "SVG fallback generated" in svg
+    assert "继承与多态" in svg
 
 
 def test_extraction_retry_selects_content_template_for_middle_pages():

@@ -11,6 +11,8 @@ import time
 from datetime import datetime
 from typing import Generator, Optional
 
+from learner_profile.storage import LearnerProfileStorage
+
 
 class QuizGenerator:
     """课堂测验生成器"""
@@ -18,6 +20,46 @@ class QuizGenerator:
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_quizzes")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        # 延迟初始化，避免循环导入
+        self._profile_storage = None
+
+    def _get_profile_storage(self):
+        """延迟获取画像存储实例"""
+        if self._profile_storage is None:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._profile_storage = LearnerProfileStorage(backend_dir)
+        return self._profile_storage
+
+    def _load_profile_hint(self, user_id: str) -> str:
+        """加载学生画像并生成提示词片段"""
+        if not user_id or user_id == 'anonymous':
+            return ""
+        try:
+            storage = self._get_profile_storage()
+            profile = storage.load_profile(user_id)
+            basic = profile.get("basic", {})
+            preferences = profile.get("preferences", {})
+
+            stage = basic.get("learning_stage") or ""
+            basis = basic.get("learning_basis") or ""
+            goal = preferences.get("goal") or ""
+            difficulty = preferences.get("preferred_difficulty") or ""
+
+            parts = []
+            if stage:
+                parts.append(f"学习阶段：{stage}")
+            if basis:
+                parts.append(f"当前基础：{basis}")
+            if goal:
+                parts.append(f"学习目标：{goal}")
+            if difficulty:
+                parts.append(f"期望难度：{difficulty}")
+
+            if parts:
+                return "\n\n【学生画像信息】\n" + "\n".join(parts) + "\n请根据以上画像信息调整测验难度和题目侧重。"
+        except Exception:
+            pass
+        return ""
 
     def parse_quiz_request(self, message: str) -> Optional[dict]:
         """
@@ -54,7 +96,7 @@ class QuizGenerator:
                 }
         return None
 
-    def generate_quiz_stream(self, topic: str, output_format: str = "md") -> Generator[dict, None, None]:
+    def generate_quiz_stream(self, topic: str, output_format: str = "md", user_id: str = 'anonymous') -> Generator[dict, None, None]:
         """流式生成课堂测验"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -82,7 +124,7 @@ class QuizGenerator:
 
             def llm_task():
                 try:
-                    json_str = self._generate_quiz_json(topic)
+                    json_str = self._generate_quiz_json(topic, user_id)
                     # LLM 可能用 markdown 代码块包裹 JSON，需要清理
                     cleaned = json_str.strip()
                     if cleaned.startswith('```'):
@@ -327,9 +369,11 @@ type: quiz
 
         return self._call_llm(prompt)
 
-    def _generate_quiz_json(self, topic: str) -> str:
+    def _generate_quiz_json(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成测验内容（JSON格式）"""
-        prompt = f"""请为"{topic}"生成一份随堂练习参考答案，以JSON格式返回。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""请为"{topic}"生成一份随堂测验，帮助检验你对这个知识点的掌握程度。
 
 ## 题目要求
 
@@ -344,8 +388,9 @@ type: quiz
    - options（四个选项的数组，干扰项具有合理性）
    - answer（单选题答案为一个字母，多选题答案为多个字母如"AB"）
 4. **内容范围**：围绕"{topic}"的核心概念、关键知识点、重要原理、常见辨析点展开
-5. **难度适中**：适合课堂随堂测验或课后自测水平
+5. **难度**：由浅入深，覆盖基础到进阶
 6. **总量**：每个模块4-8题，总计15-25题
+{profile_hint}
 
 ## 输出格式
 
@@ -424,7 +469,7 @@ type: quiz
         from generators.shared_config import content_llm_call
         return content_llm_call(
             messages=[
-                {"role": "system", "content": "你是一位有趣的课堂主持人，擅长设计有趣的快问快答测验。"},
+                {"role": "system", "content": "你是一位专业的测验设计助手，擅长根据学生的学习情况设计有针对性的测验题目，帮助学生检验学习效果、发现薄弱环节。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.8,

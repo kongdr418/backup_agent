@@ -104,91 +104,16 @@ class ProfileAgent:
         profile: dict[str, Any],
         course_name: str,
     ) -> dict[str, Any]:
-        basic = profile.get("basic") if isinstance(profile.get("basic"), dict) else {}
-        preferences = (
-            profile.get("preferences")
-            if isinstance(profile.get("preferences"), dict)
-            else {}
-        )
-        course_id = build_course_id(course_name)
-        course = (
-            profile.get("courses", {}).get(course_id, {})
-            if isinstance(profile.get("courses"), dict)
-            else {}
-        )
-        basis = _clean_text(basic.get("learning_basis"), 80) or "零基础"
-        preferred_difficulty = (
-            _clean_text(preferences.get("preferred_difficulty"), 40) or "基础"
-        )
-        if "进阶" in basis or "挑战" in preferred_difficulty:
-            explanation_depth = "advanced"
-            quiz_difficulty = "advanced"
-        elif "有基础" in basis or "中等" in preferred_difficulty:
-            explanation_depth = "intermediate"
-            quiz_difficulty = "intermediate"
-        else:
-            explanation_depth = "basic_to_intermediate"
-            quiz_difficulty = "basic"
+        from .strategy_agent import StrategyAgent
 
-        tutoring_style = _clean_text(preferences.get("tutoring_style"), 80)
-        if "直接" in tutoring_style:
-            feedback_style = "direct"
-        elif "启发" in tutoring_style:
-            feedback_style = "socratic"
-        else:
-            feedback_style = "guided"
-
-        mastery = course.get("mastery") if isinstance(course.get("mastery"), dict) else {}
-        weak_rows = sorted(
-            (
-                row
-                for row in mastery.values()
-                if isinstance(row, dict) and float(row.get("score", 0) or 0) < 65
-            ),
-            key=lambda row: float(row.get("score", 0) or 0),
-        )
-        focus_points = [
-            _clean_text(row.get("name"), 80)
-            for row in weak_rows[:3]
-            if _clean_text(row.get("name"), 80)
-        ]
-        if not focus_points:
-            focus_points = [
-                _clean_text(value, 80)
-                for value in course.get("weak_points", [])[:3]
-                if _clean_text(value, 80)
-            ]
-
-        styles = preferences.get("content_style")
-        content_style = _content_style_tokens(styles if isinstance(styles, list) else [])
-        goal = _clean_text(preferences.get("goal"), 120) or "概念理解"
-        if focus_points:
-            reason = (
-                f"结合“{goal}”目标，并优先补强近期掌握度较低的"
-                f"{'、'.join(focus_points)}。"
-            )
-        else:
-            reason = f"当前课程暂无稳定薄弱点，按“{goal}”目标和学习偏好组织内容。"
-
-        return {
-            "strategy_version": 1,
-            "course_id": course_id,
-            "course_name": _clean_text(course_name, 120) or "通用课程",
-            "explanation_depth": explanation_depth,
-            "content_style": content_style,
-            "quiz_difficulty": quiz_difficulty,
-            "feedback_style": feedback_style,
-            "focus_knowledge_points": focus_points,
-            "avoid": ["直接给出完整答案"] if feedback_style != "direct" else [],
-            "reason": reason,
-            "profile_updated_at": _clean_text(profile.get("updated_at"), 40),
-        }
+        return StrategyAgent().build(profile, course_name, resource_type="classroom")
 
     def normalize_knowledge_points(
         self,
         raw_points: list[Any],
         course_profile: dict[str, Any] | None = None,
         context: str = "",
+        knowledge_context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         course_profile = course_profile or {}
         mastery = (
@@ -197,11 +122,12 @@ class ProfileAgent:
             else {}
         )
         existing: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
         for point_id, row in mastery.items():
             if not isinstance(row, dict):
                 continue
             name = _clean_text(row.get("name"), 80)
-            if name:
+            if name and point_id not in seen_ids:
                 existing.append(
                     {
                         "knowledge_point_id": point_id,
@@ -209,6 +135,21 @@ class ProfileAgent:
                         "parent_name": _clean_text(row.get("parent_name"), 80),
                     }
                 )
+                seen_ids.add(point_id)
+
+        for kp in (knowledge_context or {}).get("knowledge_points", []):
+            kp_id = kp.get("knowledge_point_id", "")
+            label = _clean_text(kp.get("label"), 80)
+            if kp_id and label and kp_id not in seen_ids:
+                existing.append(
+                    {
+                        "knowledge_point_id": kp_id,
+                        "name": label,
+                        "parent_name": "",
+                        "source": "course_knowledge",
+                    }
+                )
+                seen_ids.add(kp_id)
 
         cleaned_points: list[str] = []
         for value in raw_points:

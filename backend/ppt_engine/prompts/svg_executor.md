@@ -59,6 +59,8 @@ One complete SVG file per page with proper viewBox.
 19. Bottom badges, chips, and tags must stay fully inside their parent card. Keep at least 18px gap between the badge bottom and the card bottom, and never let a badge overlap the slide footer or page number.
 20. In 3-card or 4-card layouts, do not put full-sentence explanations inside each card. Use compact phrases, mini bullets, or code-like snippets. If a card needs more than 2 body lines, reduce the text content instead of pushing content lower.
 21. Reserve the bottom 56px of the slide for footer/page numbers. Card content must not enter that footer area even when the card itself is tall.
+22. **Never invent factual metadata.** School, college, organization, teaching/research group, lecturer, author, academic year, semester, date, class, course code, and copyright text may appear only when the user explicitly provided them in the page content or instructions. 学校、学院、单位、教研组、讲师、作者、学年、学期、日期、班级、课程编号等信息，只有用户明确提供时才可以保留；否则禁止猜测或补全。
+23. Do not add placeholder-like text such as “XXX 教研组”, “主讲教师：XXX”, “2025-2026 学年第二学期”, a made-up institution, or an arbitrary date merely to fill a cover, ending slide, header, or footer. If metadata is absent, leave that area empty or use non-text decorative shapes.
 
 ## Educational Slide Layout Patterns
 
@@ -67,6 +69,7 @@ One complete SVG file per page with proper viewBox.
 - Subtitle below (20-24px)
 - Subtle background gradient or color block
 - Optional decorative shapes (abstract circles, lines)
+- Optional metadata only when it is explicitly present in the supplied content; never synthesize lecturer, organization, academic term, or date text
 
 ### Content with Bullets
 - Title at top-left (28-32px)

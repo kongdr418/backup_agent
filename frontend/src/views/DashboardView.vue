@@ -1,6 +1,6 @@
 <template>
   <div class="h-full flex flex-col">
-    <PageHeader title="仪表盘" description="智创空间 · 后端教育内容生成" />
+    <PageHeader title="仪表盘" description="智创空间 · 基于多智能体交互的智慧课堂平台" />
 
     <div class="flex-1 overflow-y-auto">
       <div class="max-w-5xl mx-auto px-6 py-8 space-y-8">
@@ -9,11 +9,26 @@
         <div class="hero-block stagger-children">
           <div class="hero-badge">
             <span class="hero-badge-dot" />
-            AI 内容生成平台
+            多智能体交互智慧课堂
           </div>
-          <h1 class="hero-title">开始你的创作</h1>
-          <p class="hero-sub">从下方模块选择一个，开始生成 PPT、讲义、习题、图文或短视频脚本</p>
+          <h1 class="hero-title">开始你的学习</h1>
+          <p class="hero-sub">从下方模块选择一个，开启围绕学习者画像展开的多智能体个性化学习体验</p>
         </div>
+
+        <section v-if="showProfilePrompt" class="profile-onboarding-banner">
+          <div class="profile-banner-icon">
+            <BrainCircuit class="w-6 h-6" />
+          </div>
+          <div class="profile-banner-copy">
+            <span>首次使用建议</span>
+            <h2>先和 AI 聊几句，让后续学习内容更适合你</h2>
+            <p>通过自然对话建立初始学习画像。画像确认后，这个入口会自动消失。</p>
+          </div>
+          <button type="button" @click="startProfileOnboarding">
+            建立学习画像
+            <ArrowRight class="w-4 h-4" />
+          </button>
+        </section>
 
         <!-- Main action grid — 3 primary modules -->
         <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -130,6 +145,7 @@ import {
   PenLine,
   ClipboardList,
   Video,
+  BrainCircuit,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -143,6 +159,8 @@ import { usePptStore } from '@/stores/pptStore'
 import { getHealth } from '@/api/meta'
 import { listPptJobs } from '@/api/pptSvg'
 import { usePptStream } from '@/composables/usePptStream'
+import { getLearnerProfile } from '@/api/learnerProfile'
+import { needsProfileOnboarding, PROFILE_ONBOARDING_SESSION_KIND } from '@/utils/profileOnboarding'
 
 import type { GeneratedFile, PptGenerateParams } from '@/types'
 
@@ -159,6 +177,7 @@ const recent = ref<GeneratedFile[]>([])
 const svgPptCount = ref(0)
 const healthOk = ref<boolean | null>(null)
 const quickOpen = ref(false)
+const showProfilePrompt = ref(false)
 
 const primary = [
   {
@@ -167,7 +186,7 @@ const primary = [
     icon: MessageSquare,
     iconBg: 'bg-forest-pale',
     iconFg: 'text-brand-forest',
-    desc: '生成讲义、习题、思维导图、图文、短视频脚本',
+    desc: '多智能体协同生成讲义、习题、思维导图和图文内容',
   },
   {
     label: 'PPT 工作台',
@@ -175,7 +194,7 @@ const primary = [
     icon: Presentation,
     iconBg: 'bg-ppt-pale',
     iconFg: 'text-purple-600',
-    desc: 'SVG 多 Agent 流水线，生成带备注的专业幻灯片',
+    desc: '为智慧课堂准备带讲解脚本的学习课件与课堂内容',
   },
   {
     label: '文件库',
@@ -183,7 +202,7 @@ const primary = [
     icon: FolderOpen,
     iconBg: 'bg-amber-pale',
     iconFg: 'text-amber-700',
-    desc: '查看和管理所有生成的文件',
+    desc: '查看和管理课堂资料、学习资源与历史产物',
   },
 ]
 
@@ -269,6 +288,21 @@ async function loadSvgPptCount() {
   }
 }
 
+async function loadProfilePrompt() {
+  try {
+    showProfilePrompt.value = needsProfileOnboarding(await getLearnerProfile())
+  } catch {
+    showProfilePrompt.value = false
+  }
+}
+
+function startProfileOnboarding() {
+  void router.push({
+    path: '/chat',
+    query: { mode: PROFILE_ONBOARDING_SESSION_KIND },
+  })
+}
+
 async function onQuickSubmit(params: PptGenerateParams) {
   pptStore.params = { ...pptStore.params, ...params }
   await router.push('/ppt-studio')
@@ -283,6 +317,7 @@ onMounted(() => {
   checkHealth()
   loadRecent()
   loadSvgPptCount()
+  loadProfilePrompt()
 })
 </script>
 
@@ -326,6 +361,74 @@ onMounted(() => {
 }
 
 /* ── Primary cards ── */
+.profile-onboarding-banner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 22px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgb(var(--forest-rgb) / 0.2);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 88% 10%, rgb(var(--forest-rgb) / 0.13), transparent 34%),
+    linear-gradient(135deg, rgb(var(--forest-rgb) / 0.075), rgb(var(--bg-surface-rgb)) 58%);
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-banner-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  color: rgb(var(--forest-rgb));
+  background: rgb(var(--forest-rgb) / 0.11);
+}
+
+.profile-banner-copy span {
+  color: rgb(var(--forest-rgb));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.profile-banner-copy h2 {
+  margin: 4px 0 5px;
+  color: rgb(var(--ink-1-rgb));
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 18px;
+}
+
+.profile-banner-copy p {
+  margin: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.profile-onboarding-banner button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  color: white;
+  background: rgb(var(--forest-rgb));
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.profile-onboarding-banner button:hover {
+  transform: translateY(-1px);
+}
+
 .primary-card {
   display: flex;
   align-items: center;
@@ -487,6 +590,17 @@ onMounted(() => {
 
 /* ============ Mobile ============ */
 @media (max-width: 767px) {
+  .profile-onboarding-banner {
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    padding: 17px;
+  }
+
+  .profile-onboarding-banner button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .hero-block {
     padding: 4px 0 0;
   }

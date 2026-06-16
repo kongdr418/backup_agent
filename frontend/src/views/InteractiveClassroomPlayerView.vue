@@ -7,7 +7,7 @@
       </button>
       <div class="scene-list-head">
         <div class="scene-list-title">课堂场景</div>
-        <div class="scene-list-meta">{{ currentIndex + 1 }} / {{ orderedScenes.length }}</div>
+        <div class="scene-list-meta">{{ currentIndex + 1 }} / {{ displaySceneTotal }}</div>
       </div>
 
       <button
@@ -23,6 +23,27 @@
           <span class="scene-type">{{ sceneTypeLabel(scene.type) }}</span>
         </span>
       </button>
+
+      <button
+        v-for="scene in lockedPreviewScenes"
+        :key="scene.id"
+        class="scene-btn scene-btn-generating locked"
+        type="button"
+        disabled
+      >
+        <span class="scene-index locked-index">
+          <Lock class="locked-icon" />
+        </span>
+        <span class="scene-copy">
+          <span class="scene-title">{{ scene.title }}</span>
+          <span class="scene-type">正在生成语音与页面</span>
+        </span>
+      </button>
+
+      <div v-if="previewTailStatus" class="scene-generation-status">
+        <span class="status-dot" />
+        <span>{{ previewTailStatus }}</span>
+      </div>
     </aside>
 
     <main class="stage">
@@ -135,10 +156,10 @@
           </div>
 
           <div class="quiz-actions">
-            <button class="primary-btn" :disabled="submitting || !allAnswered" @click="submitQuiz">
+            <button class="primary-btn" :disabled="isGeneratingPreview || submitting || !allAnswered" @click="submitQuiz">
               {{ submitting ? '提交中...' : '提交答案' }}
             </button>
-            <button class="secondary-btn" :disabled="submitting" @click="resetQuiz">重做</button>
+            <button class="secondary-btn" :disabled="isGeneratingPreview || submitting" @click="resetQuiz">重做</button>
             <button class="secondary-btn" :disabled="!currentQuizResult" @click="goNext">下一页</button>
           </div>
 
@@ -216,67 +237,67 @@
               </div>
             </section>
 
-            <section v-if="reportRecommendedTasks.length" class="report-block">
-              <div class="report-label">下一步学习任务</div>
-              <div class="task-list">
-                <article v-for="task in reportRecommendedTasks" :key="task.id" class="task-row">
-                  <div class="task-priority" :class="task.priority">{{ taskPriorityLabel(task.priority) }}</div>
-                  <div class="task-copy">
-                    <div class="task-title">{{ task.title }}</div>
-                    <p>{{ task.description }}</p>
-                    <p v-if="task.reason" class="task-reason">依据：{{ task.reason }}</p>
-                    <div v-if="task.knowledge_points.length" class="tag-row">
-                      <span v-for="point in task.knowledge_points" :key="`${task.id}-${point}`" class="tag task-point">{{ point }}</span>
+            <section v-if="reportKnowledgeEvidence.length" class="report-block">
+              <div class="report-label">课程知识依据</div>
+              <p class="muted-copy">以下知识点已关联到课程大纲标准条目，可用于精准复习。</p>
+              <div class="knowledge-evidence-list">
+                <div v-for="item in reportKnowledgeEvidence" :key="item.raw_name" class="evidence-row">
+                  <div class="evidence-header">
+                    <span class="evidence-label">{{ item.standard_label || item.raw_name }}</span>
+                    <span v-if="item.match_confidence > 0" class="evidence-confidence">{{ Math.round(item.match_confidence * 100) }}% 匹配</span>
+                  </div>
+                  <div v-if="item.evidence.length" class="evidence-sources">
+                    <div v-for="ev in item.evidence" :key="ev.chunk_id" class="evidence-chip">
+                      <span class="evidence-source">{{ ev.evidence_label || ev.source_name }}</span>
+                      <span v-if="ev.section" class="evidence-section">{{ ev.section }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section v-if="reportLearningPath.length" class="report-block learning-path-block">
+              <div class="learning-path-head">
+                <div>
+                  <div class="report-label">个性化学习路径</div>
+                  <p>系统根据答题证据、知识点掌握度和画像策略，规划本节后的连续学习动作。</p>
+                </div>
+                <span class="path-loop-label">诊断 → 规划 → 生成 → 评估</span>
+              </div>
+              <div class="learning-path-list">
+                <article
+                  v-for="(stage, idx) in reportLearningPath"
+                  :key="stage.id"
+                  class="learning-path-stage"
+                  :class="stage.status"
+                >
+                  <div class="path-node">
+                    <span>{{ idx + 1 }}</span>
+                  </div>
+                  <div class="path-stage-copy">
+                    <div class="path-stage-meta">
+                      <strong>{{ stage.agent_name }}</strong>
+                      <em>{{ learningPathStatusLabel(stage.status) }}</em>
+                      <span v-if="stage.metric">{{ stage.metric }}</span>
+                    </div>
+                    <h4>{{ stage.title }}</h4>
+                    <p>{{ stage.description }}</p>
+                    <div v-if="stage.knowledge_points.length" class="tag-row">
+                      <span v-for="point in stage.knowledge_points" :key="`${stage.id}-${point}`" class="tag task-point">{{ point }}</span>
                     </div>
                   </div>
                   <button
-                    class="task-action"
-                    :disabled="!canRunTask(task) || runningTaskId === task.id"
-                    @click="runTask(task)"
+                    v-if="canRunLearningPathStage(stage)"
+                    class="task-action path-action"
+                    :disabled="isLearningPathStageRunning(stage)"
+                    @click="runLearningPathStage(stage)"
                   >
-                    {{ taskButtonLabel(task) }}
+                    {{ learningPathButtonLabel(stage) }}
                   </button>
                 </article>
               </div>
             </section>
 
-            <section class="report-block next-lesson-block">
-              <div class="next-lesson-head">
-                <div>
-                  <div class="report-label">生成下一堂课</div>
-                  <p>基于本节学习报告生成下一课 PPT，开头会先回顾上一课，再进入新内容。</p>
-                </div>
-                <button
-                  class="task-action next-lesson-refresh"
-                  :disabled="nextLessonLoading"
-                  @click="loadNextLessonPlan()"
-                >
-                  {{ nextLessonLoading ? '生成中...' : '刷新建议' }}
-                </button>
-              </div>
-              <div v-if="nextLessonLoading && !nextLessonPlan" class="next-lesson-empty">
-                正在生成下一课建议...
-              </div>
-              <div v-else class="next-lesson-form">
-                <label>
-                  <span>下一课主题</span>
-                  <input v-model.trim="nextLessonDraft.topic" placeholder="例如：K 近邻算法" />
-                </label>
-                <label>
-                  <span>学习目标</span>
-                  <textarea v-model.trim="nextLessonDraft.learningGoal" rows="2" placeholder="这堂课希望学生学会什么" />
-                </label>
-                <label>
-                  <span>重点知识点</span>
-                  <textarea v-model.trim="nextLessonDraft.focusPoints" rows="2" placeholder="用顿号或换行分隔" />
-                </label>
-                <p v-if="nextLessonPlan?.rationale" class="task-reason">依据：{{ nextLessonPlan.rationale }}</p>
-                <button class="next-lesson-primary" :disabled="nextLessonLoading || !nextLessonDraft.topic" @click="openNextLessonInPptStudio">
-                  <Sparkles :size="16" />
-                  生成下一课 PPT
-                </button>
-              </div>
-            </section>
           </div>
         </div>
       </section>
@@ -413,6 +434,85 @@
     />
   </div>
 
+  <div v-else-if="isGeneratingPreview" class="player generating-player">
+    <aside class="scene-list">
+      <button class="back-btn" type="button" title="返回智慧课堂" @click="goBackToList">
+        <ArrowLeft class="back-icon" />
+        <span>返回智慧课堂</span>
+      </button>
+      <div class="scene-list-head">
+        <div class="scene-list-title">课堂场景</div>
+        <div class="scene-list-meta">生成中</div>
+      </div>
+
+      <button
+        v-for="scene in initialLockedPreviewScenes"
+        :key="scene.id"
+        class="scene-btn scene-btn-generating locked"
+        type="button"
+        disabled
+      >
+        <span class="scene-index locked-index">
+          <Lock class="locked-icon" />
+        </span>
+        <span class="scene-copy">
+          <span class="scene-title">{{ scene.title }}</span>
+          <span class="scene-type">等待解锁</span>
+        </span>
+      </button>
+    </aside>
+
+    <main class="stage loading-stage">
+      <section class="classroom-loading-hero">
+        <div class="loading-orbit">
+          <Sparkles class="loading-orbit-icon" />
+        </div>
+        <div class="loading-copy">
+          <span>智慧课堂生成中</span>
+          <h2>正在准备第一段可播放内容</h2>
+          <p>页面和语音会成对解锁，你可以在左侧看到后续课堂节点的生成队列。</p>
+        </div>
+        <div class="loading-steps">
+          <div class="loading-step active">
+            <i />
+            <span>读取课件结构</span>
+          </div>
+          <div class="loading-step active">
+            <i />
+            <span>生成讲解与配音</span>
+          </div>
+          <div class="loading-step">
+            <i />
+            <span>解锁第一页</span>
+          </div>
+        </div>
+      </section>
+      <section class="stage-skeleton">
+        <div class="stage-skeleton-slide">
+          <div class="skeleton-line wide" />
+          <div class="skeleton-line medium" />
+          <div class="skeleton-line short" />
+        </div>
+        <div class="stage-skeleton-narrator">
+          <div class="skeleton-avatar" />
+          <div class="skeleton-copy">
+            <div class="skeleton-line medium" />
+            <div class="skeleton-line wide" />
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="discussion-loading">
+      <div class="discussion-loading-title">课堂讨论</div>
+      <div class="discussion-loading-card">
+        <div class="skeleton-line medium" />
+        <div class="skeleton-line wide" />
+        <div class="skeleton-line short" />
+      </div>
+    </aside>
+  </div>
+
   <div v-else class="loading">加载课堂中...</div>
 </template>
 
@@ -420,15 +520,19 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
-import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Lock, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import { getUserId } from '@/composables/useUserId'
 import {
   createClassroomPractice,
   discussInteractiveClassroom,
   discussInteractiveClassroomStream,
   getNextLessonPlan,
+  isClassroomTerminalEvent,
+  streamInteractiveClassroomGeneration,
+  type ClassroomLearningPathStage,
   type ClassroomRecommendedTask,
   type ClassroomDiscussionMessage,
+  getInteractiveClassroomGenerationStatus,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
   submitInteractiveClassroomAnswer,
@@ -449,10 +553,11 @@ import {
 } from '@/utils/classroomDiscussionState'
 import { applyDiscussionAgentEvent, scopeDiscussionMessageId, upsertDiscussionAssistantMessage } from '@/utils/classroomDiscussionStream'
 import { buildPlayerAnswerState } from '@/utils/classroomAnswers'
-import { emitSceneReviewed, emitRecommendedTaskOpened, emitClassroomCompleted } from '@/utils/classroomEvents'
+import { emitSceneReviewed, emitRecommendedTaskOpened, emitRecommendedTaskCompleted, emitClassroomCompleted } from '@/utils/classroomEvents'
 import { saveNextLessonDraft } from '@/utils/classroomNextLessonDraft'
 import { activeSpeechParagraphIndex, buildSpeechParagraphs } from '@/utils/classroomSpeechHighlight'
 import { computeSpeechAutoScrollTop } from '@/utils/classroomSpeechScroll'
+import { buildLockedPreviewScenes, mergePreviewScene } from '@/utils/classroomPreviewScenes'
 import {
   activeHighlightCue,
   activeHighlightMode,
@@ -462,6 +567,8 @@ import {
   type HighlightCue,
   type HighlightTarget,
 } from '@/utils/classroomHighlight'
+import { clearPersistedClassroomGeneration } from '@/utils/classroomGenerationState'
+import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'
 import { useSettingStore } from '@/stores/settingStore'
@@ -477,6 +584,9 @@ const currentIndex = ref(0)
 const answersByScene = ref<Record<string, Record<string, string[]>>>({})
 const quizResultsByScene = ref<Record<string, QuizSubmitResult | null>>({})
 let classroomLoadVersion = 0
+const previewExpectedSceneTotal = ref(0)
+const previewExpectedSlideTotal = ref(0)
+const previewGenerationStage = ref('')
 const discussionRef = ref<InstanceType<typeof DiscussionSidebar> | null>(null)
 const submitting = ref(false)
 const runningTaskId = ref('')
@@ -515,6 +625,12 @@ const svgMetrics = ref<{
   viewWidth: number
   viewHeight: number
 } | null>(null)
+let previewAbortCtrl: AbortController | null = null
+
+const isGeneratingPreview = computed(() => route.query.generating === '1' && Boolean(route.query.request_id))
+const canRecordLearningEvents = computed(() =>
+  Boolean(classroom.value?.id) && classroom.value?.status !== 'generating' && !isGeneratingPreview.value,
+)
 
 function onAudioLoaded() {
   audioDuration.value = audioRef.value?.duration || 0
@@ -606,7 +722,36 @@ const reportScene = computed<InteractiveClassroomScene>(() => ({
   actions: [],
 }))
 
-const orderedScenes = computed(() => [...baseScenes.value, reportScene.value])
+const orderedScenes = computed(() => (isGeneratingPreview.value ? [...baseScenes.value] : [...baseScenes.value, reportScene.value]))
+
+const lockedPreviewScenes = computed(() => {
+  if (!isGeneratingPreview.value) return []
+  return buildLockedPreviewScenes(
+    baseScenes.value.length,
+    previewExpectedSceneTotal.value,
+    previewExpectedSlideTotal.value || previewExpectedSceneTotal.value,
+  )
+})
+
+const initialLockedPreviewScenes = computed(() => {
+  if (lockedPreviewScenes.value.length) return lockedPreviewScenes.value
+  return buildLockedPreviewScenes(0, 5)
+})
+
+const displaySceneTotal = computed(() => (
+  isGeneratingPreview.value
+    ? Math.max(orderedScenes.value.length + lockedPreviewScenes.value.length, orderedScenes.value.length)
+    : orderedScenes.value.length
+))
+
+const previewTailStatus = computed(() => {
+  if (!isGeneratingPreview.value) return ''
+  if (lockedPreviewScenes.value.length) return ''
+  if (previewGenerationStage.value === 'insert_quizzes') return '正在生成随堂测验'
+  if (previewGenerationStage.value === 'build_scenes' && baseScenes.value.length > 0) return '正在整理知识结构'
+  if (previewGenerationStage.value === 'save') return '正在保存课堂'
+  return ''
+})
 
 const currentScene = computed(() => orderedScenes.value[currentIndex.value] || null)
 const playedSceneIds = computed(() => {
@@ -669,7 +814,17 @@ const reportKnowledgeRows = computed(() => {
   return Object.entries(summary).map(([name, row]) => ({ name, mastery: row.mastery }))
 })
 
+const reportKnowledgeEvidence = computed(() => report.value?.knowledge_evidence || [])
+
 const reportRecommendedTasks = computed(() => report.value?.recommended_tasks || [])
+const reportLearningPath = computed(() => report.value?.learning_path || [])
+const reportTaskById = computed(() => {
+  const rows = new Map<string, ClassroomRecommendedTask>()
+  for (const task of reportRecommendedTasks.value) {
+    rows.set(task.id, task)
+  }
+  return rows
+})
 
 const quizSceneIds = computed(() =>
   baseScenes.value.filter((scene) => scene.type === 'quiz').map((scene) => scene.id),
@@ -687,11 +842,13 @@ const answeredSceneIds = computed(() => {
 })
 
 const isClassroomComplete = computed(() => {
+  if (isGeneratingPreview.value) return false
   if (quizSceneIds.value.length === 0) return true
   return answeredQuizCount.value === quizSceneIds.value.length
 })
 
 const canOpenReportScene = computed(() => {
+  if (isGeneratingPreview.value) return false
   if (quizSceneIds.value.length === 0) return true
   return answeredQuizCount.value === quizSceneIds.value.length
 })
@@ -960,6 +1117,25 @@ function syncDiscussionPersistence() {
   savePersistedDiscussionMessages(classroom.value.id, currentScene.value.id, discussionMessages.value)
 }
 
+/**
+ * 生成预览阶段用 requestId 作为 classroom ID，最终课堂用实际 classroomId。
+ * localStorage 键包含 classroom ID，因此需要把预览阶段的讨论数据
+ * 从旧键迁移到新键，否则刷新后讨论记录会丢失。
+ */
+function migrateDiscussionStorage(
+  fromClassroomId: string,
+  toClassroomId: string,
+  finalScenes: InteractiveClassroomScene[],
+) {
+  for (const scene of finalScenes) {
+    const persisted = loadPersistedDiscussionMessages(fromClassroomId, scene.id)
+    if (persisted && persisted.length > 0) {
+      savePersistedDiscussionMessages(toClassroomId, scene.id, persisted)
+    }
+    clearPersistedDiscussionMessages(fromClassroomId, scene.id)
+  }
+}
+
 function clearDiscussionHistory() {
   if (!classroom.value || !currentScene.value || currentScene.value.type === 'report') return
   discussionMessages.value = []
@@ -1012,7 +1188,7 @@ function selectScene(idx: number) {
     showReport().catch(() => undefined)
   }
   // P7: 复听 — 用户重新进入已访问过的 slide 场景
-  if (target && target.type === 'slide' && classroom.value) {
+  if (target && target.type === 'slide' && classroom.value && canRecordLearningEvents.value) {
     if (visitedSceneIds.value.has(target.id)) {
       emitSceneReviewed(classroom.value.id, target).catch(() => undefined)
     }
@@ -1212,6 +1388,7 @@ async function submitQuiz() {
         content_api_key: settingStore.getEffectiveContentApiKey(),
         content_base_url: settingStore.getEffectiveContentBaseUrl(),
         content_provider_type: settingStore.getContentProviderType(),
+        ...buildClassroomCriticPayload(settingStore.settings),
       },
     )
     quizResultsByScene.value = {
@@ -1337,12 +1514,24 @@ async function showReportAfterClassroomEnd() {
 }
 
 async function loadClassroom() {
+  if (isGeneratingPreview.value) {
+    await loadGeneratingClassroom()
+    return
+  }
   const classroomId = String(route.params.classroomId || '')
   if (!classroomId) return
+  if (classroom.value?.id === classroomId && classroom.value.status !== 'generating') {
+    stopGeneratingPreview()
+    return
+  }
+  stopGeneratingPreview()
   const loadVersion = ++classroomLoadVersion
   clearAdvanceTimer()
   classroom.value = null
   currentIndex.value = 0
+  previewExpectedSceneTotal.value = 0
+  previewExpectedSlideTotal.value = 0
+  previewGenerationStage.value = ''
   report.value = null
   nextLessonPlan.value = null
   nextLessonDraft.value = { topic: '', learningGoal: '', focusPoints: '' }
@@ -1385,18 +1574,194 @@ async function loadClassroom() {
   }
 }
 
+function stopGeneratingPreview() {
+  if (previewAbortCtrl) {
+    try {
+      previewAbortCtrl.abort()
+    } catch {
+      /* ignore */
+    }
+    previewAbortCtrl = null
+  }
+}
+
+function buildPreviewClassroom(requestId: string, topic: string): InteractiveClassroomPayload {
+  return {
+    id: requestId,
+    title: `${topic || '生成中课堂'}（生成中）`,
+    topic: topic || '生成中课堂',
+    course: '',
+    status: 'generating',
+    scenes: [],
+    source: { type: 'generation_preview', request_id: requestId },
+  }
+}
+
+function upsertPreviewScene(scene: InteractiveClassroomScene) {
+  if (!classroom.value) return
+  const wasEmpty = !classroom.value.scenes?.length
+  const result = mergePreviewScene(classroom.value.scenes || [], scene, currentIndex.value)
+  classroom.value = {
+    ...classroom.value,
+    scenes: result.scenes,
+  }
+  currentIndex.value = result.currentIndex
+  if (wasEmpty && result.scenes.length === 1) {
+    visitedSceneIds.value = new Set([scene.id])
+  }
+}
+
+async function loadGeneratingClassroom() {
+  const requestId = String(route.query.request_id || '')
+  if (!requestId) return
+  const topic = String(route.query.topic || '生成中课堂')
+  const loadVersion = ++classroomLoadVersion
+  stopGeneratingPreview()
+  clearAdvanceTimer()
+  currentIndex.value = 0
+  previewExpectedSceneTotal.value = 0
+  previewExpectedSlideTotal.value = 0
+  previewGenerationStage.value = ''
+  report.value = null
+  nextLessonPlan.value = null
+  nextLessonDraft.value = { topic: '', learningGoal: '', focusPoints: '' }
+  answersByScene.value = {}
+  quizResultsByScene.value = {}
+  reportAutoShown.value = false
+  classroomCompletedEmitted.value = false
+  visitedSceneIds.value = new Set()
+  discussionMessages.value = []
+  discussionSubmitting.value = false
+  classroom.value = buildPreviewClassroom(requestId, topic)
+  previewAbortCtrl = new AbortController()
+
+  try {
+    for await (const ev of streamInteractiveClassroomGeneration(requestId, previewAbortCtrl.signal)) {
+      if (loadVersion !== classroomLoadVersion) return
+      if (ev.type === 'classroom_progress') {
+        previewGenerationStage.value = ev.stage || previewGenerationStage.value
+        if (ev.scene_total && ev.scene_total > previewExpectedSceneTotal.value) {
+          previewExpectedSceneTotal.value = ev.scene_total
+        }
+        if (ev.expected_scene_total && ev.expected_scene_total > previewExpectedSceneTotal.value) {
+          previewExpectedSceneTotal.value = ev.expected_scene_total
+        }
+        if (ev.expected_slide_total && ev.expected_slide_total > previewExpectedSlideTotal.value) {
+          previewExpectedSlideTotal.value = ev.expected_slide_total
+        }
+      }
+      if (ev.type === 'classroom_progress' && ev.scene_payload) {
+        upsertPreviewScene(ev.scene_payload)
+      }
+      if (ev.type === 'classroom_done') {
+        const activeSceneId = currentScene.value?.id || ''
+        const previewClassroomId = classroom.value?.id || ''
+        const finalClassroom = await getInteractiveClassroom(ev.classroom_id)
+        if (loadVersion !== classroomLoadVersion) return
+
+        // 生成预览阶段的 classroom ID（requestId）与最终课堂 ID 不同，
+        // localStorage 键包含 classroom ID，需要把预览阶段的讨论数据迁移过去，
+        // 否则刷新后讨论记录会丢失。
+        if (previewClassroomId && previewClassroomId !== ev.classroom_id) {
+          syncDiscussionPersistence()
+          migrateDiscussionStorage(previewClassroomId, ev.classroom_id, finalClassroom.scenes || [])
+        }
+
+        classroom.value = finalClassroom
+        previewExpectedSceneTotal.value = 0
+        previewExpectedSlideTotal.value = 0
+        previewGenerationStage.value = ''
+        if (activeSceneId) {
+          const nextIndex = [...finalClassroom.scenes]
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+            .findIndex((scene) => scene.id === activeSceneId)
+          if (nextIndex >= 0) currentIndex.value = nextIndex
+        }
+        stopGeneratingPreview()
+        clearPersistedClassroomGeneration()
+        await router.replace({
+          name: 'interactive-classroom-player',
+          params: { classroomId: ev.classroom_id },
+        })
+        return
+      }
+      if (ev.type === 'classroom_cancelled') {
+        message.info('课堂生成已停止')
+        clearPersistedClassroomGeneration()
+        await router.replace({ name: 'interactive-classroom-home' })
+        return
+      }
+      if (ev.type === 'classroom_error') {
+        message.error(ev.error || '课堂生成失败')
+        clearPersistedClassroomGeneration()
+        await router.replace({ name: 'interactive-classroom-home' })
+        return
+      }
+      if (isClassroomTerminalEvent(ev)) return
+    }
+    await settleGeneratingPreview(requestId, loadVersion)
+  } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return
+    const text = err instanceof Error ? err.message : '生成进度连接失败'
+    const settled = await settleGeneratingPreview(requestId, loadVersion, text)
+    if (!settled) message.error(text)
+  }
+}
+
+async function settleGeneratingPreview(
+  requestId: string,
+  loadVersion: number,
+  streamError = '',
+) {
+  try {
+    const job = await getInteractiveClassroomGenerationStatus(requestId)
+    if (loadVersion !== classroomLoadVersion) return true
+    if (job.status === 'done' && job.classroom_id) {
+      clearPersistedClassroomGeneration()
+      await router.replace({
+        name: 'interactive-classroom-player',
+        params: { classroomId: job.classroom_id },
+      })
+      return true
+    }
+    if (job.status === 'cancelled') {
+      message.info('课堂生成已停止')
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    if (job.status === 'error') {
+      message.error(job.error || '课堂生成失败')
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    return false
+  } catch (err) {
+    if (loadVersion !== classroomLoadVersion) return true
+    const text = err instanceof Error ? err.message : streamError
+    if (text.includes('404') || text.includes('生成任务不存在')) {
+      clearPersistedClassroomGeneration()
+      await router.replace({ name: 'interactive-classroom-home' })
+      return true
+    }
+    return false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 onBeforeUnmount(() => {
   classroomLoadVersion += 1
+  stopGeneratingPreview()
   clearAdvanceTimer()
   window.removeEventListener('resize', refreshSvgHighlightMetrics)
 })
 
 watch(
-  () => route.params.classroomId,
+  () => [route.params.classroomId, route.query.request_id, route.query.generating],
   () => {
     loadClassroom().catch(() => undefined)
   },
@@ -1454,7 +1819,7 @@ watch(
 watch(
   isClassroomComplete,
   (complete) => {
-    if (complete && !classroomCompletedEmitted.value && classroom.value) {
+    if (complete && !classroomCompletedEmitted.value && classroom.value && canRecordLearningEvents.value) {
       classroomCompletedEmitted.value = true
       emitClassroomCompleted(
         classroom.value.id,
@@ -1469,6 +1834,7 @@ watch(
   () => [currentScene.value?.id, currentAudioUrl.value, autoPlayEnabled.value, currentQuizResult.value?.score],
   async () => {
     clearAdvanceTimer()
+    if (isGeneratingPreview.value) return
     if (!autoPlayEnabled.value) return
 
     const isQuiz = currentScene.value?.type === 'quiz'
@@ -1498,12 +1864,17 @@ watch(
 )
 
 function formatSceneTitle(scene: InteractiveClassroomScene): string {
-  const rawTitle = scene.title || ''
+  const cleanTitleText = (value: string) => value
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const rawTitle = cleanTitleText(scene.title || '')
   // 跳过默认占位标题：page 1、slide 1、第 1 页、1 等
   if (rawTitle && !/^(page|slide|p|s)\s*\d+$/i.test(rawTitle) && !/^第\s*\d+\s*页?$/.test(rawTitle) && !/^\d+$/.test(rawTitle)) {
     return rawTitle
   }
-  const speech = scene.actions?.find((a) => a.type === 'speech')?.text || ''
+  const speech = cleanTitleText(scene.actions?.find((a) => a.type === 'speech')?.text || '')
   if (speech) {
     const clean = speech.replace(/^这一页的主题是[“\"]/, '').replace(/[”\"]。.*/, '').trim()
     if (clean.length >= 2 && clean.length <= 20) return clean
@@ -1511,7 +1882,7 @@ function formatSceneTitle(scene: InteractiveClassroomScene): string {
     if (firstSentence.length >= 2 && firstSentence.length <= 20) return firstSentence
     if (firstSentence.length > 20) return firstSentence.slice(0, 18) + '...'
   }
-  const kp = scene.knowledge_points?.[0]
+  const kp = cleanTitleText(scene.knowledge_points?.[0] || '')
   if (kp && kp.length >= 2 && kp.length <= 20) return kp
   if (kp && kp.length > 20) return kp.slice(0, 18) + '...'
   return rawTitle || '课堂内容'
@@ -1528,6 +1899,52 @@ function taskPriorityLabel(priority: string) {
   if (priority === 'high') return '优先'
   if (priority === 'medium') return '建议'
   return '拓展'
+}
+
+function learningPathStatusLabel(status: string) {
+  if (status === 'active') return '进行中'
+  if (status === 'pending') return '待执行'
+  if (status === 'completed') return '已完成'
+  if (status === 'locked') return '待解锁'
+  if (status === 'needs_attention') return '需关注'
+  return status || '待执行'
+}
+
+function learningPathActionTask(stage: ClassroomLearningPathStage) {
+  if (!stage.task_id) return null
+  return reportTaskById.value.get(stage.task_id) || null
+}
+
+function canRunLearningPathStage(stage: ClassroomLearningPathStage) {
+  return Boolean(stage.generated_classroom_id || stage.type === 'next_lesson' || learningPathActionTask(stage))
+}
+
+function learningPathButtonLabel(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') return stage.action_label || '规划下一课'
+  if (stage.generated_classroom_id) return stage.action_label || '查看练习'
+  const task = learningPathActionTask(stage)
+  return task ? taskButtonLabel(task) : stage.action_label || '查看'
+}
+
+function isLearningPathStageRunning(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') return nextLessonLoading.value
+  return Boolean(stage.task_id && runningTaskId.value === stage.task_id)
+}
+
+async function runLearningPathStage(stage: ClassroomLearningPathStage) {
+  if (stage.type === 'next_lesson') {
+    await openNextLessonInPptStudio()
+    return
+  }
+  if (stage.generated_classroom_id) {
+    await router.push({
+      name: 'interactive-classroom-player',
+      params: { classroomId: stage.generated_classroom_id },
+    })
+    return
+  }
+  const task = learningPathActionTask(stage)
+  if (task) await runTask(task)
 }
 
 function getTaskAction(task: ClassroomRecommendedTask) {
@@ -1571,6 +1988,16 @@ async function runTask(task: ClassroomRecommendedTask) {
     const targetIndex = orderedScenes.value.findIndex((scene) => scene.id === action.sceneId)
     if (targetIndex >= 0) {
       selectScene(targetIndex)
+      if (task.type === 'review_weak_points' && classroom.value) {
+        await emitRecommendedTaskCompleted(
+          classroom.value.id,
+          task.id,
+          task.type,
+          task.knowledge_points,
+          { status: 'reviewed' },
+        )
+        await loadReport(true)
+      }
       return
     }
     message.warning('目标课堂场景不存在')
@@ -1693,8 +2120,25 @@ async function runTask(task: ClassroomRecommendedTask) {
   opacity: 0.55;
 }
 
+.scene-btn:disabled {
+  cursor: not-allowed;
+}
+
 .scene-btn.locked:hover {
   background: transparent;
+}
+
+.scene-btn-generating {
+  border-color: rgba(15, 23, 42, 0.06);
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.025), rgba(15, 23, 42, 0.055), rgba(15, 23, 42, 0.025));
+  background-size: 180% 100%;
+  animation: locked-row-sheen 1.8s ease-in-out infinite;
+}
+
+.scene-btn-generating.locked:hover {
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.025), rgba(15, 23, 42, 0.055), rgba(15, 23, 42, 0.025));
 }
 
 .scene-index {
@@ -1707,6 +2151,15 @@ async function runTask(task: ClassroomRecommendedTask) {
   background: rgb(var(--bg-base-rgb));
   color: rgb(var(--ink-2-rgb));
   font-size: 12px;
+}
+
+.locked-index {
+  color: rgb(var(--ink-3-rgb));
+}
+
+.locked-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .scene-copy {
@@ -1728,11 +2181,253 @@ async function runTask(task: ClassroomRecommendedTask) {
   color: rgb(var(--ink-3-rgb));
 }
 
+.scene-generation-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 4px 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #2D5016;
+  box-shadow: 0 0 0 4px rgba(45, 80, 22, 0.10);
+  animation: status-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes locked-row-sheen {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .stage {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+.generating-player {
+  background:
+    linear-gradient(135deg, rgba(45, 80, 22, 0.035), transparent 28%),
+    linear-gradient(315deg, rgba(15, 23, 42, 0.035), transparent 32%),
+    rgb(var(--bg-base-rgb));
+}
+
+.loading-stage {
+  padding: 28px;
+  gap: 18px;
+  overflow: auto;
+}
+
+.classroom-loading-hero {
+  min-height: 260px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(45, 80, 22, 0.10), transparent 32%),
+    linear-gradient(135deg, rgb(var(--bg-surface-rgb)), rgb(var(--bg-base-rgb)));
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 220px;
+  gap: 22px;
+  align-items: center;
+  padding: 28px;
+}
+
+.loading-orbit {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  border: 1px solid rgba(45, 80, 22, 0.18);
+  background: rgba(45, 80, 22, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.loading-orbit::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  border: 1px solid rgba(45, 80, 22, 0.12);
+  animation: loading-ring 1.6s ease-in-out infinite;
+}
+
+.loading-orbit-icon {
+  width: 28px;
+  height: 28px;
+  color: #2D5016;
+}
+
+.loading-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.loading-copy span {
+  color: #2D5016;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.loading-copy h2 {
+  margin: 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.loading-copy p {
+  margin: 0;
+  max-width: 560px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.loading-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.loading-step {
+  min-height: 38px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 0 12px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.loading-step i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--line-rgb));
+}
+
+.loading-step.active i {
+  background: #2D5016;
+  box-shadow: 0 0 0 4px rgba(45, 80, 22, 0.10);
+}
+
+.stage-skeleton {
+  display: grid;
+  gap: 14px;
+}
+
+.stage-skeleton-slide,
+.stage-skeleton-narrator,
+.discussion-loading-card {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.stage-skeleton-slide {
+  aspect-ratio: 16 / 7.6;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+}
+
+.stage-skeleton-narrator {
+  min-height: 118px;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+}
+
+.skeleton-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: rgba(45, 80, 22, 0.10);
+}
+
+.skeleton-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.11), rgba(15, 23, 42, 0.06));
+  background-size: 180% 100%;
+  animation: locked-row-sheen 1.8s ease-in-out infinite;
+}
+
+.skeleton-line.wide {
+  width: min(520px, 78%);
+}
+
+.skeleton-line.medium {
+  width: min(360px, 62%);
+}
+
+.skeleton-line.short {
+  width: min(220px, 42%);
+}
+
+.discussion-loading {
+  border-left: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  padding: 22px;
+}
+
+.discussion-loading-title {
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.discussion-loading-card {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  border-style: dashed;
+}
+
+@keyframes loading-ring {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
 }
 
 .stage-header {
@@ -2421,6 +3116,232 @@ async function runTask(task: ClassroomRecommendedTask) {
   background: rgb(16 185 129);
 }
 
+.knowledge-evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-row {
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgb(var(--bg-subtle-rgb));
+}
+
+.evidence-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evidence-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--ink-1-rgb));
+}
+
+.evidence-confidence {
+  font-size: 11px;
+  color: rgb(16 185 129);
+  font-weight: 600;
+}
+
+.evidence-sources {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.evidence-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgb(var(--ink-3-rgb));
+  background: rgb(var(--bg-base-rgb));
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.evidence-source {
+  font-weight: 500;
+}
+
+.evidence-section {
+  color: rgb(var(--ink-3-rgb));
+  opacity: 0.7;
+}
+
+.learning-path-block {
+  gap: 12px;
+}
+
+.learning-path-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.learning-path-head p {
+  margin: 5px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.path-loop-label {
+  flex: 0 0 auto;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.learning-path-list {
+  position: relative;
+  display: grid;
+  gap: 10px;
+}
+
+.learning-path-list::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 17px;
+  width: 1px;
+  background: rgb(var(--line-rgb));
+}
+
+.learning-path-stage {
+  position: relative;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: rgb(var(--bg-surface-rgb));
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.learning-path-stage.active,
+.learning-path-stage.needs_attention {
+  border-color: rgb(var(--nav-classroom-rgb) / 0.42);
+  box-shadow: inset 3px 0 0 rgb(var(--nav-classroom-rgb));
+}
+
+.learning-path-stage.completed {
+  border-color: rgb(45 80 22 / 0.20);
+  background: rgb(var(--bg-surface-rgb));
+  box-shadow: inset 3px 0 0 rgb(45 80 22 / 0.55);
+}
+
+.path-node {
+  position: relative;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-base-rgb));
+  display: grid;
+  place-items: center;
+}
+
+.path-node span {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgb(var(--ink-1-rgb));
+  color: rgb(var(--bg-surface-rgb));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.learning-path-stage.completed .path-node {
+  border-color: rgb(45 80 22 / 0.22);
+  background: rgb(var(--bg-surface-rgb));
+}
+
+.learning-path-stage.completed .path-node span {
+  background: rgb(45 80 22);
+  color: white;
+}
+
+.learning-path-stage.pending .path-node span,
+.learning-path-stage.locked .path-node span {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-3-rgb));
+}
+
+.path-stage-copy {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.path-stage-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+}
+
+.path-stage-meta strong {
+  color: rgb(var(--ink-2-rgb));
+}
+
+.path-stage-meta em,
+.path-stage-meta span {
+  font-style: normal;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgb(var(--bg-subtle-rgb));
+}
+
+.learning-path-stage.completed .path-stage-meta em,
+.learning-path-stage.completed .path-stage-meta span {
+  color: rgb(45 80 22);
+  background: rgb(45 80 22 / 0.08);
+}
+
+.learning-path-stage.active .path-stage-meta em,
+.learning-path-stage.active .path-stage-meta span,
+.learning-path-stage.needs_attention .path-stage-meta em,
+.learning-path-stage.needs_attention .path-stage-meta span {
+  color: rgb(var(--nav-classroom-rgb));
+  background: rgb(var(--nav-classroom-rgb) / 0.08);
+}
+
+.path-stage-copy h4 {
+  margin: 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.path-stage-copy p {
+  margin: 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.path-action {
+  align-self: center;
+}
+
 .task-list {
   display: grid;
   gap: 10px;
@@ -2882,9 +3803,19 @@ async function runTask(task: ClassroomRecommendedTask) {
   .report-grid,
   .report-columns,
   .report-hero,
+  .learning-path-head,
+  .learning-path-stage,
   .task-row,
   .mastery-row {
     grid-template-columns: 1fr;
+  }
+
+  .learning-path-head {
+    display: grid;
+  }
+
+  .path-loop-label {
+    width: fit-content;
   }
 
   .task-action {

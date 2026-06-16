@@ -1,6 +1,8 @@
-# AI Creator Frontend
+# 智创空间 · 前端
 
-Vue 3 + TypeScript + Vite 实现的前端,完整对接 `backup_agent` 后端 (Flask, http://127.0.0.1:5000)。
+> 项目全称：**智创空间 —— 基于多智能体交互的智慧课堂平台**（中国软件杯 A3 赛题 · 学生为中心的学习多智能体系统）
+
+Vue 3 + TypeScript + Vite 实现的前端，完整对接 `backup_agent` 后端 (Flask, http://127.0.0.1:5000)。
 
 ## 技术栈
 
@@ -71,11 +73,15 @@ npm run type-check # 仅类型检查
 | 路径 | 说明 |
 |---|---|
 | `/` | 仪表盘 |
-| `/chat` | 对话生成 (讲义/讲稿/习题/卡片/思维导图/图文/短视频) |
-| `/ppt-studio` | PPT 工作台 (新版 SVG 多 Agent 流水线) |
+| `/chat` | 对话生成 (讲义/讲稿/习题/卡片/思维导图/图文/微课视频) |
+| `/ppt-studio` | PPT 工作台 (SVG 多 Agent 流水线) |
+| `/video-studio` | 微课视频工作台 |
+| `/interactive-classroom` | 互动课堂首页（多智能体智慧课堂入口） |
+| `/interactive-classroom/:id` | 互动课堂播放器 |
 | `/library` | 文件库 |
 | `/settings` | 设置 |
 | `/memory` | 记忆 |
+| `/student-profile` | 学习者画像 |
 
 ## 设计原则
 
@@ -87,6 +93,8 @@ npm run type-check # 仅类型检查
 - 字体: Inter + HarmonyOS Sans SC + JetBrains Mono (全部 SIL OFL / 华为开源,免费可商用)
 
 ## 持久化
+
+> 说明：键名前缀 `ai_creator.*` 是历史遗留，**为避免老用户数据丢失保留不变**，并不代表当前产品名。
 
 - `ai_creator.sessions` - 会话列表
 - `ai_creator.current_session_id` - 当前会话

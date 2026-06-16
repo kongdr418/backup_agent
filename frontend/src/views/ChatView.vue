@@ -119,22 +119,47 @@
 
         <div ref="scrollEl" class="chat-scroll" :class="chatView.isSplit ? 'is-split' : ''">
           <div class="chat-stream">
+            <section v-if="profileInterviewActive" class="onboarding-mode-bar">
+              <div class="onboarding-mode-icon"><BrainCircuit class="w-4 h-4" /></div>
+              <div>
+                <strong>正在建立你的学习画像</strong>
+                <span>通过自然对话了解你的基础、目标和学习偏好，确认前不会保存。</span>
+              </div>
+              <small>{{ onboardingProgress }}</small>
+            </section>
+
             <EmptyState
-              v-if="messages.length === 0"
+              v-if="messages.length === 0 && !isProfileOnboarding"
               :icon="Sparkles"
               title="开始一段新对话"
-              description="输入主题，生成讲义、习题、思维导图、图文或短视频脚本。"
+              description="输入主题，让多智能体协同生成讲义、习题、思维导图或图文内容。"
             />
 
             <ChatMessage
               v-for="m in messages"
               :key="m.id"
               :message="m"
+              :allow-actions="!profileInterviewActive"
+            />
+
+            <ProfileOnboardingSummary
+              v-if="profileInterviewActive && onboardingState?.completed"
+              :state="onboardingState"
+              :loading="activeLoading"
+              @continue="profileOnboarding.continueEditing"
+              @confirm="profileOnboarding.confirm"
             />
           </div>
         </div>
 
-        <ChatInput :is-loading="isLoading" @send="onSend" @cancel="cancel" />
+        <ChatInput
+          v-if="!profileInterviewActive || !onboardingState?.completed"
+          :is-loading="activeLoading"
+          :mode="profileInterviewActive ? 'profile_onboarding' : 'chat'"
+          :can-cancel="!profileInterviewActive"
+          @send="onSend"
+          @cancel="cancel"
+        />
       </div>
 
       <!-- Document viewer column (only when split) -->
@@ -168,27 +193,49 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { NModal, NInput, useDialog } from 'naive-ui'
-import { Plus, MessageSquare, Pencil, Trash2, Sparkles, Menu, X } from 'lucide-vue-next'
+import { Plus, MessageSquare, Pencil, Trash2, Sparkles, Menu, X, BrainCircuit } from 'lucide-vue-next'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useChatViewStore } from '@/stores/chatViewStore'
 import { useChat } from '@/composables/useChat'
+import { useProfileOnboardingConversation } from '@/composables/useProfileOnboardingConversation'
 import { useRefreshGuard } from '@/composables/useRefreshGuard'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import DocumentViewer from '@/components/chat/DocumentViewer.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import ProfileOnboardingSummary from '@/components/profile/ProfileOnboardingSummary.vue'
+import { PROFILE_ONBOARDING_SESSION_KIND } from '@/utils/profileOnboarding'
 
+const route = useRoute()
+const router = useRouter()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const chatView = useChatViewStore()
 const { messages, isLoading, sendMessage, cancel } = useChat()
+const profileOnboarding = useProfileOnboardingConversation()
 const dialog = useDialog()
 useRefreshGuard()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const mobileMenuOpen = ref(false)
+const isProfileOnboarding = computed(
+  () => sessionStore.currentSession?.kind === PROFILE_ONBOARDING_SESSION_KIND,
+)
+const onboardingState = computed(() => profileOnboarding.state.value)
+const profileInterviewActive = computed(
+  () => isProfileOnboarding.value && !onboardingState.value?.confirmed,
+)
+const activeLoading = computed(() => (
+  profileInterviewActive.value ? profileOnboarding.isLoading.value : isLoading.value
+))
+const onboardingProgress = computed(() => {
+  if (onboardingState.value?.confirmed) return '画像已保存'
+  if (onboardingState.value?.completed) return '等待你确认'
+  return '可随时离开，稍后继续'
+})
 
 // 当前展开的消息
 const expandedMessage = computed(() => {
@@ -196,9 +243,11 @@ const expandedMessage = computed(() => {
   return messages.value.find((m) => m.id === chatView.expandedMessageId) || null
 })
 
-onMounted(() => {
+onMounted(async () => {
   chatView.init()
-  if (sessionStore.sessions.length === 0) {
+  if (route.query.mode === PROFILE_ONBOARDING_SESSION_KIND) {
+    await profileOnboarding.startOrResume({ reopenConfirmed: true })
+  } else if (sessionStore.sessions.length === 0) {
     sessionStore.createSession()
   } else if (!sessionStore.currentSessionId) {
     sessionStore.switchSession(sessionStore.sessions[0].id)
@@ -237,10 +286,12 @@ function scrollToBottom() {
 function newChat() {
   sessionStore.createSession()
   chatView.collapse()
+  if (route.query.mode) void router.replace('/chat')
 }
 
 function switchTo(id: string) {
   sessionStore.switchSession(id)
+  if (route.query.mode) void router.replace('/chat')
 }
 
 const renameShow = ref(false)
@@ -273,10 +324,14 @@ function askDelete(id: string, name: string) {
 }
 
 async function onSend(text: string) {
+  if (profileInterviewActive.value) {
+    await profileOnboarding.sendMessage(text)
+    return
+  }
   await sendMessage(text)
 }
 
-const _ = computed(() => isLoading.value)
+const _ = computed(() => activeLoading.value)
 </script>
 
 <style scoped>
@@ -398,6 +453,43 @@ const _ = computed(() => isLoading.value)
   display: flex;
   flex-direction: column;
   gap: 28px;
+}
+
+.onboarding-mode-bar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border: 1px solid rgb(var(--forest-rgb) / 0.18);
+  border-radius: 14px;
+  background: rgb(var(--forest-rgb) / 0.055);
+}
+
+.onboarding-mode-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: rgb(var(--forest-rgb));
+  background: rgb(var(--forest-rgb) / 0.11);
+}
+
+.onboarding-mode-bar div:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+
+.onboarding-mode-bar strong {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 12.5px;
+}
+
+.onboarding-mode-bar span,
+.onboarding-mode-bar small {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
 }
 
 /* 分栏模式收紧 */

@@ -86,30 +86,6 @@ export function useChat() {
           })
         }
 
-        if (ev.type === 'ppt_preview_start') {
-          chatStore.updateLastMessage(sid, (m) => {
-            m.type = 'ppt_preview'
-            m.data = {
-              totalPages: ev.total_pages,
-              filename: ev.filename,
-              slides: [],
-            }
-          })
-        }
-
-        if (ev.type === 'ppt_slide' && ev.base64) {
-          chatStore.updateLastMessage(sid, (m) => {
-            if (!m.data) m.data = {}
-            const arr = (m.data.slides as Array<{ page: number; base64: string; title: string }>) || []
-            arr.push({
-              page: Number(ev.page) || arr.length + 1,
-              base64: String(ev.base64),
-              title: String(ev.title || ''),
-            })
-            m.data.slides = arr
-          })
-        }
-
         if (ev.type === 'graphic_text_data' && ev.xiaohongshu) {
           chatStore.updateLastMessage(sid, (m) => {
             m.data = { ...(m.data || {}), xiaohongshu: ev.xiaohongshu }
@@ -133,7 +109,7 @@ export function useChat() {
         if (ev.type === 'progress') {
           chatStore.updateLastMessage(sid, (m) => {
             // Don't let progress overwrite media card types
-            const isMedia = m.type === 'graphic_image' || m.type === 'video_audio' || m.type === 'ppt_preview'
+            const isMedia = m.type === 'graphic_image' || m.type === 'video_audio'
             if (!isMedia) {
               m.type = 'progress'
             }

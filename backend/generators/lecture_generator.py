@@ -1,6 +1,6 @@
 """
 课程讲义生成器
-为教师生成 Markdown 格式的课程讲义
+面向智创空间智慧课堂的学生学习场景，生成 Markdown 格式的课程讲义。
 """
 
 import os
@@ -8,13 +8,62 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from learner_profile.storage import LearnerProfileStorage
+
 
 class LectureGenerator:
     """课程讲义生成器"""
-    
+
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_lectures")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        # 延迟初始化，避免循环导入
+        self._profile_storage = None
+
+    def _get_profile_storage(self):
+        """延迟获取画像存储实例"""
+        if self._profile_storage is None:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._profile_storage = LearnerProfileStorage(backend_dir)
+        return self._profile_storage
+
+    def _load_profile_hint(self, user_id: str) -> str:
+        """加载学生画像并生成提示词片段"""
+        if not user_id or user_id == 'anonymous':
+            return ""
+        try:
+            storage = self._get_profile_storage()
+            profile = storage.load_profile(user_id)
+            basic = profile.get("basic", {})
+            preferences = profile.get("preferences", {})
+
+            stage = basic.get("learning_stage") or ""
+            basis = basic.get("learning_basis") or ""
+            background = basic.get("background") or ""
+            goal = preferences.get("goal") or ""
+            difficulty = preferences.get("preferred_difficulty") or ""
+            content_style = preferences.get("content_style", [])
+            style_str = "、".join(content_style) if content_style else ""
+
+            parts = []
+            if stage:
+                parts.append(f"学习阶段：{stage}")
+            if basis:
+                parts.append(f"当前基础：{basis}")
+            if background:
+                parts.append(f"学习背景：{background}")
+            if goal:
+                parts.append(f"学习目标：{goal}")
+            if difficulty:
+                parts.append(f"期望难度：{difficulty}")
+            if style_str:
+                parts.append(f"内容偏好：{style_str}")
+
+            if parts:
+                return "\n\n【学生画像信息】\n" + "\n".join(parts) + "\n请根据以上画像信息调整讲义内容深度、案例类型和讲解方式。"
+        except Exception:
+            pass
+        return ""
     
     def parse_lecture_request(self, message: str) -> dict:
         """
@@ -43,90 +92,90 @@ class LectureGenerator:
         
         return None
     
-    def generate_lecture_prompt(self, topic: str) -> str:
+    def generate_lecture_prompt(self, topic: str, user_id: str = 'anonymous') -> str:
         """生成用于 AI 的提示词"""
-        return f'''请为"{topic}"这个主题生成一份详细的教师课程讲义。
+        profile_hint = self._load_profile_hint(user_id)
+
+        return f'''请为"{topic}"这个主题生成一份详细的学习讲义，帮助你系统地理解和掌握这个知识点。
 
 请按以下 Markdown 格式返回：
 
-# {topic} 课程讲义
+# {topic} 学习讲义
 
-## 一、基础信息
+## 一、学习概览
 
 | 项目 | 内容 |
 |------|------|
 | **内容提要** | [本讲主要内容的简要概述，分1-2点列出] |
-| **知识目标** | [学生应了解/掌握/理解的具体知识点] |
-| **能力目标** | [学生应提高的能力，能运用的方法或技能] |
-| **情感目标** | [应激发/培养的兴趣、精神或态度] |
-| **教学重点** | [本讲核心知识点] |
-| **教学难点** | [学生理解或掌握有困难的地方] |
-| **教学方法** | [讲授法、练习法、讨论法、案例法等] |
-| **教学手段** | [多媒体课件、学习平台、雨课堂等] |
-| **学时** | X学时 |
+| **学习目标** | [你应该了解/掌握/理解的具体知识点] |
+| **能力目标** | [你应该提高的能力，能运用的方法或技能] |
+| **学习重点** | [本讲核心知识点] |
+| **学习难点** | [可能理解或掌握有困难的地方] |
+| **建议学时** | X学时 |
+{profile_hint}
 
 ---
 
-## 二、授课内容
+## 二、学习内容
 
-### 【课堂导入】（5分钟）
+### 【导入】（5分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| [介绍本课程/本讲内容的地位和作用，说明学习方法，建立与本节的关联。激发学习兴趣，引入主题] | **播放PPT/课件演示**<br>**教师讲解**<br>引导学生思考，建立知识衔接 |
+| [介绍本讲内容的地位和作用，说明学习方法，建立与已学知识的关联。激发学习兴趣，引入主题] | **阅读导引**<br>**思考问题**<br>建立知识衔接 |
 
 ---
 
-### 【讲解新知】（主体时间）
+### 【核心知识讲解】（主体时间）
 
 #### 知识点一：[名称]（X分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| **概念/原理讲解：**<br><br>[详细解释概念定义、核心原理，注意准确性和逻辑性]<br><br>**示例/案例：**<br><br>[具体例子，含详细分析或推导过程]<br><br>**注意事项：**<br>- [易错点1]<br>- [易错点2] | **教师板书**<br>**课件演示**<br>**教师示范，学生练习**<br>**启发学生发现规律**<br>**提示学生：此处为后面内容奠定理论基础** |
+| **概念/原理讲解：**<br><br>[详细解释概念定义、核心原理，注意准确性和逻辑性]<br><br>**示例/案例：**<br><br>[具体例子，含详细分析或推导过程]<br><br>**注意事项：**<br>- [易错点1]<br>- [易错点2] | **仔细阅读**<br>**动手实践**<br>**尝试自己推导**<br>**发现规律**<br>**做好笔记** |
 
 #### 知识点二：[名称]（X分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| [同上格式：概念讲解 + 示例/案例 + 注意事项] | [教师讲解/学生练习/互动问答/小组讨论等] |
+| [同上格式：概念讲解 + 示例/案例 + 注意事项] | [阅读/实践/思考/总结等] |
 
 ---
 
 ### 【随堂练习】（6分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| **练习题：**<br>1. [基础巩固题]<br>2. [基础巩固题]<br><br>**参考答案要点：**<br>[简要说明解题思路] | **学生练习**<br>**学习平台发布练习题**<br>**教师点拨学生**<br>**注意常见错误** |
+| **练习题：**<br>1. [基础巩固题]<br>2. [基础巩固题]<br><br>**参考答案要点：**<br>[简要说明解题思路] | **独立完成**<br>**对照答案**<br>**标记错题**<br>**总结方法** |
 
 ---
 
 ### 【拓展提升】（10-12分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| **思考题/综合题：**<br>1. [进阶题目，考查综合运用能力]<br>2. [开放性讨论或案例分析]<br><br>**思路点拨：**<br>[引导学生思考的方向] | **小组讨论**<br>**学生展示**<br>**教师点评总结** |
+| **思考题/综合题：**<br>1. [进阶题目，考查综合运用能力]<br>2. [开放性讨论或案例分析]<br><br>**思路点拨：**<br>[引导思考的方向] | **深入思考**<br>**尝试解答**<br>**总结方法** |
 
 ---
 
-### 【课堂小结】（1-2分钟）
+### 【本讲小结】（1-2分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| 1. 回顾本节课主要内容：[列出核心知识点]<br>2. 强调重点和难点<br>3. 预告下节课内容：[简要说明下节主题] | **教师总结**<br>**学生复述要点** |
+| 1. 回顾本讲主要内容：[列出核心知识点]<br>2. 强调重点和难点<br>3. 预告下讲内容：[简要说明下节主题] | **回顾总结**<br>**整理笔记** |
 
 ---
 
-### 【课后作业】（1分钟）
+### 【课后任务】（1分钟）
 
-| 授课内容 | 教学活动 |
+| 学习内容 | 学习活动 |
 |---------|---------|
-| 1. [具体作业任务，如完成在线作业/习题]<br>2. [阅读材料或观看视频]<br>3. [预习下节内容] | **布置作业**<br>**说明提交方式和时间** |
+| 1. [具体任务，如完成在线练习/习题]<br>2. [阅读材料或观看视频]<br>3. [预习下讲内容] | **按时完成**<br>**记录疑问** |
 
 ---
 
-## 三、板书设计
-【主板书】
+## 三、知识框架
+【核心知识结构】
 {topic}
 │
 ├─ 一、 [核心概念/模块一]
@@ -141,21 +190,21 @@ class LectureGenerator:
 └─ 三、 [核心概念/模块三]
 └─ ...
 
-【副板书】
-补充说明/推导过程
-学生提问解答
-临时演算/示例
+【学习要点】
+重点概念整理
+易错点提醒
+记忆技巧
 
 ---
 
-## 四、教学反思
+## 四、学习反思
 
 | 项目 | 内容 |
 |------|------|
-| **预设效果** | [预期达成的教学效果] |
-| **课堂反馈** | [观察到的学生反应、参与度] |
-| **存在问题** | [实际授课中可能遇到的问题] |
-| **改进措施** | [针对问题的调整方案] |
+| **学习效果** | [预期达成的学习效果] |
+| **学习建议** | [针对不同基础的学习建议] |
+| **常见问题** | [学习中可能遇到的问题] |
+| **改进方向** | [针对问题的调整方案] |
 
 ---
 
@@ -179,12 +228,12 @@ class LectureGenerator:
 - [推荐书目/文章2]
 
 要求：
-内容详实，适合教师直接用于授课
-采用"授课内容 + 教学活动"双栏对应格式
-每个环节标注具体时长（参考：导入5分钟、新知主体、随堂练习6分钟、拓展提升10-12分钟、小结1-2分钟、作业1分钟）
-提供结构化的板书设计建议
+内容详实，适合学习者直接用于自学
+采用"学习内容 + 学习活动"双栏对应格式
+每个环节标注具体时长
+提供结构化的知识框架
 包含基础练习和拓展提升两个层次
-教学反思包含预设效果、课堂反馈、存在问题、改进措施
+学习反思包含学习效果、学习建议、常见问题、改进方向
 只返回 Markdown 内容，不要其他说明'''
 
     def create_lecture_file(self, topic: str, content: str) -> str:

@@ -11,6 +11,8 @@ import time
 from datetime import datetime
 from typing import Generator, Optional
 
+from learner_profile.storage import LearnerProfileStorage
+
 
 class KnowledgeCardGenerator:
     """知识卡片生成器"""
@@ -18,6 +20,46 @@ class KnowledgeCardGenerator:
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_cards")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        # 延迟初始化，避免循环导入
+        self._profile_storage = None
+
+    def _get_profile_storage(self):
+        """延迟获取画像存储实例"""
+        if self._profile_storage is None:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._profile_storage = LearnerProfileStorage(backend_dir)
+        return self._profile_storage
+
+    def _load_profile_hint(self, user_id: str) -> str:
+        """加载学生画像并生成提示词片段"""
+        if not user_id or user_id == 'anonymous':
+            return ""
+        try:
+            storage = self._get_profile_storage()
+            profile = storage.load_profile(user_id)
+            basic = profile.get("basic", {})
+            preferences = profile.get("preferences", {})
+
+            stage = basic.get("learning_stage") or ""
+            basis = basic.get("learning_basis") or ""
+            goal = preferences.get("goal") or ""
+            difficulty = preferences.get("preferred_difficulty") or ""
+
+            parts = []
+            if stage:
+                parts.append(f"学习阶段：{stage}")
+            if basis:
+                parts.append(f"当前基础：{basis}")
+            if goal:
+                parts.append(f"学习目标：{goal}")
+            if difficulty:
+                parts.append(f"期望难度：{difficulty}")
+
+            if parts:
+                return "\n\n【学生画像信息】\n" + "\n".join(parts) + "\n请根据以上画像信息调整卡片深度和举例方式。"
+        except Exception:
+            pass
+        return ""
 
     def parse_card_request(self, message: str) -> Optional[dict]:
         """解析知识卡片生成请求"""
@@ -43,7 +85,7 @@ class KnowledgeCardGenerator:
                 }
         return None
 
-    def generate_card_stream(self, topic: str, output_format: str = "md") -> Generator[dict, None, None]:
+    def generate_card_stream(self, topic: str, output_format: str = "md", user_id: str = 'anonymous') -> Generator[dict, None, None]:
         """流式生成知识卡片"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -71,9 +113,9 @@ class KnowledgeCardGenerator:
             def llm_task():
                 try:
                     if output_format == "docx":
-                        result_container[0] = self._generate_card_json(topic)
+                        result_container[0] = self._generate_card_json(topic, user_id)
                     else:
-                        result_container[0] = self._generate_card_markdown(topic)
+                        result_container[0] = self._generate_card_markdown(topic, user_id)
                 except Exception as e:
                     error_container[0] = e
 
@@ -146,12 +188,15 @@ type: knowledge_card
                 'message': f'❌ 生成失败: {e}'
             }
 
-    def _generate_card_markdown(self, topic: str) -> str:
+    def _generate_card_markdown(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成高度浓缩、模块化的原子知识卡片（Markdown格式）"""
-        prompt = f"""请将"{topic}"拆解为一套适合手机端快速检索、深度复习的"原子化知识卡片"。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""请将"{topic}"拆解为一套适合快速检索、深度复习的"原子化知识卡片"。
 
 # 角色指令
-你是一位擅长"知识脱水"的思维导图大师，请将"{topic}"的核心精髓提炼为 8-12 张高密度的知识卡片，确保每张卡片都能在 30 秒内提供深度启发。
+你是一位擅长"知识脱水"的学习助手，请将"{topic}"的核心精髓提炼为 8-12 张高密度的知识卡片，确保每张卡片都能在 30 秒内提供深度启发。
+{profile_hint}
 
 # 知识卡片标准模板 (严格执行)
 
@@ -185,13 +230,16 @@ type: knowledge_card
 请直接返回 Markdown 格式内容，不要任何开场白或额外解释。"""
         return self._call_llm(prompt)
 
-    def _generate_card_json(self, topic: str) -> str:
+    def _generate_card_json(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成知识卡片（JSON格式）"""
-        prompt = f"""请将"{topic}"拆解为一套适合手机端快速检索、深度复习的"原子化知识卡片"，以JSON格式返回。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""请将"{topic}"拆解为一套适合快速检索、深度复习的"原子化知识卡片"，以JSON格式返回。
 
 # 知识卡片标准模板
 
 请按以下标准模板生成8-12张卡片，每张卡片包含：
+{profile_hint}
 
 - **title**：卡片标题，格式为"卡片序号：知识点名称"（如"卡片1：变量定义"）
 - **definition**：一句话定义，用最通俗、有力的话揭示其本质
@@ -258,7 +306,7 @@ type: knowledge_card
         from generators.shared_config import content_llm_call
         return content_llm_call(
             messages=[
-                {"role": "system", "content": "你是一位教育专家，擅长将复杂知识提炼为简洁清晰的知识卡片。"},
+                {"role": "system", "content": "你是一位专业的学习助手，擅长将复杂知识提炼为简洁清晰的知识卡片，帮助学习者快速理解和记忆核心要点。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,

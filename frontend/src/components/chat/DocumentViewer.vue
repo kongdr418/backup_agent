@@ -93,19 +93,6 @@
         <div v-if="voiceoverText && !renderedVideoScript" class="dv-voiceover">{{ voiceoverText }}</div>
       </div>
 
-      <!-- PPT 预览(slides 缩略图) -->
-      <div v-else-if="kind === 'ppt_preview' && slides.length" class="dv-ppt">
-        <div
-          v-for="s in slides"
-          :key="s.page"
-          class="dv-slide"
-        >
-          <div class="dv-slide-no">第 {{ s.page }} 页</div>
-          <img v-if="s.base64" :src="s.base64" class="dv-slide-img" />
-          <div v-if="s.title" class="dv-slide-title">{{ s.title }}</div>
-        </div>
-      </div>
-
       <!-- 兜底 -->
       <div v-else class="dv-empty">
         <div class="dv-empty-icon"><FileQuestion class="w-8 h-8 opacity-50" /></div>
@@ -130,7 +117,6 @@ import {
   Network,
   ImageIcon,
   Music,
-  Presentation,
   ClipboardList,
   Megaphone,
   ScrollText,
@@ -147,7 +133,6 @@ type Kind =
   | 'content_result'
   | 'graphic_image'
   | 'video_audio'
-  | 'ppt_preview'
   | 'markdown'
   | 'text'
   | string
@@ -241,7 +226,6 @@ const TYPE_MAP: Record<string, { label: string; hue: string; icon: unknown }> = 
 const meta = computed(() => {
   if (props.kind === 'graphic_image') return { label: '图文', hue: 'memory', icon: ImageIcon }
   if (props.kind === 'video_audio') return { label: '短视频脚本', hue: 'settings', icon: Music }
-  if (props.kind === 'ppt_preview') return { label: 'PPT 预览', hue: 'ppt', icon: Presentation }
   return TYPE_MAP[completeType.value] || { label: '生成结果', hue: 'chat', icon: FileText }
 })
 

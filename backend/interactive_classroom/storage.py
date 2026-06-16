@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,8 @@ class ClassroomStorage:
     def __init__(self, backend_dir: str) -> None:
         self.backend_dir = backend_dir
         self.memory_root = os.path.join(backend_dir, "memory", "users")
+        self._event_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._event_locks_guard = threading.Lock()
 
     def classroom_dir(self, user_id: str, classroom_id: str, create: bool = True) -> str:
         user_id = _safe_id(user_id, "user_id")
@@ -226,6 +229,17 @@ class ClassroomStorage:
     def _events_path(self, user_id: str, classroom_id: str) -> str:
         return os.path.join(self.classroom_dir(user_id, classroom_id), "learning_events.json")
 
+    def _event_lock(self, user_id: str, classroom_id: str) -> threading.Lock:
+        user_id = _safe_id(user_id, "user_id")
+        classroom_id = _safe_id(classroom_id, "classroom_id")
+        key = (user_id, classroom_id)
+        with self._event_locks_guard:
+            lock = self._event_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._event_locks[key] = lock
+            return lock
+
     def _load_events_file(self, user_id: str, classroom_id: str) -> dict[str, Any]:
         path = self._events_path(user_id, classroom_id)
         if not os.path.exists(path):
@@ -235,18 +249,40 @@ class ClassroomStorage:
 
     def _write_events_file(self, user_id: str, classroom_id: str, data: dict[str, Any]) -> None:
         path = self._events_path(user_id, classroom_id)
-        with open(path, "w", encoding="utf-8") as f:
+        temp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, path)
 
     def save_event(self, user_id: str, classroom_id: str, event: "LearningEvent") -> None:
-        data = self._load_events_file(user_id, classroom_id)
-        data["events"].append(event.to_dict())
-        data["updated_at"] = _now_iso()
-        self._write_events_file(user_id, classroom_id, data)
+        with self._event_lock(user_id, classroom_id):
+            data = self._load_events_file(user_id, classroom_id)
+            data["events"].append(event.to_dict())
+            data["updated_at"] = _now_iso()
+            self._write_events_file(user_id, classroom_id, data)
 
     def load_events(self, user_id: str, classroom_id: str) -> list[dict[str, Any]]:
-        data = self._load_events_file(user_id, classroom_id)
+        with self._event_lock(user_id, classroom_id):
+            data = self._load_events_file(user_id, classroom_id)
         return data.get("events", [])
+
+    def record_event_once(self, user_id: str, classroom_id: str, event: "LearningEvent") -> "LearningEvent":
+        """Atomically append an event unless its dedupe_key already exists."""
+        with self._event_lock(user_id, classroom_id):
+            data = self._load_events_file(user_id, classroom_id)
+            events = data.setdefault("events", [])
+            if event.dedupe_key:
+                for ev_data in events:
+                    if ev_data.get("dedupe_key") == event.dedupe_key:
+                        from interactive_classroom.schema import LearningEvent
+                        return LearningEvent(**{
+                            k: v for k, v in ev_data.items()
+                            if k in LearningEvent.__dataclass_fields__
+                        })
+            events.append(event.to_dict())
+            data["updated_at"] = _now_iso()
+            self._write_events_file(user_id, classroom_id, data)
+            return event
 
     def find_event_by_dedupe_key(
         self, user_id: str, classroom_id: str, dedupe_key: str

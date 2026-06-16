@@ -9,7 +9,6 @@ export type ChatRole = 'user' | 'assistant'
 export type ChatMessageType =
   | 'text'
   | 'markdown'
-  | 'ppt_preview'
   | 'graphic_image'
   | 'video_audio'
   | 'mindmap'
@@ -32,6 +31,7 @@ export interface Session {
   name: string
   createdAt: number
   updatedAt: number
+  kind?: 'chat' | 'profile_onboarding'
 }
 
 // ---------- SSE event ----------
@@ -94,7 +94,6 @@ export type FileType =
   | 'content_audio'
   | 'content_image'
   | 'svg_ppt'
-  | 'video'
 
 export interface GeneratedFile {
   id: string
@@ -123,6 +122,8 @@ export interface ContentSettings {
   // 内容生成模型（讲稿、大纲、习题、测验、知识卡片、思维导图等）
   content_model: string
   content_provider: string
+  // 智慧课堂内容可靠性检查
+  classroom_critic_mode: 'off' | 'standard' | 'strict'
   // PPT 生成模型
   ppt_model: string
   ppt_provider: string
@@ -163,7 +164,7 @@ export interface ModelInfo {
 export interface ProviderInfo {
   id: string
   name: string
-  type: 'minimax' | 'openai' | 'anthropic'
+  type: 'minimax' | 'openai' | 'anthropic' | string
   defaultBaseUrl: string
   models: ModelInfo[]
   requiresApiKey: boolean
@@ -222,10 +223,13 @@ export type PptCanvas = 'ppt169' | 'ppt43'
 
 export interface PptGenerateParams {
   topic: string
+  course?: string
   language?: PptLang
   num_slides?: number
   style?: PptStyle
   detail_level?: PptDetail
+  provider_id?: string
+  provider_type?: string
   model?: string
   api_key?: string
   base_url?: string

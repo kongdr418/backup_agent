@@ -11,6 +11,8 @@ import time
 from datetime import datetime
 from typing import Generator, Optional
 
+from learner_profile.storage import LearnerProfileStorage
+
 
 class ExerciseGenerator:
     """习题集生成器"""
@@ -18,6 +20,50 @@ class ExerciseGenerator:
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_exercises")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        # 延迟初始化，避免循环导入
+        self._profile_storage = None
+
+    def _get_profile_storage(self):
+        """延迟获取画像存储实例"""
+        if self._profile_storage is None:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._profile_storage = LearnerProfileStorage(backend_dir)
+        return self._profile_storage
+
+    def _load_profile_hint(self, user_id: str) -> str:
+        """加载学生画像并生成提示词片段"""
+        if not user_id or user_id == 'anonymous':
+            return ""
+        try:
+            storage = self._get_profile_storage()
+            profile = storage.load_profile(user_id)
+            basic = profile.get("basic", {})
+            preferences = profile.get("preferences", {})
+
+            stage = basic.get("learning_stage") or ""
+            basis = basic.get("learning_basis") or ""
+            goal = preferences.get("goal") or ""
+            difficulty = preferences.get("preferred_difficulty") or ""
+            content_style = preferences.get("content_style", [])
+            style_str = "、".join(content_style) if content_style else ""
+
+            parts = []
+            if stage:
+                parts.append(f"学习阶段：{stage}")
+            if basis:
+                parts.append(f"当前基础：{basis}")
+            if goal:
+                parts.append(f"学习目标：{goal}")
+            if difficulty:
+                parts.append(f"期望难度：{difficulty}")
+            if style_str:
+                parts.append(f"内容偏好：{style_str}")
+
+            if parts:
+                return "\n\n【学生画像信息】\n" + "\n".join(parts) + "\n请根据以上画像信息调整习题难度和内容侧重。"
+        except Exception:
+            pass
+        return ""
 
     def parse_exercise_request(self, message: str) -> Optional[dict]:
         """
@@ -53,7 +99,7 @@ class ExerciseGenerator:
                 }
         return None
 
-    def generate_exercise_stream(self, topic: str, output_format: str = "md") -> Generator[dict, None, None]:
+    def generate_exercise_stream(self, topic: str, output_format: str = "md", user_id: str = 'anonymous') -> Generator[dict, None, None]:
         """流式生成习题集"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -82,9 +128,9 @@ class ExerciseGenerator:
             def llm_task():
                 try:
                     if output_format == "docx":
-                        result_container[0] = self._generate_json_content(topic)
+                        result_container[0] = self._generate_json_content(topic, user_id)
                     else:
-                        result_container[0] = self._generate_markdown_content(topic)
+                        result_container[0] = self._generate_markdown_content(topic, user_id)
                 except Exception as e:
                     error_container[0] = e
 
@@ -158,15 +204,18 @@ type: exercise
                 'message': f'❌ 生成失败: {e}'
             }
 
-    def _generate_markdown_content(self, topic: str) -> str:
+    def _generate_markdown_content(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成可读性强的 Markdown 格式"""
-        prompt = f"""请为"{topic}"生成一份完整的习题集。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""请为"{topic}"生成一份习题集，帮助你巩固和检验对这个知识点的掌握。
 
 要求：
 1. 包含三种题型：选择题、填空题、简答题
 2. 每种题型至少5道题
-3. 题目难度适中，覆盖核心知识点
+3. 题目覆盖核心知识点，由浅入深
 4. 直接返回 Markdown 格式，不要其他说明
+{profile_hint}
 
 请按以下格式返回：
 
@@ -218,15 +267,18 @@ D. 选项4
 
         return self._call_llm(prompt)
 
-    def _generate_json_content(self, topic: str) -> str:
+    def _generate_json_content(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成纯数据 JSON（格式由 docx-js 决定）"""
-        prompt = f"""请为"{topic}"生成一份完整的习题集。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""请为"{topic}"生成一份习题集，帮助你巩固和检验对这个知识点的掌握。
 
 要求：
 1. 包含三种题型：选择题、填空题、简答题
 2. 每种题型至少5道题
-3. 题目难度适中，覆盖核心知识点
+3. 题目覆盖核心知识点，由浅入深
 4. 直接返回 JSON 格式，不要其他内容
+{profile_hint}
 
 重要：answer 字段只包含纯答案，不要包含任何格式符号（如【】等）
 例如：选择题答案应该是 "A" 或 "B"，不是 "【答案：A】"
@@ -295,7 +347,7 @@ D. 选项4
         from generators.shared_config import content_llm_call
         return content_llm_call(
             messages=[
-                {"role": "system", "content": "你是一位专业的教育工作者，擅长编写高质量的习题集。"},
+                {"role": "system", "content": "你是一位专业的出题助手，擅长根据学生的学习情况设计有针对性的习题，帮助学生巩固知识、发现薄弱点。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,

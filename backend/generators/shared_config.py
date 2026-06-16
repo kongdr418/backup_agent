@@ -81,7 +81,7 @@ def content_llm_call(
         client = OpenAI(api_key=api_key, base_url=base_url, timeout=120)
         has_system = any(m.get('role') == 'system' for m in messages)
         if not has_system:
-            messages = [{"role": "system", "content": "你是一个专业的AI教师助手。"}] + messages
+            messages = [{"role": "system", "content": "你是智创空间智慧课堂的学习内容生成智能体，面向学生输出严谨、清晰、可学习的资料。"}] + messages
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -172,7 +172,7 @@ def content_llm_call_stream(
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=120)
     has_system = any(m.get('role') == 'system' for m in messages)
     if not has_system:
-        messages = [{"role": "system", "content": "你是一个专业的AI教师助手。"}] + messages
+        messages = [{"role": "system", "content": "你是智创空间智慧课堂的学习内容生成智能体，面向学生输出严谨、清晰、可学习的资料。"}] + messages
     response = client.chat.completions.create(
         model=model,
         messages=messages,

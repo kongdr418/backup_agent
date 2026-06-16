@@ -22,6 +22,7 @@ export interface InteractiveClassroomGenerateRequest {
   content_api_key?: string
   content_base_url?: string
   content_provider_type?: string
+  critic_mode?: 'off' | 'standard' | 'strict'
   signal?: AbortSignal
 }
 
@@ -113,6 +114,7 @@ export interface InteractiveClassroomPayload {
   lesson_kind?: string
   student_profile?: StudentProfile
   generation_strategy?: Record<string, unknown>
+  critic_summary?: ClassroomCriticSummary
   source?: Record<string, unknown>
   scenes: InteractiveClassroomScene[]
   answers_record?: {
@@ -123,12 +125,35 @@ export interface InteractiveClassroomPayload {
   }
 }
 
+export interface ClassroomCriticSummary {
+  mode: 'off' | 'standard' | 'strict' | string
+  checks: number
+  llm_checks: number
+  retries: number
+  fallbacks: number
+  duration_ms: number
+  issues: string[]
+}
+
 export interface InteractiveClassroomGenerationStatus {
   request_id: string
   topic?: string
   status: 'running' | 'cancelling' | 'cancelled' | 'done' | 'error' | string
   started_at?: string
   updated_at?: string
+  elapsed_seconds?: number
+  stage?: string
+  stage_label?: string
+  stage_index?: number
+  stage_total?: number
+  current_step_done?: number
+  current_step_total?: number
+  scene_index?: number
+  scene_total?: number
+  scenes_generated?: number
+  total_scenes?: number
+  last_scene?: { id: string; type: string; title: string; order: number }
+  progress_event_count?: number
   classroom_id?: string
   classroom?: InteractiveClassroomPayload
   error?: string
@@ -152,6 +177,8 @@ export interface QuizSubmitResult {
     feedback?: string      // LLM 评语，仅 short_answer 有
     earned_points?: number // 简答题按 (score/100)*points 折算
     covered_points?: string[] // LLM 评出的"学生答到的要点"
+    review_required?: boolean
+    critic?: Record<string, unknown>
     knowledge_point?: string
     points?: number
   }>
@@ -169,6 +196,36 @@ export interface ClassroomRecommendedTask {
   action_label: string
   reason?: string
   evidence_ids?: string[]
+}
+
+export interface ClassroomLearningPathStage {
+  id: string
+  type: 'diagnose' | 'plan' | 'review' | 'practice' | 'next_lesson' | string
+  agent_name: string
+  title: string
+  description: string
+  status: 'active' | 'pending' | 'completed' | 'locked' | 'needs_attention' | string
+  metric?: string
+  task_id?: string
+  action_label?: string
+  generated_classroom_id?: string
+  knowledge_points: string[]
+  target_scene_ids: string[]
+}
+
+export interface KnowledgeEvidenceItem {
+  knowledge_point_id: string
+  raw_name: string
+  standard_label: string
+  match_confidence: number
+  evidence: {
+    chunk_id: string
+    evidence_label: string
+    source_name: string
+    section: string
+    text_excerpt: string
+  }[]
+  scene_ids: string[]
 }
 
 export interface ClassroomReport {
@@ -197,6 +254,8 @@ export interface ClassroomReport {
   strong_points: string[]
   next_recommendation: string
   recommended_tasks?: ClassroomRecommendedTask[]
+  learning_path?: ClassroomLearningPathStage[]
+  knowledge_evidence?: KnowledgeEvidenceItem[]
   event_count?: number
   course_trend?: string
   profile_update_count?: number
@@ -221,6 +280,8 @@ export interface NextLessonPlan {
   lesson_depth: number
   lesson_index: number
   lesson_kind: string
+  course_lesson_title?: string
+  course_knowledge_points?: string[]
 }
 
 export interface ClassroomDiscussionMessage {
@@ -337,6 +398,7 @@ export async function submitInteractiveClassroomAnswer(
     content_api_key?: string
     content_base_url?: string
     content_provider_type?: string
+    critic_mode?: 'off' | 'standard' | 'strict'
   },
 ) {
   const res = await client.post<QuizSubmitResult>(
@@ -430,7 +492,10 @@ export type ClassroomStreamEvent =
       stage_label: string
       scene_index: number
       scene_total: number
+      expected_scene_total?: number
+      expected_slide_total?: number
       scene?: { id: string; type: string; title: string; order: number }
+      scene_payload?: InteractiveClassroomScene
     }
   | {
       type: 'classroom_done'

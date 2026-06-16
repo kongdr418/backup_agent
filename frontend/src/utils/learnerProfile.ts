@@ -18,9 +18,18 @@ export interface LearnerProfileSummary {
   description: string
 }
 
+const COGNITIVE_PREFERENCE_LABELS: Record<string, string> = {
+  visual_structure: '图示结构',
+  example_based: '案例理解',
+  step_by_step: '步骤推导',
+  comparison: '对比辨析',
+  text_summary: '文字概括',
+  hands_on: '实践操作',
+}
+
 export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
   return {
-    profile_version: 1,
+    profile_version: 2,
     user_id: userId,
     basic: {
       display_name: '',
@@ -34,6 +43,10 @@ export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
       preferred_difficulty: '',
       tutoring_style: '',
     },
+    global_traits: {
+      cognitive_preferences: {},
+      interest_directions: [],
+    },
     courses: {},
     pending_updates: [],
     recent_recommendations: [],
@@ -41,6 +54,64 @@ export function createEmptyLearnerProfile(userId = ''): LearnerProfile {
     evidence_buffer: {},
     created_at: '',
     updated_at: '',
+  }
+}
+
+export function clearLearnerProfileBasic(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...profile,
+    basic: {
+      display_name: '',
+      learning_stage: '',
+      learning_basis: '',
+      background: '',
+    },
+  }
+}
+
+export function clearLearnerProfilePreferences(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...profile,
+    preferences: {
+      goal: '',
+      content_style: [],
+      preferred_difficulty: '',
+      tutoring_style: '',
+    },
+  }
+}
+
+function clearCourseArtifacts(
+  profile: LearnerProfile,
+  courseIds: Set<string> | null,
+): LearnerProfile {
+  return {
+    ...profile,
+    pending_updates: (profile.pending_updates || []).filter(
+      (item) => !item.course_id || (courseIds !== null && !courseIds.has(item.course_id)),
+    ),
+    recent_recommendations: (profile.recent_recommendations || []).filter(
+      (item) => !item.course_id || (courseIds !== null && !courseIds.has(item.course_id)),
+    ),
+  }
+}
+
+export function clearLearnerCourses(profile: LearnerProfile): LearnerProfile {
+  return {
+    ...clearCourseArtifacts(profile, null),
+    courses: {},
+  }
+}
+
+export function clearLearnerCourseProfile(
+  profile: LearnerProfile,
+  courseId: string,
+): LearnerProfile {
+  if (!courseId || !profile.courses?.[courseId]) return profile
+  const { [courseId]: _removed, ...courses } = profile.courses
+  return {
+    ...clearCourseArtifacts(profile, new Set([courseId])),
+    courses,
   }
 }
 
@@ -97,11 +168,19 @@ export function toLegacyStudentProfile(profile: LearnerProfile): Required<Studen
 }
 
 export function buildLearnerProfileSummary(profile: LearnerProfile): LearnerProfileSummary {
+  const cognitiveTraits = Object.entries(profile.global_traits?.cognitive_preferences || {})
+    .filter(([, trait]) => trait.status === 'confirmed')
+    .map(([key]) => COGNITIVE_PREFERENCE_LABELS[key] || key)
+  const interestTraits = (profile.global_traits?.interest_directions || [])
+    .filter((trait) => trait.status === 'confirmed')
+    .map((trait) => trait.label)
   const tags = [
     profile.basic.learning_stage,
     profile.basic.learning_basis,
     profile.preferences.goal,
     ...profile.preferences.content_style,
+    ...cognitiveTraits,
+    ...interestTraits,
     profile.preferences.preferred_difficulty
       ? `${profile.preferences.preferred_difficulty}难度`
       : '',

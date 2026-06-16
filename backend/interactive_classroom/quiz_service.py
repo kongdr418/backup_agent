@@ -6,6 +6,11 @@ import re
 from typing import Any
 
 from generators.shared_config import content_llm_call
+from .critic_service import (
+    ClassroomCriticService,
+    build_content_llm_semantic_reviewer,
+    normalize_critic_mode,
+)
 
 
 def _normalize_answer(value: Any) -> list[str]:
@@ -61,6 +66,32 @@ def _parse_short_answer_score(raw: str) -> dict[str, Any]:
     return {"score": score, "feedback": feedback[:500], "covered_points": covered[:8]}
 
 
+def _filter_supported_covered_points(
+    grade: dict[str, Any],
+    *,
+    reference_answer: str,
+    student_answer: str,
+) -> dict[str, Any]:
+    """移除没有出现在参考答案或学生作答中的“已覆盖要点”。
+
+    covered_points 只是面向学生的解释字段，不应因为模型对该字段做了同义改写
+    或额外发挥，就重新执行一次完整评分请求。
+    """
+    support_text = re.sub(
+        r"[\W_]+",
+        "",
+        f"{reference_answer} {student_answer}".lower(),
+        flags=re.UNICODE,
+    )
+    supported: list[str] = []
+    for point in grade.get("covered_points", []):
+        point_text = str(point).strip()
+        point_key = re.sub(r"[\W_]+", "", point_text.lower(), flags=re.UNICODE)
+        if point_key and point_key in support_text:
+            supported.append(point_text)
+    return {**grade, "covered_points": supported}
+
+
 async def llm_grade_short_answer(
     question: dict[str, Any],
     student_answer: str,
@@ -103,7 +134,18 @@ async def llm_grade_short_answer(
         '{"score": 0-100, "feedback": "一句话反馈", "covered_points": ["学生答到的要点1", "要点2"]}\n'
     )
     cfg = llm_config or {}
-    raw: str = ""
+    mode = normalize_critic_mode(cfg.get("critic_mode"))
+    critic = ClassroomCriticService(
+        mode=mode,
+        semantic_reviewer=(
+            build_content_llm_semantic_reviewer(
+                cfg,
+                llm_call=content_llm_call,
+            )
+            if mode == "strict"
+            else None
+        ),
+    )
     try:
         raw = await asyncio.to_thread(
             content_llm_call,
@@ -122,8 +164,48 @@ async def llm_grade_short_answer(
             provider_type=cfg.get("content_provider_type", ""),
         )
     except Exception:
-        return {"score": 0, "feedback": "评分服务暂时不可用，请稍后复核。", "covered_points": []}
-    return _parse_short_answer_score(raw or "")
+        return {
+            "score": None,
+            "feedback": "评分服务暂时不可用，请稍后复核。",
+            "covered_points": [],
+            "review_required": True,
+            "critic": {
+                "retried": False,
+                "fallback": True,
+            },
+        }
+    grade = _parse_short_answer_score(raw or "")
+    grade = _filter_supported_covered_points(
+        grade,
+        reference_answer=reference,
+        student_answer=student_answer,
+    )
+    review = critic.review_short_answer_grade(
+        grade=grade,
+        reference_answer=reference,
+        student_answer=student_answer,
+    )
+    last_critic = review.to_dict()
+    if review.passed:
+        grade["review_required"] = False
+        grade["critic"] = {
+            **last_critic,
+            "retried": False,
+            "fallback": False,
+        }
+        return grade
+
+    return {
+        "score": None,
+        "feedback": "评分依据不足，本题暂不计分。",
+        "covered_points": [],
+        "review_required": True,
+        "critic": {
+            **last_critic,
+            "retried": False,
+            "fallback": True,
+        },
+    }
 
 
 def _result_for_short_answer(
@@ -134,12 +216,15 @@ def _result_for_short_answer(
 ) -> dict[str, Any]:
     """把 LLM 评分结果组装成与单选/多选一致的 result 形状。"""
     points = int(question.get("points", 1) or 1)
-    score = int(grade.get("score", 0) or 0)
-    score = max(0, min(100, score))
-    earned_points = round((score / 100) * points, 2)
+    review_required = bool(grade.get("review_required"))
+    raw_score = grade.get("score")
+    score = None if review_required or raw_score is None else int(raw_score or 0)
+    if score is not None:
+        score = max(0, min(100, score))
+    earned_points = 0 if score is None else round((score / 100) * points, 2)
     return {
         "question_id": qid,
-        "correct": score >= 80,  # 80 分以上视为掌握
+        "correct": None if score is None else score >= 80,
         "your_answer": [student_answer] if student_answer else [],
         "correct_answer": [
             str(question.get("reference_answer") or question.get("analysis") or "").strip()
@@ -152,6 +237,8 @@ def _result_for_short_answer(
         "feedback": str(grade.get("feedback") or "").strip(),
         "earned_points": earned_points,
         "covered_points": grade.get("covered_points") or [],
+        "review_required": review_required,
+        "critic": grade.get("critic") or {},
     }
 
 
@@ -257,11 +344,12 @@ async def evaluate_quiz_scene_async(
             else:
                 result = _result_for_short_answer(q, qid, student_answer, grade)
             results.append(result)
-            total += 1
-            total_points += points
-            earned_points += result["earned_points"]
-            if result["correct"]:
-                correct += 1
+            if not result["review_required"]:
+                total += 1
+                total_points += points
+                earned_points += result["earned_points"]
+                if result["correct"]:
+                    correct += 1
 
     # 按 question_id 稳定排序（前端 resultByQuestion 映射依赖 id）
     results.sort(key=lambda r: str(r.get("question_id", "")))

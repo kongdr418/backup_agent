@@ -7,8 +7,8 @@
             <GraduationCap class="hero-icon-svg" />
           </div>
           <div>
-            <h1 class="title">交互式课堂</h1>
-            <p class="desc">生成一节可播放、可答题、可反馈的真实课堂。</p>
+            <h1 class="title">智慧课堂</h1>
+            <p class="desc">围绕学习者画像进入一节可播放、可答题、可反馈的个性化课堂。</p>
           </div>
         </div>
         <div class="hero-art" aria-hidden="true">
@@ -24,7 +24,7 @@
 
       <div class="create-card">
         <div class="create-main">
-          <h2 class="section-title">创建新课堂</h2>
+          <h2 class="section-title">开始新的学习课堂</h2>
 
           <div class="form-grid">
             <label class="line-field wide">
@@ -78,15 +78,15 @@
 
           <button class="primary-btn" :disabled="loading" @click="goPptStudio">
             <Sparkles class="btn-icon" />
-            <span>去 PPT 工作台生成课件</span>
+            <span>去准备课堂内容</span>
             <ArrowRight class="btn-icon" />
           </button>
         </div>
 
         <aside class="reuse-panel">
           <div class="reuse-copy">
-            <div class="reuse-title">已有课件转课堂</div>
-            <div class="reuse-desc">如果文件库里已有 PPT Studio 课件，可以直接选择并生成课堂。</div>
+            <div class="reuse-title">已有学习课件开始课堂</div>
+            <div class="reuse-desc">如果文件库里已有 PPT Studio 学习课件，可以直接选择并生成智慧课堂。</div>
           </div>
           <div class="reuse-actions">
             <n-select
@@ -126,6 +126,138 @@
           <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
         </div>
       </div>
+
+      <section class="knowledge-panel" aria-labelledby="course-knowledge-title">
+        <div class="knowledge-head">
+          <div>
+            <h2 id="course-knowledge-title" class="section-title knowledge-title">课程知识资料</h2>
+            <p class="knowledge-desc">上传课程资料后，可先查看已导入摘要，后续再逐步接入课堂生成与报告链路。</p>
+          </div>
+          <button
+            class="ghost-btn"
+            :disabled="knowledgeLoading || knowledgeUploading"
+            @click="loadCourseKnowledge()"
+          >
+            <RefreshCw class="mini-icon" :class="{ spinning: knowledgeLoading }" />
+            刷新资料
+          </button>
+        </div>
+
+        <div class="knowledge-upload">
+          <label class="file-picker">
+            <input
+              :key="knowledgeInputKey"
+              class="file-input"
+              type="file"
+              @change="onCourseKnowledgeFileChange"
+            />
+            <span>{{ selectedCourseKnowledgeFile?.name || '选择课程资料文件' }}</span>
+          </label>
+          <button
+            class="secondary-btn knowledge-upload-btn"
+            :disabled="knowledgeUploading || !selectedCourseKnowledgeFile"
+            @click="submitCourseKnowledgeUpload"
+          >
+            <span v-if="knowledgeUploading" class="btn-spinner dark" aria-hidden="true"></span>
+            <span v-else>上传资料</span>
+          </button>
+        </div>
+
+        <div class="knowledge-feedback" role="status" aria-live="polite">
+          <span v-if="knowledgeUploading">正在上传并解析资料…</span>
+          <span v-else-if="courseKnowledgeError" class="knowledge-feedback error">{{ courseKnowledgeError }}</span>
+          <span v-else>支持最小上传与摘要查看，具体解析字段以后端返回为准。</span>
+        </div>
+
+        <div class="knowledge-grid">
+          <div class="knowledge-card">
+            <div class="knowledge-card-head">
+              <h3>课程摘要</h3>
+              <span class="knowledge-card-meta">{{ courseKnowledgeCourses.length }} 门课程</span>
+            </div>
+            <div v-if="courseKnowledgeCourses.length === 0" class="knowledge-empty">
+              暂无课程摘要
+            </div>
+            <div v-else class="knowledge-summary-list">
+              <article
+                v-for="courseSummary in courseKnowledgeCourses"
+                :key="courseSummary.id"
+                class="knowledge-summary-item"
+              >
+                <div class="knowledge-summary-title">{{ courseSummary.courseName }}</div>
+                <div class="knowledge-summary-stats">
+                  <span>资料 {{ courseSummary.documentCount }}</span>
+                  <span>模块 {{ courseSummary.moduleCount }}</span>
+                  <span>课次 {{ courseSummary.lessonCount }}</span>
+                  <span>知识点 {{ courseSummary.knowledgePointCount }}</span>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <div class="knowledge-card">
+            <div class="knowledge-card-head">
+              <h3>已导入资料</h3>
+              <span class="knowledge-card-meta">{{ courseKnowledgeDocuments.length }} 份 · 点击查看详情</span>
+            </div>
+            <div v-if="courseKnowledgeDocuments.length === 0" class="knowledge-empty">
+              暂无已导入资料
+            </div>
+            <div v-else class="knowledge-document-list">
+              <article
+                v-for="document in courseKnowledgeDocuments"
+                :key="document.id"
+                class="knowledge-document-item"
+                :class="{ expanded: expandedKnowledgeDocumentId === document.id }"
+              >
+                <div class="knowledge-document-row">
+                  <button
+                    class="knowledge-document-toggle"
+                    :aria-expanded="expandedKnowledgeDocumentId === document.id"
+                    :aria-controls="`knowledge-document-detail-${document.id}`"
+                    @click="toggleKnowledgeDocument(document.id)"
+                  >
+                    <div class="knowledge-document-main">
+                      <div class="knowledge-document-title">{{ document.title }}</div>
+                      <div class="knowledge-document-meta">
+                        <span>{{ document.courseName }}</span>
+                        <span v-if="document.createdAt">{{ formatCreatedAt(document.createdAt) }}</span>
+                        <span v-else>{{ document.fileName }}</span>
+                        <span>{{ document.knowledgePointCount }} 个知识点</span>
+                      </div>
+                    </div>
+                    <ChevronDown
+                      class="knowledge-document-chevron"
+                      :class="{ expanded: expandedKnowledgeDocumentId === document.id }"
+                    />
+                  </button>
+                  <button
+                    class="knowledge-document-delete"
+                    title="删除此资料"
+                    aria-label="删除此资料"
+                    @click="deleteCourseKnowledgeDoc(document)"
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
+                <div
+                  v-if="expandedKnowledgeDocumentId === document.id"
+                  :id="`knowledge-document-detail-${document.id}`"
+                  class="knowledge-document-detail"
+                >
+                  <div class="knowledge-document-stats">
+                    <span>模块 {{ document.moduleCount }}</span>
+                    <span>课次 {{ document.lessonCount }}</span>
+                    <span>知识点 {{ document.knowledgePointCount }}</span>
+                  </div>
+                  <p v-if="document.summary" class="knowledge-document-summary">{{ document.summary }}</p>
+                  <p v-else class="knowledge-document-summary muted">暂无资料摘要</p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
     </section>
 
     <section class="history-panel">
@@ -165,7 +297,7 @@
             <span class="course-folder-copy">
               <strong>{{ group.title }}</strong>
               <span>
-                {{ group.lessons.length }} 节课
+                {{ classroomUnitCountLabel(group.lessons.length) }}
                 <template v-if="group.latest"> · 最近：{{ group.latest.topic }}</template>
               </span>
             </span>
@@ -187,7 +319,9 @@
               </button>
               <button class="item-main" @click="openClassroom(item.id)">
                 <div class="item-title">
-                  <span class="lesson-badge">第 {{ item.lesson_index || 1 }} 课</span>
+                  <span class="lesson-badge" :class="{ practice: item.lesson_kind === 'practice' || item.lesson_kind === 'challenge_practice' }">
+                    {{ classroomUnitLabel(item) }}
+                  </span>
                   {{ item.title }}
                 </div>
                 <div class="item-meta">{{ item.topic }} · {{ item.scene_count }} scenes</div>
@@ -252,6 +386,7 @@ import {
   ArrowRight,
   BookOpen,
   CalendarDays,
+  ChevronDown,
   Clock3,
   FolderOpen,
   GraduationCap,
@@ -273,6 +408,14 @@ import {
   startInteractiveClassroomGeneration,
   type InteractiveClassroomListItem,
 } from '@/api/interactiveClassroom'
+import {
+  deleteCourseKnowledgeDocument,
+  getCourseKnowledgeCourseMap,
+  listCourseKnowledgeDocuments,
+  uploadCourseKnowledge,
+  type CourseKnowledgeCourseSummary,
+  type CourseKnowledgeDocumentSummary,
+} from '@/api/courseKnowledge'
 import { getLearnerProfile, type LearnerProfile } from '@/api/learnerProfile'
 import { listFiles } from '@/api/files'
 import { useSettingStore } from '@/stores/settingStore'
@@ -287,6 +430,13 @@ import {
   buildLearnerProfileSummary,
   createEmptyLearnerProfile,
 } from '@/utils/learnerProfile'
+import { classroomUnitCountLabel, classroomUnitLabel } from '@/utils/classroomLessonDisplay'
+import { buildClassroomCriticPayload } from '@/utils/classroomCriticConfig'
+import { toggleExpandedKnowledgeDocument } from '@/utils/courseKnowledgeDocumentList'
+import {
+  buildCoursewareClassroomSeed,
+  getGeneratedPptJobId,
+} from '@/utils/classroomCourseware'
 
 const router = useRouter()
 const message = useMessage()
@@ -309,18 +459,26 @@ const pptSelectOptions = computed<SelectOption[]>(() => [
   { label: '选择已有课件', value: '' },
   ...pptCoursewareOptions.value.map((file) => ({
     label: `${file.name}${file.slide_count ? ` · ${file.slide_count} 页` : ''}`,
-    value: getPptJobId(file),
+    value: getGeneratedPptJobId(file),
   })),
 ])
 
 const topic = ref('')
 const course = ref('')
 const selectedPptJobId = ref('')
+const selectedCourseKnowledgeFile = ref<File | null>(null)
 const loading = ref(false)
 const loadingList = ref(false)
 const reportLoading = ref(false)
+const knowledgeLoading = ref(false)
+const knowledgeUploading = ref(false)
+const courseKnowledgeError = ref('')
+const knowledgeInputKey = ref(0)
 const classrooms = ref<InteractiveClassroomListItem[]>([])
 const files = ref<GeneratedFile[]>([])
+const courseKnowledgeDocuments = ref<CourseKnowledgeDocumentSummary[]>([])
+const courseKnowledgeCourses = ref<CourseKnowledgeCourseSummary[]>([])
+const expandedKnowledgeDocumentId = ref<string | null>(null)
 const expandedCourseIds = ref<Record<string, boolean>>({})
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
@@ -332,7 +490,7 @@ stream.onDone = async (classroomId) => {
   finishGeneration()
   message.success(activeSuccessMessage.value)
   await loadList()
-  router.push(`/interactive-classroom/${classroomId}`)
+  router.replace(`/interactive-classroom/${classroomId}`)
 }
 stream.onCancelled = () => {
   finishGeneration()
@@ -352,7 +510,7 @@ stream.onError = (err) => {
 const progressPercent = stream.progressPercent
 
 const pptCoursewareOptions = computed(() =>
-  files.value.filter((file) => Boolean(getPptJobId(file))),
+  files.value.filter((file) => Boolean(getGeneratedPptJobId(file))),
 )
 
 const classroomGroups = computed(() => {
@@ -451,11 +609,6 @@ function toggleCourseGroup(rootId: string) {
   }
 }
 
-function getPptJobId(file: GeneratedFile) {
-  if (file.job_id) return file.job_id
-  return file.id.startsWith('svg_ppt_') ? file.id.slice('svg_ppt_'.length) : ''
-}
-
 function goPptStudio() {
   if (!topic.value) {
     message.warning('请先输入主题')
@@ -474,30 +627,27 @@ function goPptStudio() {
 
 async function onGenerate() {
   if (!selectedPptJobId.value) {
-    message.warning('请先选择已有课件，或前往 PPT 工作台生成课件')
+    message.warning('请先选择已有学习课件，或前往 PPT 工作台准备课堂内容')
     return
   }
 
-  // Topic 兜底：用户没填时，用选中的 PPT 文件名/job_id 拼一个
-  const fallbackTopic = (() => {
-    const jobId = selectedPptJobId.value
-    const matched = files.value.find((f) => getPptJobId(f) === jobId)
-    if (matched?.name) return matched.name.replace(/\.svg$/i, '')
-    if (jobId) return `课堂-${jobId.slice(0, 8)}`
-    return ''
-  })()
-  const finalTopic = (topic.value || '').trim() || fallbackTopic
+  const seed = buildCoursewareClassroomSeed({
+    selectedPptJobId: selectedPptJobId.value,
+    files: files.value,
+    topic: topic.value,
+    course: course.value,
+  })
 
   // 选了 PPT 之后 topic 不是必填；如果实在没法兜底才拦
-  if (!finalTopic) {
+  if (!seed.topic) {
     message.warning('请先输入主题或选择一个课件')
     return
   }
 
   try {
     await beginClassroomGeneration({
-      topic: finalTopic,
-      course: course.value || undefined,
+      topic: seed.topic,
+      course: seed.course || undefined,
       ppt_job_id: selectedPptJobId.value || undefined,
       tts_provider: settingStore.settings.tts_provider,
       tts_model: settingStore.settings.tts_model,
@@ -508,6 +658,7 @@ async function onGenerate() {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
+      ...buildClassroomCriticPayload(settingStore.settings),
     }, '课堂已生成')
   } catch (err) {
     const text = err instanceof Error ? err.message : '生成失败'
@@ -538,6 +689,86 @@ function estimatedMinutes(sceneCount: number) {
   return Math.max(8, Math.round((sceneCount || 0) * 0.7))
 }
 
+function onCourseKnowledgeFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  selectedCourseKnowledgeFile.value = input?.files?.[0] || null
+}
+
+function resetCourseKnowledgeFile() {
+  selectedCourseKnowledgeFile.value = null
+  knowledgeInputKey.value += 1
+}
+
+function toggleKnowledgeDocument(documentId: string) {
+  expandedKnowledgeDocumentId.value = toggleExpandedKnowledgeDocument(
+    expandedKnowledgeDocumentId.value,
+    documentId,
+  )
+}
+
+async function loadCourseKnowledge() {
+  knowledgeLoading.value = true
+  courseKnowledgeError.value = ''
+  try {
+    const [documents, courses] = await Promise.all([
+      listCourseKnowledgeDocuments(),
+      getCourseKnowledgeCourseMap(),
+    ])
+    courseKnowledgeDocuments.value = documents
+    courseKnowledgeCourses.value = courses
+    if (
+      expandedKnowledgeDocumentId.value &&
+      !documents.some((document) => document.id === expandedKnowledgeDocumentId.value)
+    ) {
+      expandedKnowledgeDocumentId.value = null
+    }
+  } catch (err) {
+    courseKnowledgeError.value = err instanceof Error ? err.message : '课程资料加载失败'
+  } finally {
+    knowledgeLoading.value = false
+  }
+}
+
+async function submitCourseKnowledgeUpload() {
+  const file = selectedCourseKnowledgeFile.value
+  if (!file) {
+    message.warning('请先选择资料文件')
+    return
+  }
+
+  knowledgeUploading.value = true
+  courseKnowledgeError.value = ''
+  try {
+    await uploadCourseKnowledge(file)
+    await loadCourseKnowledge()
+    resetCourseKnowledgeFile()
+    message.success('课程资料已导入')
+  } catch (err) {
+    courseKnowledgeError.value = err instanceof Error ? err.message : '资料上传失败'
+    message.error(courseKnowledgeError.value)
+  } finally {
+    knowledgeUploading.value = false
+  }
+}
+
+function deleteCourseKnowledgeDoc(document: CourseKnowledgeDocumentSummary) {
+  dialog.warning({
+    title: '删除课程资料',
+    content: `确定删除「${document.title}」？删除后无法恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteCourseKnowledgeDocument(document.id)
+        message.success('已删除')
+        await loadCourseKnowledge()
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : '删除失败')
+      }
+    },
+  })
+}
+
 async function regenerateClassroom(item: InteractiveClassroomListItem) {
   try {
     const original = await getInteractiveClassroom(item.id)
@@ -560,6 +791,7 @@ async function regenerateClassroom(item: InteractiveClassroomListItem) {
       content_api_key: settingStore.getEffectiveContentApiKey(),
       content_base_url: settingStore.getEffectiveContentBaseUrl(),
       content_provider_type: settingStore.getContentProviderType(),
+      ...buildClassroomCriticPayload(settingStore.settings),
     }, '课堂已重新生成')
   } catch (err) {
     const text = err instanceof Error ? err.message : '重新生成失败'
@@ -588,8 +820,15 @@ async function beginClassroomGeneration(
     ...body,
     request_id: requestId,
   })
-  // 启动 SSE 流（不再轮询）
-  void stream.start(requestId)
+  await router.push({
+    name: 'interactive-classroom-player',
+    params: { classroomId: 'generating' },
+    query: {
+      request_id: requestId,
+      topic: body.topic,
+      generating: '1',
+    },
+  })
 }
 
 function finishGeneration() {
@@ -613,13 +852,20 @@ async function stopCurrentGeneration() {
 
 function restorePersistedGeneration() {
   const persisted = loadPersistedClassroomGeneration()
-  if (!persisted || persisted.surface !== 'home') return
+  if (!persisted) return
   activeRequestId.value = persisted.requestId
   activeSuccessMessage.value = '课堂已生成'
   loading.value = true
   startElapsedTicker(persisted.startedAt)
-  // 直接连 SSE：服务器会先发 start，再发当前累计进度或 terminal
-  void stream.start(persisted.requestId)
+  router.push({
+    name: 'interactive-classroom-player',
+    params: { classroomId: 'generating' },
+    query: {
+      request_id: persisted.requestId,
+      topic: persisted.topic,
+      generating: '1',
+    },
+  }).catch(() => undefined)
 }
 
 function createClassroomRequestId() {
@@ -723,6 +969,7 @@ async function loadLearnerProfile() {
 
 onMounted(() => {
   loadList().catch(() => undefined)
+  loadCourseKnowledge().catch(() => undefined)
   loadLearnerProfile()
   restorePersistedGeneration()
 })
@@ -1312,6 +1559,278 @@ onBeforeUnmount(() => {
   transition: width 0.3s ease;
 }
 
+.knowledge-panel {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  padding: 22px;
+  box-shadow: var(--shadow-sm);
+}
+
+.knowledge-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.knowledge-title {
+  margin-bottom: 8px;
+}
+
+.knowledge-desc {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.knowledge-upload {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 12px;
+}
+
+.file-picker {
+  min-height: 48px;
+  border: 1px dashed rgba(45, 80, 22, 0.24);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(232, 240, 226, 0.26), rgba(255, 255, 255, 0.92));
+  padding: 0 14px;
+  color: var(--ink-secondary);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.file-input {
+  display: none;
+}
+
+.knowledge-upload-btn {
+  width: 100%;
+}
+
+.knowledge-feedback {
+  margin-top: 10px;
+  color: var(--ink-tertiary);
+  font-size: 12px;
+}
+
+.knowledge-feedback.error {
+  color: var(--terra);
+}
+
+.knowledge-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.knowledge-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  padding: 16px;
+}
+
+.knowledge-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.knowledge-card-head h3 {
+  margin: 0;
+  color: var(--ink-primary);
+  font-size: 15px;
+}
+
+.knowledge-card-meta {
+  color: var(--ink-tertiary);
+  font-size: 12px;
+}
+
+.knowledge-empty {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--ink-tertiary);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.knowledge-summary-list,
+.knowledge-document-list {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-document-list {
+  max-height: 430px;
+  padding-right: 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
+}
+
+.knowledge-document-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.knowledge-document-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.24);
+}
+
+.knowledge-summary-item,
+.knowledge-document-item {
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.knowledge-summary-item {
+  padding: 14px;
+}
+
+.knowledge-document-item {
+  overflow: hidden;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.knowledge-document-item:hover,
+.knowledge-document-item.expanded {
+  border-color: rgba(45, 80, 22, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.knowledge-document-row {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: stretch;
+}
+
+.knowledge-document-toggle {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 10px 8px 10px 12px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.knowledge-document-toggle:focus-visible,
+.knowledge-document-delete:focus-visible {
+  outline: 2px solid rgba(45, 80, 22, 0.32);
+  outline-offset: -2px;
+}
+
+.knowledge-document-main {
+  min-width: 0;
+}
+
+.knowledge-summary-title,
+.knowledge-document-title {
+  color: var(--ink-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.knowledge-document-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-summary-stats,
+.knowledge-document-stats,
+.knowledge-document-meta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.knowledge-document-meta {
+  margin-top: 4px;
+  gap: 5px 12px;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.knowledge-document-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-tertiary);
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+
+.knowledge-document-chevron.expanded {
+  transform: rotate(180deg);
+  color: var(--forest);
+}
+
+.knowledge-document-detail {
+  border-top: 1px dashed rgba(100, 116, 139, 0.18);
+  padding: 0 14px 13px;
+}
+
+.knowledge-document-detail .knowledge-document-stats {
+  margin-top: 11px;
+}
+
+.knowledge-document-summary {
+  margin: 10px 0 0;
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.knowledge-document-summary.muted {
+  color: var(--ink-tertiary);
+}
+
+.knowledge-document-delete {
+  width: 36px;
+  border: 0;
+  border-left: 1px solid rgba(15, 23, 42, 0.05);
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.knowledge-document-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.knowledge-document-delete:hover {
+  background: rgba(220, 38, 38, 0.07);
+  color: #dc2626;
+}
+
 .history-panel {
   padding: 26px 30px 30px;
 }
@@ -1576,6 +2095,11 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.lesson-badge.practice {
+  background: rgba(45, 80, 22, 0.10);
+  color: var(--forest);
+}
+
 .item-meta {
   margin-top: 7px;
   font-size: 12.5px;
@@ -1691,6 +2215,11 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
+  .knowledge-grid,
+  .knowledge-upload {
+    grid-template-columns: 1fr;
+  }
+
   .thumb-btn {
     width: 100%;
     max-width: 260px;
@@ -1741,6 +2270,10 @@ onBeforeUnmount(() => {
     border-radius: 14px;
   }
 
+  .knowledge-panel {
+    padding: 18px;
+  }
+
   .form-grid {
     grid-template-columns: 1fr;
   }
@@ -1758,6 +2291,10 @@ onBeforeUnmount(() => {
     width: 100%;
     min-width: 0;
     font-size: 14px;
+  }
+
+  .knowledge-head {
+    flex-direction: column;
   }
 
   .list-head {

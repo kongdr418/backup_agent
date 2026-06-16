@@ -11,11 +11,20 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from interactive_classroom.generator import ClassroomGenerationCancelled, InteractiveClassroomGenerator
+from interactive_classroom.generator import (
+    ClassroomGenerationCancelled,
+    InteractiveClassroomGenerator,
+    _emit_ordered_ready_scenes,
+    _emit_progress,
+    _extract_svg_highlight_targets,
+    _fallback_teaching_segments,
+    _select_teaching_targets,
+    _synthesize_scene_speech_actions,
+)
 from interactive_classroom.generator import _derive_slide_title
 from interactive_classroom.quiz_service import evaluate_quiz_scene
 from interactive_classroom.report_service import build_classroom_report
-from interactive_classroom.schema import ClassroomScene
+from interactive_classroom.schema import ClassroomAction, ClassroomScene
 from interactive_classroom.storage import ClassroomStorage
 
 
@@ -59,6 +68,32 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertTrue(all(scene.knowledge_points for scene in quiz_scenes))
         self.assertTrue(all(scene.content["questions"] for scene in quiz_scenes))
 
+    def test_renumbers_quizzes_when_an_earlier_quiz_generation_fails(self) -> None:
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+            _slide(4, "案例分析", ["案例步骤"]),
+            _slide(5, "综合应用", ["迁移练习"]),
+        ]
+        original_build_quiz_scene = self.generator._build_quiz_scene  # noqa: SLF001
+
+        def flaky_build_quiz_scene(**kwargs):  # noqa: ANN001
+            if kwargs["quiz_index"] == 1:
+                return None
+            return original_build_quiz_scene(**kwargs)
+
+        self.generator._build_quiz_scene = flaky_build_quiz_scene  # type: ignore[method-assign]  # noqa: SLF001
+
+        result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
+
+        quiz_scenes = [scene for scene in result if scene.type == "quiz"]
+        self.assertEqual(1, len(quiz_scenes))
+        self.assertEqual("scene_quiz_001", quiz_scenes[0].id)
+        self.assertEqual("随堂测验 1：测试主题", quiz_scenes[0].title)
+        self.assertEqual(["scene_slide_004", "scene_slide_005"], quiz_scenes[0].content["covered_scene_ids"])
+        self.assertTrue(all(q["id"].startswith("q1_") for q in quiz_scenes[0].content["questions"]))
+
     def test_skips_wrap_up_and_discussion_slides_as_quiz_sources(self) -> None:
         scenes = [
             _slide(1, "Spring Boot 核心价值", ["自动配置", "起步依赖"]),
@@ -83,6 +118,346 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertNotIn("scene_slide_004", covered_ids)
         self.assertNotIn("scene_slide_005", covered_ids)
 
+    def test_skips_cover_slide_decorative_text_as_quiz_source(self) -> None:
+        scenes = [
+            _slide(
+                1,
+                "今天我们将一起探索化...",
+                ["CHEMISTRY EXPLORATION", "探索元素周期表", "化学家的地图，物质世界的钥匙", "2023年10月"],
+            ),
+            _slide(2, "周期表的基本结构", ["周期", "族", "原子序数"]),
+            _slide(3, "元素性质的周期性", ["金属性", "非金属性", "原子半径"]),
+        ]
+
+        result = self.generator._insert_quiz_scenes("元素周期表", scenes)  # noqa: SLF001
+
+        quiz_scenes = [scene for scene in result if scene.type == "quiz"]
+        covered_ids = [
+            scene_id
+            for quiz in quiz_scenes
+            for scene_id in quiz.content["covered_scene_ids"]
+        ]
+        question_blob = "\n".join(
+            question["question"]
+            for quiz in quiz_scenes
+            for question in quiz.content["questions"]
+        )
+
+        self.assertNotIn("scene_slide_001", covered_ids)
+        self.assertIn("scene_slide_002", covered_ids)
+        self.assertNotIn("CHEMISTRY EXPLORATION", question_blob)
+        self.assertNotIn("探索元素周期表", question_blob)
+
+    def test_selects_teaching_targets_across_full_slide_not_only_front_labels(self) -> None:
+        texts = [
+            "人工神经元的工作原理",
+            "神经元处理流程",
+            "输入信号",
+            "x₁",
+            "x₂",
+            "x₃",
+            "多个输入",
+            "权重",
+            "w₁",
+            "w₂",
+            "w₃",
+            "重要性",
+            "求和",
+            "Σ(xᵢ × wᵢ)",
+            "+ 偏置 b",
+            "激活函数",
+            "σ(z)",
+            "输出 y",
+            "0 或 1",
+            "核心步骤：",
+            "1. 接收多个输入信号（x₁, x₂, x₃...）",
+            "2. 乘以对应权重，加权求和",
+            "3. 通过激活函数判断",
+            "4. 输出激活或抑制信号",
+            "🎯 生活类比",
+            "📐 数学表达",
+            "✨ 核心要点",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(texts)
+        ]
+
+        selected = _select_teaching_targets(targets, limit=16)
+        selected_text = "\n".join(str(target["text"]) for target in selected)
+
+        self.assertIn("求和", selected_text)
+        self.assertIn("激活函数", selected_text)
+        self.assertIn("输出 y", selected_text)
+        self.assertIn("📐 数学表达", selected_text)
+        self.assertIn("✨ 核心要点", selected_text)
+        self.assertNotIn("w₁", selected_text)
+
+    def test_extracts_highlight_targets_deep_enough_for_full_process_slides(self) -> None:
+        svg = """
+        <svg>
+          <text x="10" y="20">PAGE 03 / 06</text>
+          <text x="10" y="40">人工神经元的工作原理</text>
+          <text x="10" y="60">神经元处理流程</text>
+          <text x="10" y="80">输入信号</text>
+          <text x="10" y="100">x₁</text>
+          <text x="10" y="120">x₂</text>
+          <text x="10" y="140">x₃</text>
+          <text x="10" y="160">多个输入</text>
+          <text x="10" y="180">权重</text>
+          <text x="10" y="200">w₁</text>
+          <text x="10" y="220">w₂</text>
+          <text x="10" y="240">w₃</text>
+          <text x="10" y="260">重要性</text>
+          <text x="10" y="280">求和</text>
+          <text x="10" y="300">Σ(xᵢ × wᵢ)</text>
+          <text x="10" y="320">激活函数</text>
+          <text x="10" y="340">输出 y</text>
+          <text x="10" y="360">📐 数学表达</text>
+          <text x="10" y="380">✨ 核心要点</text>
+        </svg>
+        """
+
+        target_text = "\n".join(
+            str(target["text"])
+            for target in _extract_svg_highlight_targets(svg)
+        )
+
+        self.assertIn("求和", target_text)
+        self.assertIn("激活函数", target_text)
+        self.assertIn("输出 y", target_text)
+        self.assertIn("📐 数学表达", target_text)
+        self.assertIn("✨ 核心要点", target_text)
+
+    def test_fallback_teaching_segments_cover_full_neuron_process(self) -> None:
+        svg_texts = [
+            "人工神经元的工作原理",
+            "神经元处理流程",
+            "输入信号",
+            "x₁",
+            "x₂",
+            "x₃",
+            "多个输入",
+            "权重",
+            "重要性",
+            "求和",
+            "Σ(xᵢ × wᵢ)",
+            "偏置 b",
+            "激活函数",
+            "σ(z)",
+            "输出 y",
+            "核心步骤：",
+            "1. 接收多个输入信号（x₁, x₂, x₃...）",
+            "2. 乘以对应权重，加权求和",
+            "3. 通过激活函数判断",
+            "4. 输出激活或抑制信号",
+            "📐 数学表达",
+            "z = Σ(xᵢ × wᵢ) + b",
+            "y = σ(z) = 1/(1 + e⁻ᶻ)",
+            "✨ 核心要点",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(svg_texts)
+        ]
+        manuscript = (
+            "那么，一个人工神经元到底在做什么呢？我们可以把它想象成一个简单的决策单元。"
+            "它接收来自其他神经元的多个输入信号，每个信号都有一个重要性权重，就像我们做决定时会综合考虑不同意见的份量。"
+            "然后它会对所有加权输入求和，并通过一个“激活函数”来判断这个总和是否足够强，从而决定是否要“激活”并向外传递一个输出信号。"
+        )
+
+        segments = _fallback_teaching_segments(
+            "人工神经元的工作原理",
+            manuscript,
+            targets,
+            svg_texts,
+        )
+        speech = "\n".join(str(segment["text"]) for segment in segments)
+        target_text = "\n".join(
+            next(target["text"] for target in targets if target["id"] == segment["target_id"])
+            for segment in segments
+        )
+
+        self.assertIn("输入信号", speech)
+        self.assertIn("权重", speech)
+        self.assertIn("求和", speech)
+        self.assertIn("激活函数", speech)
+        self.assertIn("输出信号", speech)
+        self.assertIn("z = Σ", speech)
+        self.assertIn("y = σ", speech)
+        self.assertIn("输出 y", target_text)
+        self.assertNotIn("最后看“x₁”", speech)
+
+    def test_fallback_teaching_segments_cover_learning_mechanism_svg_cards(self) -> None:
+        svg_texts = [
+            "核心概念",
+            "神经网络的\"学习\"机制",
+            "通过反向传播算法，网络自动调整权重，逐步提升准确率",
+            "随机初始化",
+            "权重随机设置",
+            "输出是错的",
+            "训练数据",
+            "大量标注样本",
+            "如猫狗图片",
+            "计算误差",
+            "对比预测与真实",
+            "量化错误程度",
+            "反向传播",
+            "自动调整权重",
+            "梯度下降优化",
+            "🔄 反复迭代，直到准确率达标",
+            "关键要点",
+            "网络开始时权重随机",
+            "初始输出完全不准确",
+            "这是学习的起点",
+            "数据驱动",
+            "上万张标注图片作为教材",
+            "每张图片告诉网络正确答案",
+            "对比预测与真实标签",
+            "核心算法自动调整权重",
+            "反复迭代持续优化",
+            "最终达到高准确率",
+        ]
+        targets = [
+            {"id": f"hl_{idx + 1:03d}", "text": text}
+            for idx, text in enumerate(svg_texts)
+        ]
+        manuscript = (
+            "神经网络最关键的部分在于“学习”。一开始，网络内部连接的权重是随机设置的，给出的输出也是错的。"
+            "通过向它展示大量的例子（比如上万张标注好的猫和狗的图片），并告诉它每次判断错了多少，网络就能利用一种叫做“反向传播”的算法来自动调整那些权重。"
+            "这个过程反复进行，直到它能够做出非常准确的判断。"
+        )
+
+        segments = _fallback_teaching_segments(
+            "神经网络的学习机制",
+            manuscript,
+            targets,
+            svg_texts,
+        )
+        speech = "\n".join(str(segment["text"]) for segment in segments)
+
+        self.assertIn("随机初始化", speech)
+        self.assertIn("训练数据", speech)
+        self.assertIn("计算预测和真实答案之间的误差", speech)
+        self.assertIn("反向传播", speech)
+        self.assertIn("反复迭代", speech)
+        self.assertIn("准确率达标", speech)
+
+    def test_practice_quiz_filters_learning_report_meta_questions(self) -> None:
+        class MetaPracticeQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count, **kwargs):  # noqa: ANN001
+                return """
+                {
+                  "modules": [
+                    {
+                      "title": "补强练习",
+                      "questions": [
+                        {
+                          "num": "1",
+                          "type": "单选题",
+                          "text": "根据学习报告的建议，学生被推荐优先复习以下哪些内容？",
+                          "options": ["A. 神经网络的起源与灵感", "B. 编程框架", "C. 硬件配置", "D. 历史人物"],
+                          "answer": "A",
+                          "analysis": "学习报告建议优先复习该内容。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        },
+                        {
+                          "num": "2",
+                          "type": "单选题",
+                          "text": "人工神经网络的设计灵感主要来源于什么？",
+                          "options": ["A. 生物神经网络的结构和工作方式", "B. 数字电路的门逻辑组合", "C. 流体力学规律", "D. 遗传信息编码"],
+                          "answer": "A",
+                          "analysis": "课堂内容说明人工神经网络受到生物神经网络启发。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=MetaPracticeQuizGenerator(),
+        )
+
+        scene = generator.build_practice_quiz_scene(
+            topic="神经网络",
+            knowledge_points=["神经网络的起源与灵感"],
+            task_type="practice_weak_points",
+            generation_strategy={
+                "assessment_strategy": {
+                    "practice_diagnostic_notes": ["学习报告建议：优先复习神经网络的起源与灵感"],
+                    "practice_evidence": [
+                        {
+                            "point": "神经网络的起源与灵感",
+                            "snippets": ["人工神经网络受到生物神经网络结构和工作方式启发"],
+                        }
+                    ],
+                }
+            },
+        )
+        question_text = "\n".join(q["question"] for q in scene.content["questions"])
+
+        self.assertNotIn("学习报告", question_text)
+        self.assertIn("人工神经网络的设计灵感", question_text)
+
+    def test_practice_quiz_context_excludes_diagnostic_notes_from_page_text(self) -> None:
+        class CapturingPracticeQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count, **kwargs):  # noqa: ANN001
+                self.slide_summaries = slide_summaries
+                return """
+                {
+                  "modules": [
+                    {
+                      "questions": [
+                        {
+                          "type": "单选题",
+                          "text": "人工神经网络的设计灵感主要来源于什么？",
+                          "options": ["A. 生物神经网络的结构和工作方式", "B. 数字电路", "C. 历史人物", "D. 硬件配置"],
+                          "answer": "A",
+                          "analysis": "课堂证据说明它受到生物神经网络启发。",
+                          "knowledge_point": "神经网络的起源与灵感"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        quiz_generator = CapturingPracticeQuizGenerator()
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=quiz_generator,
+        )
+
+        generator.build_practice_quiz_scene(
+            topic="神经网络",
+            knowledge_points=["神经网络的起源与灵感"],
+            task_type="practice_weak_points",
+            generation_strategy={
+                "assessment_strategy": {
+                    "practice_diagnostic_notes": ["学习报告建议：优先复习神经网络的起源与灵感"],
+                    "practice_evidence": [
+                        {
+                            "point": "神经网络的起源与灵感",
+                            "snippets": ["人工神经网络受到生物神经网络结构和工作方式启发"],
+                        }
+                    ],
+                }
+            },
+        )
+
+        page_text = "\n".join(
+            text
+            for summary in quiz_generator.slide_summaries
+            for text in summary.get("extracted_text", [])
+        )
+        self.assertIn("人工神经网络受到生物神经网络结构和工作方式启发", page_text)
+        self.assertNotIn("学习报告建议", page_text)
+
     def test_derives_stable_slide_title_from_svg_filename_before_svg_text(self) -> None:
         title = _derive_slide_title(
             idx=8,
@@ -91,6 +466,156 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         )
 
         self.assertEqual("课程总结", title)
+
+    def test_derives_slide_title_without_markdown_heading_marks(self) -> None:
+        title = _derive_slide_title(
+            idx=1,
+            filename="01.svg",
+            svg_texts=["世界地理"],
+            manuscript_note="# 世界地理\n本节课我们将从宏观角度认识地球。",
+        )
+
+        self.assertEqual("世界地理 本节课我们将从宏观角度认识地球", title)
+
+    def test_progress_event_includes_renderable_scene_payload(self) -> None:
+        events: list[dict] = []
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            knowledge_points=["七大洲"],
+            content={"format": "markdown", "markdown": "## 世界地理"},
+            actions=[],
+        )
+
+        _emit_progress(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            scene_index=1,
+            scene_total=10,
+            scene=scene,
+        )
+
+        self.assertEqual("scene_slide_001", events[0]["scene"]["id"])
+        self.assertEqual("世界地理", events[0]["scene_payload"]["title"])
+        self.assertEqual("## 世界地理", events[0]["scene_payload"]["content"]["markdown"])
+
+    def test_emits_ready_slide_scenes_in_original_order_only(self) -> None:
+        events: list[dict] = []
+        ready = {
+            2: _slide(2, "第二页", ["B"]),
+        }
+
+        next_index = _emit_ordered_ready_scenes(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            ready_scenes=ready,
+            next_emit_index=1,
+            scene_total=3,
+        )
+
+        self.assertEqual(1, next_index)
+        self.assertEqual([], events)
+
+        ready[1] = _slide(1, "第一页", ["A"])
+        ready[3] = _slide(3, "第三页", ["C"])
+        next_index = _emit_ordered_ready_scenes(
+            events.append,
+            stage="build_scenes",
+            stage_index=1,
+            ready_scenes=ready,
+            next_emit_index=next_index,
+            scene_total=3,
+        )
+
+        self.assertEqual(4, next_index)
+        self.assertEqual(["scene_slide_001", "scene_slide_002", "scene_slide_003"], [
+            event["scene_payload"]["id"] for event in events
+        ])
+
+    def test_quiz_progress_event_uses_final_order(self) -> None:
+        events: list[dict] = []
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+        ]
+
+        self.generator._insert_quiz_scenes(  # noqa: SLF001
+            "测试主题",
+            scenes,
+            progress_callback=events.append,
+        )
+
+        quiz_events = [
+            event for event in events
+            if event.get("scene_payload", {}).get("type") == "quiz"
+        ]
+        self.assertTrue(quiz_events)
+        self.assertGreater(quiz_events[0]["scene_payload"]["order"], 0)
+
+    def test_tts_progress_can_update_scene_payload_with_audio_url(self) -> None:
+        events: list[dict] = []
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            actions=[],
+        )
+        scene.actions.append(
+            ClassroomAction(
+                id="act_slide_001",
+                type="speech",
+                text="欢迎进入课堂",
+                audio_url="/api/interactive-classroom/cls_001/audio/act_slide_001.mp3",
+            )
+        )
+
+        _emit_progress(
+            events.append,
+            stage="synthesize_tts",
+            stage_index=3,
+            scene_index=1,
+            scene_total=1,
+            scene=scene,
+        )
+
+        self.assertEqual(
+            "/api/interactive-classroom/cls_001/audio/act_slide_001.mp3",
+            events[0]["scene_payload"]["actions"][0]["audio_url"],
+        )
+
+    def test_synthesizes_single_slide_before_streaming_scene(self) -> None:
+        class StubTTS:
+            def synthesize_action(self, action_id, text, output_dir):  # noqa: ANN001
+                self.called_with = (action_id, text, output_dir)
+                return f"{action_id}.wav"
+
+        scene = ClassroomScene(
+            id="scene_slide_001",
+            type="slide",
+            title="世界地理",
+            order=1,
+            actions=[ClassroomAction(id="act_slide_001", type="speech", text="欢迎进入课堂")],
+        )
+        service = StubTTS()
+
+        _synthesize_scene_speech_actions(
+            service=service,  # type: ignore[arg-type]
+            scene=scene,
+            audio_dir="/tmp/classroom-audio",
+            classroom_id="cls_001",
+        )
+
+        self.assertEqual(("act_slide_001", "欢迎进入课堂", "/tmp/classroom-audio"), service.called_with)
+        self.assertEqual(
+            "/api/interactive-classroom/cls_001/audio/act_slide_001.wav",
+            scene.actions[0].audio_url,
+        )
 
     def test_student_profile_guides_quiz_prompt_without_leaking_to_speech(self) -> None:
         profile = {
@@ -194,6 +719,46 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
         self.assertTrue(quiz_scene.content["questions"])
 
+    def test_rejects_llm_quiz_about_cover_decoration_terms(self) -> None:
+        class CoverDecorationQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
+                return """
+                {
+                  "modules": [
+                    {
+                      "title": "CHEMISTRY EXPLORATION",
+                      "questions": [
+                        {
+                          "num": "1",
+                          "type": "单选题",
+                          "text": "关于“CHEMISTRY EXPLORATION”，以下哪一项最能说明本节要求掌握的判断依据？",
+                          "options": ["A. 化学家的地图，物质世界的钥匙", "B. 理解物质世界构成的钥匙", "C. CHEMISTRY EXPLORATION", "D. 探索元素周期表"],
+                          "answer": "B",
+                          "analysis": "应关注知识点而不是封面标签。",
+                          "knowledge_point": "CHEMISTRY EXPLORATION"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=CoverDecorationQuizGenerator(),
+        )
+        scenes = [
+            _slide(1, "今天我们将一起探索化...", ["CHEMISTRY EXPLORATION", "探索元素周期表"]),
+            _slide(2, "周期表的基本结构", ["周期", "族", "原子序数"]),
+        ]
+
+        quiz_scene = generator._build_quiz_scene(1, 2, "元素周期表", scenes)  # noqa: SLF001
+
+        self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
+        question_blob = "\n".join(q["question"] for q in quiz_scene.content["questions"])
+        self.assertNotIn("CHEMISTRY EXPLORATION", question_blob)
+
     def test_preserves_html_tag_literals_in_llm_quiz_options(self) -> None:
         class HtmlTagQuizGenerator:
             def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
@@ -296,6 +861,15 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertIn("scene_slide_004", report["recommended_tasks"][0]["target_scene_ids"])
         self.assertEqual("practice_weak_points", report["recommended_tasks"][1]["type"])
         self.assertEqual("high", report["recommended_tasks"][0]["priority"])
+        self.assertEqual(
+            ["diagnose", "review", "practice", "next_lesson"],
+            [stage["type"] for stage in report["learning_path"]],
+        )
+        self.assertEqual("评估 Agent", report["learning_path"][0]["agent_name"])
+        self.assertEqual("路径规划 Agent", report["learning_path"][1]["agent_name"])
+        self.assertEqual(report["recommended_tasks"][0]["id"], report["learning_path"][1]["task_id"])
+        self.assertEqual(report["recommended_tasks"][1]["id"], report["learning_path"][2]["task_id"])
+        self.assertEqual("active", report["learning_path"][1]["status"])
 
     def test_generate_stops_when_cancel_check_is_set_before_save(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

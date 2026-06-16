@@ -271,7 +271,7 @@ type: speech_script
         from generators.shared_config import content_llm_call
         return content_llm_call(
             messages=[
-                {"role": "system", "content": "你是一位经验丰富的教师，擅长编写口语化的授课讲稿。"},
+                {"role": "system", "content": "你是智创空间智慧课堂的讲稿生成智能体，擅长编写口语化、面向学生的授课讲稿。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,

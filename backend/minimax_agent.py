@@ -1,7 +1,7 @@
 """
-MiniMax Agent - 教师辅助 AI 助手
-使用 MiniMax 大模型 API
-支持 PPT 制作、课程讲义生成等功能
+智创空间 - 多智能体智慧课堂的对话调度 Agent
+使用大模型 API（MiniMax / DeepSeek / Anthropic 等多家适配）。
+负责课堂内对话路由、意图分析与多种学习资源（PPT、讲义、讨论、图文、视频脚本）的生成调度。
 """
 
 import requests
@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Generator, Optional
 from openai import OpenAI
 from generators.ppt_generator import PPTGenerator
-from ppt_preview import generate_text_preview, PPTPreviewer
 from generators.lecture_generator import LectureGenerator
 from generators.content_generator import ContentGenerator
 from memory_manager import MemoryManager
@@ -52,7 +51,6 @@ class MiniMaxAgent:
             return path
 
         self.ppt_generator = PPTGenerator(output_dir=_udir("generated_ppt"))
-        self.ppt_previewer = PPTPreviewer()
         self.lecture_generator = LectureGenerator(output_dir=_udir("generated_lectures"))
         self.content_generator = ContentGenerator(output_dir=_udir("generated_content"))
         self.course_outline_generator = CourseOutlineGenerator(output_dir=_udir("generated_outlines"))
@@ -110,8 +108,10 @@ class MiniMaxAgent:
     
     def check_teacher_request(self, message: str):
         """
-        检查是否是教师辅助相关请求
-        支持：制作PPT、预览PPT、列出PPT、生成讲义、列出讲义
+        检查是否是学习资源生成相关请求（PPT、讲义、图文、视频脚本等）。
+
+        方法名保留 `check_teacher_request` 是为了兼容历史调用方与持久化数据，
+        实际语义已切换为"面向学生的学习资源生成意图识别"。
 
         意图分析策略：
         1. 优先精确匹配（命令式指令如"制作PPT：主题"）
@@ -140,11 +140,6 @@ class MiniMaxAgent:
         # 检查是否是列出讲义请求
         if re.search(r'(列出|查看|显示).*?讲义', message) or message.lower() in ['list lecture', 'lecture list', '我的讲义']:
             return self._list_lectures()
-
-        # 检查是否是预览请求
-        preview_match = re.search(r'预览[Pp][Pp][Tt][:：]?\s*(.+)?', message)
-        if preview_match or '预览' in message and 'ppt' in message.lower():
-            return self._handle_preview_request(message)
 
         # 检查是否是列出PPT请求
         if re.search(r'(列出|查看|显示).*?[Pp][Pp][Tt]', message) or message.lower() in ['list ppt', 'ppt list', '我的ppt']:
@@ -277,7 +272,7 @@ class MiniMaxAgent:
 
     def _intelligent_intent_analysis(self, message: str):
         """
-        智能意图分析：使用 AI 辅助判断复杂/模糊的教师辅助请求
+        智能意图分析：使用 AI 辅助判断复杂/模糊的学习资源生成请求
 
         当用户输入无法被规则匹配时，调用此方法。
         AI 会分析用户是否想要：制作PPT、生成讲义、生成图文内容、生成视频脚本等
@@ -289,7 +284,7 @@ class MiniMaxAgent:
         if not has_keyword:
             return None
 
-        prompt = f"""你是一个教师助手，擅长理解用户的教学内容生成需求。
+        prompt = f"""你是智创空间智慧课堂的意图分析智能体，擅长理解学生生成学习资源的需求。
 
 用户输入：「{message}」
 
@@ -379,7 +374,6 @@ class MiniMaxAgent:
             size = os.path.getsize(file_path) / 1024  # KB
             result.append(f"{i}. {f} ({size:.1f} KB)")
         
-        result.append("<br>使用 '预览PPT: 文件名' 查看内容")
         return '<br>'.join(result)
     
     def _handle_memory_command(self, message: str):
@@ -707,59 +701,6 @@ class MiniMaxAgent:
         # 对话历史使用 AI 精简
         return self._save_conversation_simple()
 
-    def _handle_preview_request(self, message: str) -> str:
-        """处理预览请求"""
-        import os
-        import re
-        
-        # 尝试提取文件名
-        match = re.search(r'预览[Pp][Pp][Tt][:：]?\s*(.+)', message)
-        
-        ppt_dir = os.path.join(BACKEND_DIR, "generated_ppt")
-        if not os.path.exists(ppt_dir):
-            return "还没有生成任何 PPT 文件。"
-
-        # 过滤掉临时文件（以 ~$ 开头）
-        ppt_files = [f for f in os.listdir(ppt_dir) if f.endswith('.pptx') and not f.startswith('~$')]
-        if not ppt_files:
-            return "还没有生成任何 PPT 文件。"
-        
-        # 如果指定了文件名
-        if match:
-            file_hint = match.group(1).strip()
-            # 查找匹配的 PPT
-            for f in ppt_files:
-                if file_hint.lower() in f.lower():
-                    ppt_path = os.path.join(ppt_dir, f)
-                    return self._generate_preview(ppt_path)
-            return f"未找到包含 '{file_hint}' 的 PPT 文件。<br>可用文件：" + ', '.join(ppt_files)
-        
-        # 如果没有指定，预览最新的 PPT
-        latest_ppt = max(ppt_files, key=lambda f: os.path.getmtime(os.path.join(ppt_dir, f)))
-        ppt_path = os.path.join(ppt_dir, latest_ppt)
-        return self._generate_preview(ppt_path)
-    
-    def _generate_preview(self, ppt_path: str) -> str | dict:
-        """生成 PPT 预览"""
-        try:
-            # 尝试生成图片预览
-            preview_data = self.ppt_previewer.get_preview_data(ppt_path)
-            
-            if 'error' in preview_data:
-                # 如果图片预览失败，返回文本预览
-                preview_text = generate_text_preview(ppt_path)
-                return f"📊 PPT 预览<br><br>{preview_text}<br><br>💡 提示：文件位于 {ppt_path}"
-            
-            # 返回预览数据（包含图片）
-            return {
-                'type': 'ppt_preview',
-                'filename': preview_data['filename'],
-                'total_pages': preview_data['total_pages'],
-                'slides': preview_data['slides']
-            }
-        except Exception as e:
-            return f"预览生成失败: {str(e)}"
-    
     def _list_lectures(self) -> str:
         """列出所有生成的讲义"""
         lectures = self.lecture_generator.list_lectures()
@@ -905,7 +846,7 @@ class MiniMaxAgent:
         yield self._init_progress('lecture', '即将生成讲义', topic, 'md')
 
         # 构建提示词
-        prompt = self.lecture_generator.generate_lecture_prompt(topic)
+        prompt = self.lecture_generator.generate_lecture_prompt(topic, self.user_id)
 
         try:
             # 调用 AI 生成讲义
@@ -1050,7 +991,7 @@ class MiniMaxAgent:
         """使用 AI 生成习题集"""
         yield self._init_progress('exercise', '即将生成习题集', topic, output_format)
 
-        for update in self.exercise_generator.generate_exercise_stream(topic, output_format):
+        for update in self.exercise_generator.generate_exercise_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'exercise', topic, output_format)
@@ -1091,7 +1032,7 @@ class MiniMaxAgent:
         """使用 AI 生成课堂测验"""
         yield self._init_progress('quiz', '即将生成课堂测验', topic, output_format)
 
-        for update in self.quiz_generator.generate_quiz_stream(topic, output_format):
+        for update in self.quiz_generator.generate_quiz_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'quiz', topic, output_format)
@@ -1117,7 +1058,7 @@ class MiniMaxAgent:
         """使用 AI 生成知识卡片"""
         yield self._init_progress('card', '即将生成知识卡片', topic, output_format)
 
-        for update in self.knowledge_card_generator.generate_card_stream(topic, output_format):
+        for update in self.knowledge_card_generator.generate_card_stream(topic, output_format, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 filtered_data = self._enrich_completion_data(filtered_data, 'card', topic, output_format)
@@ -1143,7 +1084,7 @@ class MiniMaxAgent:
         """使用 AI 生成思维导图"""
         yield self._init_progress('mindmap', '即将生成思维导图', topic, 'md')
 
-        for update in self.mindmap_generator.generate_mindmap_stream(topic):
+        for update in self.mindmap_generator.generate_mindmap_stream(topic, self.user_id):
             if update.get('status') == 'completed':
                 filtered_data = {k: v for k, v in update['data'].items() if 'base64' not in k}
                 # 读取文件内容供前端预览
@@ -1175,7 +1116,7 @@ class MiniMaxAgent:
     def _create_ppt_with_ai(self, topic: str):
         """
         使用 AI 生成 PPT 内容并创建 PPT 文件
-        返回：生成器，先输出大纲文本，再输出预览数据
+        返回：生成器，先输出大纲文本，再输出生成结果
         """
         # 构建提示词，让 AI 生成 PPT 大纲
         prompt = f'''请为"{topic}"这个主题生成一个PPT大纲。
@@ -1262,8 +1203,8 @@ class MiniMaxAgent:
                 if len(self._generation_history) > 10:
                     self._generation_history.pop(0)
 
-                # 3. 输出文件路径和预览提示
-                completion_msg = f"<br>─────────────────────────<br>✅ PPT 已生成！<br>📄 文件路径: {output_path}<br>📊 共 {len(slides)} 页幻灯片<br><br>💡 提示：点击左侧「预览最新 PPT」按钮查看预览图"
+                # 3. 输出文件路径
+                completion_msg = f"<br>─────────────────────────<br>✅ PPT 已生成！<br>📄 文件路径: {output_path}<br>📊 共 {len(slides)} 页幻灯片"
                 yield completion_msg
             else:
                 yield "❌ 无法解析 AI 生成的 PPT 大纲"
@@ -1285,17 +1226,17 @@ class MiniMaxAgent:
             provider_type: minmax | openai
 
         Returns:
-            完整回复字符串、流式生成器、或 PPT 预览字典
+            完整回复字符串或流式生成器
         """
         model = model or self.model
 
-        # 首先检查是否是教师辅助相关请求（PPT、讲义等）
+        # 首先检查是否是学习资源生成相关请求（PPT、讲义、图文、视频脚本等）
         teacher_result = self.check_teacher_request(message)
         if teacher_result:
-            # 如果是字典（PPT预览数据），直接返回
+            # 如果是字典，直接返回
             if isinstance(teacher_result, dict):
                 return teacher_result
-            # 如果是生成器（如制作PPT时先输出大纲再输出预览），直接返回
+            # 如果是生成器（如制作PPT时先输出大纲再输出结果），直接返回
             if hasattr(teacher_result, '__iter__') and not isinstance(teacher_result, (str, bytes)):
                 return teacher_result
             # 否则是普通字符串响应
@@ -1319,7 +1260,7 @@ class MiniMaxAgent:
         if memory_context:
             system_message = {
                 "role": "system",
-                "content": f"你是一个友好、有知识的AI教师助手。你拥有自己的长期记忆库，当用户询问相关问题时，你应该主动引用记忆中的内容来回答案。{memory_context}"
+                "content": f"你是智创空间智慧课堂中的学习智能体，亲切、严谨、以学生为中心。你拥有自己的长期记忆库，当用户询问相关问题时，你应该主动引用记忆中的内容来回答。{memory_context}"
             }
             messages_with_context = [system_message] + self.conversation_history
         else:
@@ -1610,7 +1551,7 @@ class MiniMaxAgent:
         # 确保有 system message
         has_system = any(m.get("role") == "system" for m in messages)
         if not has_system:
-            messages = [{"role": "system", "content": "你是一个友好、有知识的AI教师助手。"}] + messages
+            messages = [{"role": "system", "content": "你是智创空间智慧课堂中的学习智能体，亲切、严谨、以学生为中心。"}] + messages
 
         try:
             if stream:
@@ -1678,7 +1619,7 @@ if __name__ == "__main__":
     agent = MiniMaxAgent(API_KEY)
     
     print("=" * 60)
-    print("🎓 MiniMax Agent - 教师辅助 AI 助手")
+    print("🎓 智创空间 - 多智能体智慧课堂平台 (CLI)")
     print("=" * 60)
     print("通用指令:")
     print("  输入 'quit' 退出")
@@ -1686,7 +1627,6 @@ if __name__ == "__main__":
     print("-" * 60)
     print("PPT 功能:")
     print("  制作PPT：主题  - 生成演示文稿")
-    print("  预览PPT        - 查看 PPT 内容")
     print("  列出PPT        - 查看所有 PPT 文件")
     print("-" * 60)
     print("讲义功能:")

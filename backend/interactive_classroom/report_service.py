@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
 
 
 def _compact_text_key(value: str) -> str:
@@ -178,11 +183,217 @@ def _build_recommended_tasks(
     ]
 
 
+def _build_learning_path(
+    status: str,
+    score: int,
+    weak_points: list[str],
+    strong_points: list[str],
+    recommended_tasks: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
+) -> list[dict[str, Any]]:
+    task_by_type = {
+        str(task.get("type")): task
+        for task in recommended_tasks
+        if isinstance(task, dict)
+    }
+    weak_summary = "、".join(weak_points[:3])
+    strong_summary = "、".join(strong_points[:3])
+
+    def task_ref(task_type: str) -> dict[str, Any]:
+        task = task_by_type.get(task_type) or {}
+        return {
+            "task_id": task.get("id", ""),
+            "action_label": task.get("action_label", ""),
+            "knowledge_points": task.get("knowledge_points", []),
+            "target_scene_ids": task.get("target_scene_ids", []),
+        }
+
+    task_events: dict[str, dict[str, Any]] = {}
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "recommended_task_completed":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        task_id = str(payload.get("task_id") or "")
+        if task_id:
+            task_events[task_id] = payload
+
+    def _classroom_exists(classroom_id: str) -> bool:
+        """检查 classroom 是否还存在（未被删除）。"""
+        if not classroom_id or not storage or not user_id:
+            return False
+        try:
+            return storage.load_classroom(user_id, classroom_id) is not None
+        except Exception:
+            return False
+
+    def task_state(
+        task_id: str,
+        default_status: str,
+        default_metric: str,
+        default_action_label: str = "",
+    ) -> dict[str, str]:
+        payload = task_events.get(task_id)
+        if not payload:
+            return {
+                "status": default_status,
+                "metric": default_metric,
+                "generated_classroom_id": "",
+                "action_label": default_action_label,
+            }
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        generated_classroom_id = str(result.get("practice_classroom_id") or "")
+        # 检查生成的 classroom 是否还存在（可能已被删除）
+        classroom_still_exists = _classroom_exists(generated_classroom_id)
+        if result.get("status") == "practice_created":
+            return {
+                "status": "completed" if classroom_still_exists else default_status,
+                "metric": "已生成" if classroom_still_exists else default_metric,
+                "generated_classroom_id": generated_classroom_id if classroom_still_exists else "",
+                "action_label": "查看练习" if classroom_still_exists else default_action_label,
+            }
+        return {
+            "status": "completed" if classroom_still_exists else default_status,
+            "metric": "已完成" if classroom_still_exists else default_metric,
+            "generated_classroom_id": generated_classroom_id if classroom_still_exists else "",
+            "action_label": "查看练习" if classroom_still_exists else default_action_label,
+        }
+
+    if status == "not_started":
+        complete_task = task_ref("complete_quizzes")
+        return [
+            {
+                "id": "path_diagnose",
+                "type": "diagnose",
+                "agent_name": "诊断 Agent",
+                "title": "完成课堂诊断",
+                "description": "先完成随堂测验，系统会用真实答题记录识别薄弱点并生成后续路径。",
+                "status": "active",
+                "metric": "待诊断",
+                **complete_task,
+            },
+            {
+                "id": "path_plan",
+                "type": "plan",
+                "agent_name": "路径规划 Agent",
+                "title": "生成个性化学习路径",
+                "description": "诊断完成后会自动给出复习、练习和下一课衔接任务。",
+                "status": "locked",
+                "metric": "",
+                "task_id": "",
+                "action_label": "",
+                "knowledge_points": [],
+                "target_scene_ids": [],
+            },
+        ]
+
+    diagnose_status = "completed"
+    review_task = task_ref("review_weak_points")
+    practice_task = task_ref("practice_weak_points")
+    next_task = task_ref("next_lesson")
+    challenge_task = task_ref("challenge_practice")
+    review_state = task_state(
+        str(review_task.get("task_id", "")),
+        "active" if weak_points else "completed",
+        "补弱",
+        str(review_task.get("action_label") or ""),
+    )
+    practice_state = task_state(
+        str(practice_task.get("task_id", "")),
+        "pending" if weak_points else "active",
+        "练习",
+        str(practice_task.get("action_label") or ""),
+    )
+    if practice_state["status"] == "completed" and review_state["status"] == "active":
+        review_state = {
+            **review_state,
+            "status": "completed",
+            "metric": "已完成",
+        }
+    next_status = "pending" if weak_points else "active"
+    if practice_state["status"] == "completed":
+        next_status = "active"
+
+    if not weak_points:
+        review_task = {
+            "task_id": "",
+            "action_label": "",
+            "knowledge_points": strong_points[:3],
+            "target_scene_ids": [],
+        }
+        practice_task = challenge_task
+
+    return [
+        {
+            "id": "path_diagnose",
+            "type": "diagnose",
+            "agent_name": "评估 Agent",
+            "title": "诊断本节掌握度",
+            "description": (
+                f"综合得分 {score}%，识别到薄弱点：{weak_summary}。"
+                if weak_points
+                else f"综合得分 {score}%，本节暂无明显薄弱点。"
+            ),
+            "status": diagnose_status,
+            "metric": f"{score}%",
+            "task_id": "",
+            "action_label": "",
+            "knowledge_points": weak_points[:3] or strong_points[:3],
+            "target_scene_ids": [],
+        },
+        {
+            "id": "path_review",
+            "type": "review",
+            "agent_name": "路径规划 Agent",
+            "title": "复听关键讲解",
+            "description": (
+                f"优先回到 {weak_summary} 的讲解页，把理解断点补齐。"
+                if weak_points
+                else f"保持 {strong_summary or '本节核心知识'} 的稳定掌握。"
+            ),
+            "status": review_state["status"],
+            "metric": review_state["metric"],
+            **review_task,
+        },
+        {
+            "id": "path_practice",
+            "type": "practice",
+            "agent_name": "资源生成 Agent",
+            "title": "生成补强练习",
+            "description": (
+                "围绕薄弱点生成同类练习，用新的题目验证是否真正掌握。"
+                if weak_points
+                else "尝试综合挑战题，检查迁移应用能力。"
+            ),
+            "status": practice_state["status"],
+            "metric": practice_state["metric"],
+            **practice_task,
+            "generated_classroom_id": practice_state["generated_classroom_id"],
+            "action_label": practice_state["action_label"] or practice_task.get("action_label", ""),
+        },
+        {
+            "id": "path_next_lesson",
+            "type": "next_lesson",
+            "agent_name": "课程衔接 Agent",
+            "title": "规划下一堂课",
+            "description": "根据本节表现自动生成下一课主题、目标和 PPT 生成备注，形成连续学习链路。",
+            "status": next_status,
+            "metric": "再规划",
+            **next_task,
+        },
+    ]
+
+
 def build_classroom_report(
     classroom: dict[str, Any],
     answers_record: dict[str, Any],
     events: list[dict[str, Any]] | None = None,
     course_profile: dict[str, Any] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
 ) -> dict[str, Any]:
     scenes = answers_record.get("scenes", {})
     quiz_scene_count = sum(1 for scene in classroom.get("scenes", []) if scene.get("type") == "quiz")
@@ -213,7 +424,10 @@ def build_classroom_report(
         quiz_scene = quiz_scene_map.get(scene_id, {})
         covered_scene_ids = quiz_scene.get("content", {}).get("covered_scene_ids", [])
         for result in evaluation.get("results", []):
-            point_name = result.get("knowledge_point") or "综合理解"
+            raw_point = (result.get("knowledge_point") or "").strip()
+            # 剥离内部 scene ID（兼容旧数据中残留的 scene_slide_002 等）
+            raw_point = re.sub(r"\bscene_(?:slide|quiz|mindmap)_\d+\b", "", raw_point).strip()
+            point_name = raw_point or "综合理解"
             points = int(result.get("points", 1) or 1)
             is_correct = bool(result.get("correct"))
             # 简答题（short_answer）走 0-100 分数，earned_points 是小数；
@@ -274,6 +488,16 @@ def build_classroom_report(
         point_scene_ids,
         course_profile,
     )
+    learning_path = _build_learning_path(
+        status,
+        score,
+        weak_points,
+        strong_points,
+        recommended_tasks,
+        events,
+        storage,
+        user_id,
+    )
 
     return {
         "classroom_id": classroom.get("id", ""),
@@ -294,6 +518,127 @@ def build_classroom_report(
         "strong_points": strong_points,
         "next_recommendation": next_recommendation,
         "recommended_tasks": recommended_tasks,
+        "learning_path": learning_path,
         "event_count": len(events or []),
         "course_trend": (course_profile or {}).get("recent_trend", "stable"),
     }
+
+
+def refresh_report_learning_path(
+    report: dict[str, Any],
+    events: list[dict[str, Any]] | None = None,
+    storage: Any | None = None,
+    user_id: str = "",
+) -> dict[str, Any]:
+    refreshed = dict(report)
+    refreshed["learning_path"] = _build_learning_path(
+        str(refreshed.get("status") or ""),
+        int(round(float(refreshed.get("score", 0) or 0))),
+        [
+            str(value).strip()
+            for value in refreshed.get("weak_points", [])
+            if str(value).strip()
+        ],
+        [
+            str(value).strip()
+            for value in refreshed.get("strong_points", [])
+            if str(value).strip()
+        ],
+        [
+            task
+            for task in refreshed.get("recommended_tasks", [])
+            if isinstance(task, dict)
+        ],
+        events,
+        storage,
+        user_id,
+    )
+    return refreshed
+
+
+def resolve_knowledge_evidence(
+    knowledge_summary: dict[str, Any],
+    knowledge_context: dict[str, Any] | None,
+    classroom: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not knowledge_context:
+        return []
+
+    std_points = knowledge_context.get("knowledge_points", [])
+    evidence_chunks = knowledge_context.get("evidence", [])
+    if not std_points and not evidence_chunks:
+        return []
+
+    point_scene_ids: dict[str, list[str]] = {}
+    if classroom:
+        for point_name in knowledge_summary:
+            scene_ids = _find_scene_ids_for_points(classroom, [point_name])
+            if scene_ids:
+                point_scene_ids[point_name] = scene_ids
+
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for raw_name in knowledge_summary:
+        raw_norm = _normalize_text(raw_name)
+        best_kp: dict[str, Any] | None = None
+        best_score = 0.0
+        for kp in std_points:
+            label = kp.get("label", "")
+            if not label:
+                continue
+            label_norm = _normalize_text(label)
+            if raw_norm == label_norm:
+                best_kp = kp
+                best_score = 1.0
+                break
+            if raw_norm in label_norm or label_norm in raw_norm:
+                score = min(len(raw_norm), len(label_norm)) / max(len(raw_norm), len(label_norm), 1)
+                if score > best_score:
+                    best_score = score
+                    best_kp = kp
+
+        kp_id = (best_kp or {}).get("knowledge_point_id", "")
+        if kp_id in seen_ids:
+            continue
+
+        # 置信度过低说明是误匹配（如短词子串命中），跳过
+        if best_score < 0.25:
+            continue
+
+        matching_evidence: list[dict[str, Any]] = []
+        for chunk in evidence_chunks:
+            # 跳过课程结构条目（大纲/课次），只匹配实际内容 chunk
+            chunk_type = chunk.get("chunk_type", "")
+            if chunk_type in ("lesson_outline", "module_outline"):
+                continue
+            chunk_text = _normalize_text(chunk.get("text", "") + " " + chunk.get("section", ""))
+            # 短知识点名（<4字符）不做子串匹配，避免"项目"误命中"课程项目整合与展示答辩"
+            text_match = len(raw_norm) >= 4 and raw_norm in chunk_text
+            keyword_match = any(
+                _normalize_text(kw) in raw_norm
+                for kw in chunk.get("keywords", [])
+                if len(kw) >= 2
+            )
+            if text_match or keyword_match:
+                matching_evidence.append({
+                    "chunk_id": chunk.get("chunk_id", ""),
+                    "evidence_label": chunk.get("evidence_label", ""),
+                    "source_name": chunk.get("source_name", ""),
+                    "section": chunk.get("section", ""),
+                    "text_excerpt": (chunk.get("text", "") or "")[:200],
+                })
+
+        row: dict[str, Any] = {
+            "knowledge_point_id": kp_id,
+            "raw_name": raw_name,
+            "standard_label": (best_kp or {}).get("label", ""),
+            "match_confidence": round(best_score, 2),
+            "evidence": matching_evidence[:3],
+            "scene_ids": point_scene_ids.get(raw_name, []),
+        }
+        results.append(row)
+        if kp_id:
+            seen_ids.add(kp_id)
+
+    return results

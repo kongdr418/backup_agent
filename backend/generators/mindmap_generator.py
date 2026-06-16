@@ -8,6 +8,8 @@ import re
 from datetime import datetime
 from typing import Generator, Optional
 
+from learner_profile.storage import LearnerProfileStorage
+
 
 class MindmapGenerator:
     """思维导图生成器"""
@@ -15,6 +17,46 @@ class MindmapGenerator:
     def __init__(self, output_dir: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_mindmaps")):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        # 延迟初始化，避免循环导入
+        self._profile_storage = None
+
+    def _get_profile_storage(self):
+        """延迟获取画像存储实例"""
+        if self._profile_storage is None:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._profile_storage = LearnerProfileStorage(backend_dir)
+        return self._profile_storage
+
+    def _load_profile_hint(self, user_id: str) -> str:
+        """加载学生画像并生成提示词片段"""
+        if not user_id or user_id == 'anonymous':
+            return ""
+        try:
+            storage = self._get_profile_storage()
+            profile = storage.load_profile(user_id)
+            basic = profile.get("basic", {})
+            preferences = profile.get("preferences", {})
+
+            stage = basic.get("learning_stage") or ""
+            basis = basic.get("learning_basis") or ""
+            goal = preferences.get("goal") or ""
+            difficulty = preferences.get("preferred_difficulty") or ""
+
+            parts = []
+            if stage:
+                parts.append(f"学习阶段：{stage}")
+            if basis:
+                parts.append(f"当前基础：{basis}")
+            if goal:
+                parts.append(f"学习目标：{goal}")
+            if difficulty:
+                parts.append(f"期望难度：{difficulty}")
+
+            if parts:
+                return "\n\n【学生画像信息】\n" + "\n".join(parts) + "\n请根据以上画像信息调整思维导图的复杂度和深度。"
+        except Exception:
+            pass
+        return ""
 
     def parse_mindmap_request(self, message: str) -> Optional[dict]:
         """
@@ -43,7 +85,7 @@ class MindmapGenerator:
                 }
         return None
 
-    def generate_mindmap_stream(self, topic: str) -> Generator[dict, None, None]:
+    def generate_mindmap_stream(self, topic: str, user_id: str = 'anonymous') -> Generator[dict, None, None]:
         """流式生成思维导图"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -57,7 +99,7 @@ class MindmapGenerator:
                 'message': f'🚀 开始生成思维导图：{topic}'
             }
 
-            content = self._generate_mindmap_content(topic)
+            content = self._generate_mindmap_content(topic, user_id)
             result_data['content'] = content
 
             yield {
@@ -101,9 +143,12 @@ type: mindmap
                 'message': f'❌ 生成失败: {e}'
             }
 
-    def _generate_mindmap_content(self, topic: str) -> str:
+    def _generate_mindmap_content(self, topic: str, user_id: str = 'anonymous') -> str:
         """调用 AI 生成符合专业思维导图逻辑的完整总结文档"""
-        prompt = f"""你是一位精通知识架构的专家。请为"{topic}"生成一份结构严密、逻辑清晰的深度章节总结思维导图。
+        profile_hint = self._load_profile_hint(user_id)
+
+        prompt = f"""你是一位精通知识架构的学习助手。请为"{topic}"生成一份结构严密、逻辑清晰的深度章节总结思维导图，帮助你系统地理解和记忆这个知识点。
+{profile_hint}
 
 ### 核心任务
 参考以下 10 种专业思维导图模型，根据内容特性自动选择最匹配的逻辑进行构建：
@@ -184,7 +229,7 @@ mindmap
         from generators.shared_config import content_llm_call
         return content_llm_call(
             messages=[
-                {"role": "system", "content": "你是一位思维导图专家，擅长用结构化的方式呈现知识体系。"},
+                {"role": "system", "content": "你是一位专业的学习助手，擅长用结构化的方式呈现知识体系，帮助学习者快速构建知识框架。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,

@@ -13,6 +13,7 @@ const DEFAULTS: ContentSettings = {
   chat_provider: 'minimax',
   content_model: 'deepseek-v4-flash',
   content_provider: 'deepseek',
+  classroom_critic_mode: 'standard',
   ppt_model: 'deepseek-v4-flash',
   ppt_provider: 'deepseek',
   tts_provider: 'mimo-tts',
@@ -112,6 +113,9 @@ export const useSettingStore = defineStore('setting', () => {
             'https://dashscope.aliyuncs.com/compatible-mode/v1',
             'https://api.siliconflow.cn/v1',
             'https://api.minimax.chat/v1/text/chatcompletion_v2',
+            'https://api.minimax.chat/v1',
+            'https://spark-api-open.xf-yun.com/x2/',
+            'https://spark-api-open.xf-yun.com/v2/',
           ]
           const current = providersConfig.value[pid].baseUrl
           if (!current || oldDefaults.includes(current)) {

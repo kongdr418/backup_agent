@@ -43,6 +43,13 @@ class InteractiveClassroomHighlightTest(unittest.TestCase):
         self.assertGreater(len(speech), 220)
         self.assertLessEqual(len(speech), 900)
 
+    def test_speech_text_from_manuscript_softens_repetitive_classroom_opening(self) -> None:
+        manuscript = "同学们，今天我们来聊聊化学元素周期表为什么这么重要。它藏着一套规律。"
+
+        speech = _speech_text_from_manuscript(manuscript)
+
+        self.assertEqual("这一页我们聊聊化学元素周期表为什么这么重要。它藏着一套规律。", speech)
+
     def test_extract_svg_highlight_targets_reads_text_bboxes(self) -> None:
         svg = """
         <svg viewBox="0 0 1000 562">
