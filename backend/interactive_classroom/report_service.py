@@ -30,6 +30,19 @@ def _collect_scene_knowledge(classroom: dict[str, Any]) -> list[str]:
     return points
 
 
+def _study_tool_event_mastered(event: dict[str, Any]) -> bool | None:
+    event_type = event.get("type")
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    if event_type == "mistake_mastered":
+        return True
+    if event_type == "flashcard_reviewed":
+        try:
+            return int(payload.get("grade", 0) or 0) >= 4
+        except (TypeError, ValueError):
+            return False
+    return None
+
+
 def _find_scene_ids_for_points(classroom: dict[str, Any], point_names: list[str]) -> list[str]:
     if not point_names:
         return []
@@ -461,10 +474,35 @@ def build_classroom_report(
                     if covered_scene_id and covered_scene_id not in rows:
                         rows.append(covered_scene_id)
 
+    for event in events or []:
+        mastered = _study_tool_event_mastered(event)
+        if mastered is None:
+            continue
+        event_id = str(event.get("id") or "")
+        for raw_point in event.get("knowledge_points", []):
+            point_name = str(raw_point or "").strip()
+            if not point_name:
+                continue
+            row = knowledge_summary.setdefault(
+                point_name,
+                {"correct": 0, "total": 0, "earned_points": 0, "total_points": 0, "mastery": 0, "event_ids": []},
+            )
+            row["total"] += 1
+            row["total_points"] += 1
+            total_questions += 1
+            total_points += 1
+            if mastered:
+                row["correct"] += 1
+                row["earned_points"] += 1
+                correct_questions += 1
+                earned_points += 1
+            if event_id:
+                row.setdefault("event_ids", []).append(event_id)
+
     # P7: 回填 event_ids 到每个知识点
     for point_name, row in knowledge_summary.items():
         row["mastery"] = round((row["correct"] / row["total"]) * 100) if row["total"] else 0
-        row["event_ids"] = list(set(kp_event_ids.get(point_name, [])))
+        row["event_ids"] = sorted(set([*row.get("event_ids", []), *kp_event_ids.get(point_name, [])]))
 
     score = round((earned_points / total_points) * 100) if total_points else 0
     weak_points = [name for name, row in knowledge_summary.items() if row["mastery"] < 80]

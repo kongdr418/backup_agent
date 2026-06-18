@@ -59,6 +59,7 @@ export default {
           memory: 'rgb(var(--hue-memory-rgb) / <alpha-value>)',
           settings: 'rgb(var(--hue-settings-rgb) / <alpha-value>)',
           dashboard: 'rgb(var(--hue-dashboard-rgb) / <alpha-value>)',
+          study: 'rgb(var(--hue-study-rgb) / <alpha-value>)',
         },
         // 语义
         success: 'rgb(var(--success-rgb) / <alpha-value>)',
@@ -88,6 +89,7 @@ export default {
           library: 'rgb(var(--nav-library-rgb) / <alpha-value>)',
           memory: 'rgb(var(--nav-memory-rgb) / <alpha-value>)',
           settings: 'rgb(var(--nav-settings-rgb) / <alpha-value>)',
+          study: 'rgb(var(--nav-study-rgb) / <alpha-value>)',
         },
         // 兼容旧代码(原 brand 类)— 别名指向 accent
         // 兼容别名将通过 brand.xxx 访问 warm palette

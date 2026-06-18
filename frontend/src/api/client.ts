@@ -4,7 +4,6 @@ import { getUserId } from '@/composables/useUserId'
 const client = axios.create({
   baseURL: '',
   timeout: 60_000,
-  headers: { 'Content-Type': 'application/json; charset=utf-8' },
 })
 
 client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
@@ -15,6 +14,12 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.params = { ...config.params, user_id: uid }
   } else if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
     config.data = { ...config.data, user_id: uid }
+  } else if (config.data instanceof FormData) {
+    config.data.append('user_id', uid)
+  }
+  if (config.data instanceof FormData && config.headers) {
+    delete (config.headers as Record<string, unknown>)['Content-Type']
+    delete (config.headers as Record<string, unknown>)['content-type']
   }
   return config
 })

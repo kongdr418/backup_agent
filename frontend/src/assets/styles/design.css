@@ -56,6 +56,7 @@
   --nav-library:  #8C5A2B;   /* 琥珀棕 */
   --nav-memory:  #6B4A5E;     /* 玫瑰灰 */
   --nav-settings:#5E6B7C;     /* 石墨蓝灰 */
+  --nav-study:    #966E32;    /* 学习工具 */
 
   /* ── Module BG ── */
   --nav-dashboard-bg: #E2EEF2;
@@ -66,6 +67,7 @@
   --nav-library-bg: #F5EEE2;
   --nav-memory-bg:  #F2E8EC;
   --nav-settings-bg:#EEF0F2;
+  --nav-study-bg:   #F7EEDC;
 
   /* ── Radius ── */
   --radius-xs:   4px;
@@ -151,6 +153,7 @@
   --nav-library-bg: #3D2A10;
   --nav-memory-bg:  #3D1028;
   --nav-settings-bg:#1C2530;
+  --nav-study-bg:   #3D2A10;
 
   --shadow-sm:  0 1px 2px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.14);
   --shadow-md:  0 4px 6px -1px rgba(0,0,0,0.22), 0 2px 4px -2px rgba(0,0,0,0.16);

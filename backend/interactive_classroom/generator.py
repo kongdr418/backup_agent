@@ -1267,6 +1267,34 @@ QUIZ_SOURCE_SKIP_KEYWORDS = (
     "qa",
 )
 
+QUIZ_SOURCE_SUMMARY_SKIP_KEYWORDS = (
+    "\u8bfe\u7a0b\u603b\u7ed3",
+    "\u603b\u7ed3",
+    "\u590d\u76d8",
+    "\u56de\u987e",
+    "\u62d3\u5c55",
+    "\u5c55\u671b",
+    "\u4e0b\u4e00\u6b65",
+    "\u8bfe\u540e",
+    "summary",
+    "review",
+    "wrap up",
+    "next step",
+)
+
+QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS = (
+    "\u63d0\u95ee",
+    "\u95ee\u9898",
+    "\u8ba8\u8bba",
+    "\u7b54\u7591",
+    "\u4e92\u52a8",
+    "\u95ee\u7b54",
+    "q&a",
+    "qa",
+    "question",
+    "discussion",
+)
+
 # 开场/封面/目录页关键词 — 用于检测不应出题的非知识内容页
 # 注意：只保留明确的开场/封面/目录关键词，避免"学习目标""课程大纲"等
 # 可能出现在内容页知识点中的词导致误杀
@@ -1279,6 +1307,19 @@ INTRO_SLIDE_KEYWORDS = (
     # 通用开场
     "自我介绍", "讲师介绍", "欢迎", "开场",
     "welcome", "introduction", "intro", "导论",
+)
+
+INTRO_SLIDE_FULL_TEXT_KEYWORDS = (
+    "overview",
+    "课程学习路径",
+    "课程学习路线",
+)
+
+INTRO_FIRST_SLIDE_TITLE_KEYWORDS = (
+    "项目导入",
+    "课程导入",
+    "学习导入",
+    "导学",
 )
 
 
@@ -1295,6 +1336,15 @@ def _is_intro_slide(scene: ClassroomScene, *, is_first_slide: bool = False) -> b
     for kw in INTRO_SLIDE_KEYWORDS:
         if kw in title_lower:
             return True
+
+    # Signal A2: 明确的总览/学习路径页，即使标题较长也不作为测验来源。
+    for kw in INTRO_SLIDE_FULL_TEXT_KEYWORDS:
+        if kw.lower() in combined:
+            return True
+
+    # Signal A3: 首页导入页不是知识检测来源；避免泛化到"模块导入"等内容页。
+    if is_first_slide and any(kw in title_lower for kw in INTRO_FIRST_SLIDE_TITLE_KEYWORDS):
+        return True
 
     # Signal B: 标题较短(≤15字符) + (标题+知识点)命中关键词 → 判定为开场页
     # 避免长标题内容页（如"Python 模块导入详解"）被误杀
@@ -1323,7 +1373,12 @@ def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False
         return False  # 空标题+空知识点的页面不是有效的出题源
     if _is_intro_slide(scene, is_first_slide=is_first_slide):
         return False
-    return not any(keyword in text for keyword in QUIZ_SOURCE_SKIP_KEYWORDS)
+    title = (scene.title or "").lower()
+    if any(keyword in text for keyword in QUIZ_SOURCE_SUMMARY_SKIP_KEYWORDS):
+        return False
+    if any(keyword in title for keyword in QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS):
+        return False
+    return True
 
 
 class InteractiveClassroomGenerator:

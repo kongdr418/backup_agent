@@ -42,6 +42,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '文件库' },
       },
       {
+        path: 'study-tools',
+        name: 'study-tools',
+        component: () => import('./views/StudyToolsView.vue'),
+        meta: { title: '学习工具' },
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('./views/SettingsView.vue'),

@@ -323,6 +323,10 @@ class ClassroomCriticService:
                 self.mode != "off"
                 and knowledge_point
                 and not grounding.supports(knowledge_point)
+                and (
+                    self.semantic_reviewer is not None
+                    or not grounding.supports(analysis)
+                )
             ):
                 issues.append("unsupported_knowledge_point")
 
