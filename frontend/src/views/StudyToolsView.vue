@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full flex flex-col">
+  <div class="study-tools-page h-full flex flex-col">
     <PageHeader title="学习工具" description="错题本 + 闪卡复习 · 越用越懂你">
       <template #actions>
         <n-button quaternary size="small" @click="refreshAll">
@@ -9,17 +9,17 @@
       </template>
     </PageHeader>
 
-    <div class="flex-1 overflow-y-auto p-6">
-      <div class="max-w-5xl mx-auto space-y-5">
+    <div class="study-tools-scroll flex-1 overflow-y-auto">
+      <div class="study-shell">
+        <main class="study-main">
         <!-- 顶部两个统计入口卡 -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="study-stats-grid">
           <button
             class="stat-tile text-left"
-            :class="activeTab === 'mistakes' ? 'stat-tile-active' : ''"
             @click="activeTab = 'mistakes'"
           >
             <div class="flex items-center justify-between mb-2">
-              <div class="stat-tile-icon bg-hue-study/12 text-hue-study">
+              <div class="stat-tile-icon stat-tile-icon-mistakes">
                 <BookMarked class="w-4 h-4" />
               </div>
               <span class="text-[11px] text-ink-3">{{ mistakeProgressText }}</span>
@@ -31,11 +31,10 @@
           </button>
           <button
             class="stat-tile text-left"
-            :class="activeTab === 'flashcards' ? 'stat-tile-active' : ''"
             @click="activeTab = 'flashcards'"
           >
             <div class="flex items-center justify-between mb-2">
-              <div class="stat-tile-icon bg-hue-study/12 text-hue-study">
+              <div class="stat-tile-icon stat-tile-icon-flashcards">
                 <Layers class="w-4 h-4" />
               </div>
               <span class="text-[11px] text-ink-3">连续 {{ stats?.flashcards.streak_days ?? 0 }} 天</span>
@@ -47,8 +46,30 @@
           </button>
         </div>
 
+        <!-- Tab 切换 -->
+        <div class="study-tab-bar">
+          <button
+            class="study-tab-btn"
+            :class="activeTab === 'mistakes' ? 'study-tab-btn-active' : ''"
+            type="button"
+            @click="activeTab = 'mistakes'"
+          >
+            <BookMarked class="w-3.5 h-3.5" />
+            错题本
+          </button>
+          <button
+            class="study-tab-btn"
+            :class="activeTab === 'flashcards' ? 'study-tab-btn-active' : ''"
+            type="button"
+            @click="activeTab = 'flashcards'"
+          >
+            <Layers class="w-3.5 h-3.5" />
+            闪卡复习
+          </button>
+        </div>
+
         <!-- 主体 Tab -->
-        <div class="surface-card p-5">
+        <div class="study-panel">
           <n-tabs
             v-model:value="activeTab"
             type="line"
@@ -59,42 +80,6 @@
             <!-- ───────── 错题本 ───────── -->
             <n-tab-pane name="mistakes" tab="错题本">
               <div class="pt-2">
-                <!-- 错题集筛选条 -->
-                <div class="collection-bar mb-3">
-                  <div class="collection-bar-tags">
-                    <button
-                      class="collection-chip"
-                      :class="activeCollectionId === null ? 'collection-chip-active' : ''"
-                      @click="selectCollection(null)"
-                    >
-                      <FolderOpen class="w-3 h-3" />
-                      <span>全部</span>
-                      <span class="collection-chip-count">{{ store.mistakesTotal || store.mistakes.length }}</span>
-                    </button>
-                    <button
-                      v-for="c in store.collections"
-                      :key="c.id"
-                      class="collection-chip"
-                      :class="activeCollectionId === c.id ? 'collection-chip-active' : ''"
-                      @click="selectCollection(c.id)"
-                    >
-                      <Tag class="w-3 h-3" />
-                      <span>{{ c.name }}</span>
-                      <span class="collection-chip-count">{{ c.unmastered_count }}/{{ c.count }}</span>
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-1.5 shrink-0">
-                    <n-button size="tiny" quaternary @click="openCreateCollection">
-                      <Plus class="w-3 h-3 mr-0.5" />
-                      新建
-                    </n-button>
-                    <n-button size="tiny" quaternary @click="openManageCollections">
-                      <Settings class="w-3 h-3 mr-0.5" />
-                      管理
-                    </n-button>
-                  </div>
-                </div>
-
                 <!-- 批量操作工具条(选中错题后显示) -->
                 <transition name="batch-bar">
                   <div v-if="selectedMistakeIds.size > 0" class="batch-bar mb-3">
@@ -125,8 +110,8 @@
                   </div>
                 </transition>
 
-                <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
-                  <div class="flex items-center gap-2 flex-wrap">
+                <div class="study-toolbar mb-4">
+                  <div class="study-toolbar-left">
                     <n-button
                       size="small"
                       type="primary"
@@ -139,17 +124,24 @@
                         ({{ unmasteredMistakes.length }})
                       </span>
                     </n-button>
-                    <n-select
-                      v-model:value="mistakeFilter.mastered"
-                      :options="masteredOptions"
-                      size="small"
-                      style="width: 110px"
-                      @update:value="onMistakeFilterChange"
-                    />
+                    <!-- 筛选标签 + 下拉 -->
+                    <div class="study-toolbar-chips">
+                      <span class="toolbar-chip toolbar-chip-active">
+                        全部
+                        <span class="toolbar-chip-badge">{{ store.mistakesTotal || store.mistakes.length }}</span>
+                      </span>
+                      <n-select
+                        v-model:value="mistakeFilter.mastered"
+                        :options="masteredOptions"
+                        size="small"
+                        style="width: 90px"
+                        @update:value="onMistakeFilterChange"
+                      />
+                    </div>
                     <n-input
                       v-model:value="mistakeFilter.q"
                       size="small"
-                      placeholder="搜索题干/知识点..."
+                      placeholder="搜索题干 / 知识点..."
                       clearable
                       style="width: 220px"
                       @keyup.enter="onMistakeFilterChange"
@@ -159,10 +151,16 @@
                       </template>
                     </n-input>
                   </div>
-                  <n-button type="primary" size="small" @click="mistakeAddShow = true">
-                    <Plus class="w-3.5 h-3.5 mr-1" />
-                    添加错题
-                  </n-button>
+                  <div class="study-toolbar-right">
+                    <n-button class="study-secondary-button" size="small" @click="mistakeAddShow = true">
+                      <Plus class="w-3.5 h-3.5 mr-1" />
+                      新建错题
+                    </n-button>
+                    <n-button class="study-secondary-button" size="small" @click="openManageCollections">
+                      <Settings class="w-3.5 h-3.5 mr-1" />
+                      批量管理
+                    </n-button>
+                  </div>
                 </div>
 
                 <div v-if="store.mistakesLoading" class="text-center text-[12px] text-ink-3 py-8">加载中...</div>
@@ -174,69 +172,90 @@
                 >
                   <n-button size="small" type="primary" @click="mistakeAddShow = true">添加第一道错题</n-button>
                 </EmptyState>
-                <div v-else class="space-y-3">
+                <div v-else class="study-list">
                   <div
                     v-for="m in store.mistakes"
                     :key="m.id"
                     class="mistake-card"
                     :class="[m.mastered ? 'mistake-card-mastered' : '', redoingIds.has(m.id) ? 'mistake-card-redoing' : '', selectedMistakeIds.has(m.id) ? 'mistake-card-selected' : '']"
                   >
-                    <!-- 顶部:选择框 + 知识点/来源/时间 -->
-                    <div class="flex items-center gap-1.5 flex-wrap mb-2">
-                      <n-checkbox
-                        :checked="selectedMistakeIds.has(m.id)"
-                        size="small"
-                        @update:checked="(v: boolean) => toggleSelect(m.id, v)"
-                      />
-                      <n-tag size="small" :bordered="false" type="info" v-if="m.knowledge_point_name">
-                        {{ m.knowledge_point_name }}
-                      </n-tag>
-                      <n-tag size="small" :bordered="false" v-if="m.course_name">{{ m.course_name }}</n-tag>
-                      <n-tag size="small" :bordered="false" :type="m.source === 'classroom' ? 'success' : 'default'">
-                        {{ m.source === 'classroom' ? '课堂同步' : '手动' }}
-                      </n-tag>
-                      <!-- 所属错题集标签(在头部展示) -->
-                      <n-tag
-                        v-for="cid in (m.collection_ids || []).slice(0, 2)"
-                        :key="cid"
-                        size="small"
-                        :bordered="false"
-                        type="warning"
-                      >
-                        <Tag class="w-2.5 h-2.5 mr-0.5" />
-                        {{ collectionNameById(cid) }}
-                      </n-tag>
-                      <n-tag
-                        v-if="(m.collection_ids || []).length > 2"
-                        size="small"
-                        :bordered="false"
-                      >
-                        +{{ (m.collection_ids || []).length - 2 }}
-                      </n-tag>
-                      <span class="text-[11px] text-ink-3 ml-auto">
-                        {{ formatDate(m.first_added_at) }}
-                      </span>
-                    </div>
-                    <!-- 头部:知识点 + 来源 + 时间 -->
-                    <div class="flex items-center gap-1.5 flex-wrap mb-2">
-                      <n-tag size="small" :bordered="false" type="info" v-if="m.knowledge_point_name">
-                        {{ m.knowledge_point_name }}
-                      </n-tag>
-                      <n-tag size="small" :bordered="false" v-if="m.course_name">{{ m.course_name }}</n-tag>
-                      <n-tag size="small" :bordered="false" :type="m.source === 'classroom' ? 'success' : 'default'">
-                        {{ m.source === 'classroom' ? '课堂同步' : '手动' }}
-                      </n-tag>
-                      <span class="text-[11px] text-ink-3 ml-auto">
-                        {{ formatDate(m.first_added_at) }}
-                      </span>
+                    <!-- 卡片头部：标签行 -->
+                    <div class="mistake-card-head">
+                      <div class="mistake-card-title-row">
+                        <n-checkbox
+                          :checked="selectedMistakeIds.has(m.id)"
+                          size="small"
+                          @update:checked="(v: boolean) => toggleSelect(m.id, v)"
+                        />
+                        <span class="study-chip study-chip-source">
+                          {{ formatMistakeSourceLabel(m.source) }}
+                        </span>
+                        <span v-if="m.knowledge_point_name" class="study-chip study-chip-info">
+                          {{ m.knowledge_point_name }}
+                        </span>
+                        <span v-if="m.course_name" class="study-chip">
+                          {{ m.course_name }}
+                        </span>
+                        <span
+                          v-for="cid in (m.collection_ids || []).slice(0, 2)"
+                          :key="cid"
+                          class="study-chip study-chip-collection"
+                        >
+                          <Tag class="w-2.5 h-2.5" />
+                          {{ collectionNameById(cid) }}
+                        </span>
+                      </div>
+                      <div class="mistake-card-right">
+                        <span class="mistake-date">{{ formatDate(m.first_added_at) }}</span>
+                        <div class="mistake-menu-wrap">
+                          <button
+                            class="mistake-menu-btn"
+                            type="button"
+                            :data-menu-anchor="m.id"
+                            @click.stop="toggleMistakeMenu(m.id, $event)"
+                          >
+                            <MoreHorizontal class="w-4 h-4" />
+                          </button>
+                          <teleport to="body">
+                            <div
+                              v-if="mistakeMenuId === m.id"
+                              class="mistake-menu-overlay"
+                              @click="mistakeMenuId = null"
+                            />
+                            <div
+                              v-if="mistakeMenuId === m.id"
+                              class="mistake-menu-dropdown"
+                              :style="mistakeMenuStyle"
+                            >
+                              <button class="mistake-menu-item" @click="onPeek(m); mistakeMenuId = null">
+                                <Eye class="w-3.5 h-3.5" />
+                                查看答案
+                              </button>
+                              <button class="mistake-menu-item" @click="openRedo(m); mistakeMenuId = null">
+                                <PenLine class="w-3.5 h-3.5" />
+                                重新作答
+                              </button>
+                              <button class="mistake-menu-item" @click="onConvertToCard(m); mistakeMenuId = null">
+                                <Layers class="w-3.5 h-3.5" />
+                                转闪卡
+                              </button>
+                              <div class="mistake-menu-divider" />
+                              <button class="mistake-menu-item mistake-menu-item-danger" @click="askDelete(m); mistakeMenuId = null">
+                                <Trash2 class="w-3.5 h-3.5" />
+                                删除
+                              </button>
+                            </div>
+                          </teleport>
+                        </div>
+                      </div>
                     </div>
 
                     <!-- 题干 -->
-                    <div class="text-[13px] text-ink-1 font-medium leading-relaxed mb-2 whitespace-pre-wrap">
+                    <div class="mistake-stem">
                       {{ m.stem }}
                     </div>
 
-                    <!-- 图片附件(始终可见) -->
+                    <!-- 图片附件 -->
                     <NImageGroup
                       v-if="m.attachments && m.attachments.length"
                     >
@@ -255,7 +274,7 @@
                       </div>
                     </NImageGroup>
 
-                    <!-- 已掌握:默认直接展示答案(无需操作) -->
+                    <!-- 已掌握：直接展示答案 -->
                     <div v-if="m.mastered" class="mistake-meta-list">
                       <div v-if="m.correct_answer" class="mistake-meta">
                         <span class="text-ink-3">正确答案</span>
@@ -274,43 +293,46 @@
                     <!-- 重做输入区 -->
                     <div v-else-if="redoingIds.has(m.id)" class="redo-panel">
                       <div v-if="!redoRevealed[m.id]" class="space-y-2">
-                        <!-- 单选：radio group -->
                         <template v-if="m.question_type === 'single' && m.options?.length">
-                          <div class="text-[11.5px] text-ink-3">选择一个选项</div>
-                          <NRadioGroup
-                            v-model:value="redoAnswer[m.id]"
-                            size="small"
-                          >
-                            <NSpace size="small" vertical>
-                              <NRadio
-                                v-for="(label, idx) in m.options"
-                                :key="idx"
-                                :value="optionValue(label, idx)"
-                              >
-                                {{ label }}
-                              </NRadio>
-                            </NSpace>
-                          </NRadioGroup>
+                          <div class="choice-hint">选择一个选项</div>
+                          <div class="study-choice-list">
+                            <button
+                              v-for="(label, idx) in m.options"
+                              :key="idx"
+                              type="button"
+                              class="study-choice"
+                              :class="redoChoiceClass(m, label, idx)"
+                              @click="onSelectRedoChoice(m, label, idx)"
+                            >
+                              <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+                              <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+                              <Check
+                                v-if="selectedRedoLetters(m).includes(getChoiceLetter(label, idx))"
+                                class="study-choice-icon selected"
+                              />
+                            </button>
+                          </div>
                         </template>
-                        <!-- 多选：checkbox group -->
                         <template v-else-if="m.question_type === 'multiple' && m.options?.length">
-                          <div class="text-[11.5px] text-ink-3">可多选</div>
-                          <NCheckboxGroup
-                            :value="redoMultiAnswer[m.id] || []"
-                            @update:value="(vs) => onRedoMultiChange(m, vs)"
-                          >
-                            <NSpace size="small" vertical>
-                              <NCheckbox
-                                v-for="(label, idx) in m.options"
-                                :key="idx"
-                                :value="optionValue(label, idx)"
-                              >
-                                {{ label }}
-                              </NCheckbox>
-                            </NSpace>
-                          </NCheckboxGroup>
+                          <div class="choice-hint">可多选</div>
+                          <div class="study-choice-list">
+                            <button
+                              v-for="(label, idx) in m.options"
+                              :key="idx"
+                              type="button"
+                              class="study-choice"
+                              :class="redoChoiceClass(m, label, idx)"
+                              @click="onSelectRedoChoice(m, label, idx)"
+                            >
+                              <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+                              <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+                              <Check
+                                v-if="selectedRedoLetters(m).includes(getChoiceLetter(label, idx))"
+                                class="study-choice-icon selected"
+                              />
+                            </button>
+                          </div>
                         </template>
-                        <!-- 简答：textarea 兜底 -->
                         <template v-else>
                           <div class="text-[11.5px] text-ink-3">写下你的答案,再查看正确答案</div>
                           <n-input
@@ -340,66 +362,80 @@
                           </n-button>
                         </div>
                       </div>
-                      <div v-else class="space-y-1.5">
-                        <div v-if="hasRedoAnswer(m)" class="mistake-meta">
-                          <span class="text-ink-3">你刚写的</span>
-                          <span :class="isRedoCorrect(m) ? 'text-success' : 'text-danger'">
-                            {{ formatRedoAnswer(m) }}
-                          </span>
-                          <span v-if="isRedoCorrect(m)" class="text-success text-[11px]">✓ 答对</span>
-                          <span v-else class="text-warning text-[11px]">✗ 还需巩固</span>
+                      <div v-else class="redo-result-layout">
+                        <div class="redo-result-main">
+                          <div v-if="m.options?.length" class="study-choice-list">
+                            <button
+                              v-for="(label, idx) in m.options"
+                              :key="idx"
+                              type="button"
+                              class="study-choice is-submitted"
+                              :class="redoChoiceClass(m, label, idx, true)"
+                              disabled
+                            >
+                              <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+                              <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+                              <Check v-if="isCorrectChoice(m.correct_answer, label, idx)" class="study-choice-icon correct" />
+                              <XIcon v-if="isRedoChoiceWrong(m, label, idx)" class="study-choice-icon wrong" />
+                            </button>
+                          </div>
+                          <div class="redo-explain-card">
+                            <div v-if="hasRedoAnswer(m)" class="mistake-meta">
+                              <span class="text-ink-3">你的答案</span>
+                              <span :class="isRedoCorrect(m) ? 'text-success' : 'text-danger'">
+                                {{ formatRedoAnswer(m) }}
+                              </span>
+                              <span v-if="isRedoCorrect(m)" class="text-success text-[11px]">✓ 答对</span>
+                              <span v-else class="text-warning text-[11px]">✕ 需要巩固</span>
+                            </div>
+                            <div v-if="m.correct_answer" class="mistake-meta">
+                              <span class="text-ink-3">正确答案</span>
+                              <span class="text-ink-1">{{ m.correct_answer }}</span>
+                            </div>
+                            <div v-if="m.user_answer" class="mistake-meta">
+                              <span class="text-ink-3">原错答</span>
+                              <span class="text-danger">{{ m.user_answer }}</span>
+                            </div>
+                            <div v-if="m.analysis" class="mistake-meta">
+                              <span class="text-ink-3">解析</span>
+                              <span class="text-ink-2">{{ m.analysis }}</span>
+                            </div>
+                            <button v-if="!isRedoCorrect(m)" type="button" class="redo-convert-link" @click="onConvertToCard(m)">
+                              <Layers class="w-3.5 h-3.5" />
+                              转闪卡反复练
+                            </button>
+                          </div>
+                          <div class="flex items-center gap-2 pt-1">
+                            <n-button
+                              v-if="isRedoCorrect(m) && !m.mastered"
+                              type="primary"
+                              size="small"
+                              @click="onMarkMastered(m)"
+                            >
+                              <Check class="w-3 h-3 mr-1" />
+                              标记掌握
+                            </n-button>
+                            <n-button size="small" quaternary class="ml-auto" @click="closeRedo(m)">
+                              关闭
+                            </n-button>
+                          </div>
                         </div>
-                        <div v-if="m.correct_answer" class="mistake-meta">
-                          <span class="text-ink-3">正确答案</span>
-                          <span class="text-ink-1">{{ m.correct_answer }}</span>
-                        </div>
-                        <div v-if="m.user_answer" class="mistake-meta">
-                          <span class="text-ink-3">原错答</span>
-                          <span class="text-danger">{{ m.user_answer }}</span>
-                        </div>
-                        <div v-if="m.analysis" class="mistake-meta">
-                          <span class="text-ink-3">解析</span>
-                          <span class="text-ink-2">{{ m.analysis }}</span>
-                        </div>
-                        <div class="flex items-center gap-2 pt-1">
-                          <n-button
-                            v-if="isRedoCorrect(m) && !m.mastered"
-                            type="primary"
-                            size="small"
-                            @click="onMarkMastered(m)"
-                          >
-                            <Check class="w-3 h-3 mr-1" />
-                            标记掌握
-                          </n-button>
-                          <n-button
-                            v-else-if="!m.mastered"
-                            size="small"
-                            quaternary
-                            type="primary"
-                            @click="onConvertToCard(m)"
-                          >
-                            <Layers class="w-3 h-3 mr-1" />
-                            转闪卡反复练
-                          </n-button>
-                          <n-button size="small" quaternary class="ml-auto" @click="closeRedo(m)">
-                            关闭
-                          </n-button>
-                        </div>
+                        <aside class="redo-knowledge-card">
+                          <div class="redo-knowledge-title">
+                            <BookMarked class="w-3.5 h-3.5" />
+                            知识点
+                          </div>
+                          <div>{{ m.knowledge_point_name || m.course_name || '本题关键概念' }}</div>
+                        </aside>
                       </div>
                     </div>
 
-                    <!-- 默认:隐藏答案,只显示"重新作答" + "偷看" 入口 -->
+                    <!-- 默认：隐藏答案 -->
                     <div v-else class="reveal-hint">
                       <span class="text-[11.5px] text-ink-3">
-                        {{ m.mastered ? '已掌握 — 仍可查看' : '答案已隐藏 — 先试着回忆,再看解析' }}
+                        答案已隐藏 · 先试着回忆, 再查看解析
                       </span>
-                      <n-button
-                        v-if="!m.mastered"
-                        size="tiny"
-                        type="primary"
-                        ghost
-                        @click="openRedo(m)"
-                      >
+                      <n-button size="tiny" quaternary type="primary" @click="openRedo(m)">
                         <PenLine class="w-3 h-3 mr-1" />
                         重新作答
                       </n-button>
@@ -409,20 +445,25 @@
                       </n-button>
                     </div>
 
-                    <div v-if="m.tags && m.tags.length" class="flex gap-1 flex-wrap mt-2">
-                      <n-tag
-                        v-for="t in m.tags"
+                    <!-- 标签 -->
+                    <div v-if="safeMistakeTags(m.tags).length" class="mistake-tags">
+                      <span
+                        v-for="t in safeMistakeTags(m.tags)"
                         :key="t"
-                        size="tiny"
-                        :bordered="false"
-                        type="default"
+                        class="study-tag"
                       >
-                        #{{ t }}
-                      </n-tag>
+                        {{ formatMistakeTagLabel(t) }}
+                      </span>
                     </div>
 
-                    <!-- 操作 -->
-                    <div class="flex items-center gap-1.5 mt-3 pt-3 border-t border-line-subtle">
+                    <!-- 来源标签 + 操作 -->
+                    <div class="mistake-source-row">
+                      <span class="text-[11px] text-ink-3 source-tag-inline">
+                        {{ formatMistakeSourceLabel(m.source) }}
+                      </span>
+                    </div>
+
+                    <div class="mistake-action-bar">
                       <n-button
                         v-if="!m.mastered"
                         size="tiny"
@@ -569,8 +610,8 @@
             <!-- ───────── 闪卡 ───────── -->
             <n-tab-pane name="flashcards" tab="闪卡复习">
               <div class="pt-2">
-                <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
-                  <div class="flex items-center gap-2 flex-wrap">
+                <div class="study-toolbar mb-4">
+                  <div class="study-toolbar-left">
                     <n-button
                       size="small"
                       type="primary"
@@ -597,7 +638,7 @@
                     <n-input
                       v-model:value="cardFilter.q"
                       size="small"
-                      placeholder="搜索卡片..."
+                      placeholder="搜索卡片内容..."
                       clearable
                       style="width: 220px"
                       @keyup.enter="onCardFilterChange"
@@ -607,7 +648,7 @@
                       </template>
                     </n-input>
                   </div>
-                  <n-button size="small" @click="cardAddShow = true">
+                  <n-button class="study-secondary-button" size="small" @click="cardAddShow = true">
                     <Plus class="w-3.5 h-3.5 mr-1" />
                     新建闪卡
                   </n-button>
@@ -622,32 +663,66 @@
                 >
                   <n-button size="small" type="primary" @click="cardAddShow = true">新建第一张</n-button>
                 </EmptyState>
-                <div v-else class="space-y-2.5">
+                <div v-else class="study-list">
                   <div
                     v-for="c in store.flashcards"
                     :key="c.id"
                     class="card-row"
                   >
-                    <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
-                      <n-tag size="small" :bordered="false" type="info" v-if="c.knowledge_point_name">
+                    <div class="card-row-head">
+                      <span v-if="c.knowledge_point_name" class="study-chip study-chip-info">
                         {{ c.knowledge_point_name }}
-                      </n-tag>
-                      <n-tag size="small" :bordered="false" v-if="c.course_name">{{ c.course_name }}</n-tag>
-                      <n-tag size="small" :bordered="false" :type="sourceTagType(c.source)">
+                      </span>
+                      <span v-if="c.course_name" class="study-chip">
+                        {{ c.course_name }}
+                      </span>
+                      <span class="study-chip study-chip-source-mistake" v-if="sourceLabel(c.source) === '错题'">
                         {{ sourceLabel(c.source) }}
-                      </n-tag>
+                      </span>
                       <span class="text-[11px] text-ink-3 ml-auto">
                         {{ formatDate(c.created_at) }}
                       </span>
+                      <div class="card-menu-wrap">
+                        <button
+                          class="mistake-menu-btn"
+                          type="button"
+                          :data-menu-anchor="'card-' + c.id"
+                          @click.stop="toggleCardMenu(c.id, $event)"
+                        >
+                          <MoreHorizontal class="w-4 h-4" />
+                        </button>
+                        <teleport to="body">
+                          <div
+                            v-if="cardMenuId === c.id"
+                            class="mistake-menu-overlay"
+                            @click="cardMenuId = null"
+                          />
+                          <div
+                            v-if="cardMenuId === c.id"
+                            class="mistake-menu-dropdown"
+                            :style="cardMenuStyle"
+                          >
+                            <button class="mistake-menu-item" @click="startReviewOne(c); cardMenuId = null">
+                              <Play class="w-3.5 h-3.5" />
+                              重学
+                            </button>
+                            <div class="mistake-menu-divider" />
+                            <button class="mistake-menu-item mistake-menu-item-danger" @click="askDeleteCard(c); cardMenuId = null">
+                              <Trash2 class="w-3.5 h-3.5" />
+                              删除
+                            </button>
+                          </div>
+                        </teleport>
+                      </div>
                     </div>
-                    <div class="text-[13px] text-ink-1 font-medium leading-snug mb-1 line-clamp-2">
+                    <div class="card-row-front">
                       {{ c.front }}
                     </div>
-                    <div class="text-[12px] text-ink-3 leading-snug line-clamp-2">
+                    <div class="card-row-back">
                       {{ c.back }}
                     </div>
-                    <div class="flex items-center justify-between mt-2.5 pt-2.5 border-t border-line-subtle">
-                      <div class="flex items-center gap-3 text-[11px] text-ink-3">
+                    <div class="card-row-footer">
+                      <div class="card-row-meta">
                         <span>
                           <Calendar class="w-3 h-3 inline -mt-0.5 mr-0.5" />
                           {{ c.sm2?.due_date || '—' }}
@@ -655,7 +730,7 @@
                         <span>EF {{ (c.sm2?.ease_factor ?? 2.5).toFixed(2) }}</span>
                         <span>重复 {{ c.sm2?.repetitions ?? 0 }} 次</span>
                       </div>
-                      <div class="flex items-center gap-1">
+                      <div class="card-row-actions">
                         <n-button size="tiny" quaternary type="primary" @click="startReviewOne(c)">
                           <Play class="w-3 h-3 mr-0.5" />
                           重学
@@ -671,6 +746,7 @@
             </n-tab-pane>
           </n-tabs>
         </div>
+        </main>
       </div>
     </div>
 
@@ -726,11 +802,11 @@
             <span class="text-[11px] opacity-70">1</span>
             <span class="ml-1">困难</span>
           </n-button>
-          <n-button size="medium" type="primary" @click="onGrade(3)" class="grade-btn grade-btn-3">
+          <n-button size="medium" @click="onGrade(3)" class="grade-btn grade-btn-3">
             <span class="text-[11px] opacity-70">3</span>
             <span class="ml-1">良好</span>
           </n-button>
-          <n-button size="medium" type="primary" @click="onGrade(5)" class="grade-btn grade-btn-5">
+          <n-button size="medium" @click="onGrade(5)" class="grade-btn grade-btn-5">
             <span class="text-[11px] opacity-70">5</span>
             <span class="ml-1">容易</span>
           </n-button>
@@ -756,7 +832,6 @@
       @update:show="(v: boolean) => { if (!v) closeBatchRedo() }"
     >
       <div v-if="batchIndex >= 0 && batchIndex < batchQueue.length" class="space-y-4">
-        <!-- 进度 + 上下文 -->
         <div class="flex items-center justify-between text-[11px] text-ink-3">
           <div class="flex items-center gap-1.5">
             <n-tag v-if="batchQueue[batchIndex].knowledge_point_name" size="tiny" :bordered="false" type="info">
@@ -769,43 +844,50 @@
           <span>{{ batchIndex + 1 }} / {{ batchQueue.length }}</span>
         </div>
 
-        <!-- 题干 -->
         <div class="batch-stem">
           {{ batchQueue[batchIndex].stem }}
         </div>
 
-        <!-- 输入区 -->
         <div v-if="!batchRevealed" class="space-y-2">
           <template v-if="batchQueue[batchIndex].question_type === 'single' && batchQueue[batchIndex].options?.length">
-            <div class="text-[11.5px] text-ink-3">选择一个选项</div>
-            <NRadioGroup v-model:value="batchAnswer" size="medium">
-              <NSpace vertical>
-                <NRadio
-                  v-for="(label, idx) in batchQueue[batchIndex].options"
-                  :key="idx"
-                  :value="optionValue(label, idx)"
-                >
-                  {{ label }}
-                </NRadio>
-              </NSpace>
-            </NRadioGroup>
+            <div class="choice-hint">选择一个选项</div>
+            <div class="study-choice-list">
+              <button
+                v-for="(label, idx) in batchQueue[batchIndex].options"
+                :key="idx"
+                type="button"
+                class="study-choice"
+                :class="batchChoiceClass(label, idx)"
+                @click="onSelectBatchChoice(label, idx)"
+              >
+                <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+                <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+                <Check
+                  v-if="selectedBatchLetters().includes(getChoiceLetter(label, idx))"
+                  class="study-choice-icon selected"
+                />
+              </button>
+            </div>
           </template>
           <template v-else-if="batchQueue[batchIndex].question_type === 'multiple' && batchQueue[batchIndex].options?.length">
-            <div class="text-[11.5px] text-ink-3">可多选</div>
-            <NCheckboxGroup
-              :value="batchMultiAnswer"
-              @update:value="(vs) => onBatchMultiChange(vs)"
-            >
-              <NSpace vertical>
-                <NCheckbox
-                  v-for="(label, idx) in batchQueue[batchIndex].options"
-                  :key="idx"
-                  :value="optionValue(label, idx)"
-                >
-                  {{ label }}
-                </NCheckbox>
-              </NSpace>
-            </NCheckboxGroup>
+            <div class="choice-hint">可多选</div>
+            <div class="study-choice-list">
+              <button
+                v-for="(label, idx) in batchQueue[batchIndex].options"
+                :key="idx"
+                type="button"
+                class="study-choice"
+                :class="batchChoiceClass(label, idx)"
+                @click="onSelectBatchChoice(label, idx)"
+              >
+                <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+                <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+                <Check
+                  v-if="selectedBatchLetters().includes(getChoiceLetter(label, idx))"
+                  class="study-choice-icon selected"
+                />
+              </button>
+            </div>
           </template>
           <template v-else>
             <div class="text-[11.5px] text-ink-3">写下你的答案,再点"提交并查看"</div>
@@ -835,8 +917,22 @@
           </div>
         </div>
 
-        <!-- 答案揭晓 -->
         <div v-else class="space-y-2">
+          <div v-if="batchQueue[batchIndex].options?.length" class="study-choice-list">
+            <button
+              v-for="(label, idx) in batchQueue[batchIndex].options"
+              :key="idx"
+              type="button"
+              class="study-choice is-submitted"
+              :class="batchChoiceClass(label, idx, true)"
+              disabled
+            >
+              <span class="study-choice-letter">{{ getChoiceLetter(label, idx) }}</span>
+              <span class="study-choice-text">{{ getChoiceText(label, idx) }}</span>
+              <Check v-if="isCorrectChoice(batchQueue[batchIndex].correct_answer, label, idx)" class="study-choice-icon correct" />
+              <XIcon v-if="isBatchChoiceWrong(label, idx)" class="study-choice-icon wrong" />
+            </button>
+          </div>
           <div v-if="hasBatchAnswer()" class="mistake-meta">
             <span class="text-ink-3">你的答案</span>
             <span :class="isBatchCorrect() ? 'text-success' : 'text-danger'">
@@ -996,15 +1092,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
-  NButton, NCheckbox, NCheckboxGroup, NImage, NImageGroup, NInput, NModal, NPopover, NPopselect, NRadio, NRadioGroup, NSelect, NSpace, NTabPane, NTabs, NTag,
+  NButton, NCheckbox, NImage, NImageGroup, NInput, NModal, NPopover, NPopselect, NSelect, NTabPane, NTabs, NTag,
   useDialog, useMessage,
 } from 'naive-ui'
 import {
   BookMarked, Calendar, Check, CheckCheck, CheckSquare, ChevronRight, Eye, FolderOpen,
-  FolderPlus, Layers, Paperclip, PenLine, Pencil, Play, Plus, RefreshCw, RotateCw, Search, Send,
-  Settings, Tag, Trash2,
+  FolderPlus, Layers, MoreHorizontal, Paperclip, PenLine, Pencil, Play, Plus, RefreshCw, RotateCw, Search, Send,
+  Settings, Tag, Trash2, X as XIcon,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -1013,6 +1109,12 @@ import AddMistakeModal from '@/components/studyTools/AddMistakeModal.vue'
 import AddFlashcardModal from '@/components/studyTools/AddFlashcardModal.vue'
 import { useStudyToolsStore } from '@/stores/studyToolsStore'
 import type { FlashcardItem, MistakeCollection, MistakeItem } from '@/api/studyTools'
+import {
+  formatMistakeSourceLabel,
+  formatMistakeTagLabel,
+  getChoiceLetter,
+  getChoiceText,
+} from '@/utils/studyToolsDisplay'
 
 const store = useStudyToolsStore()
 const message = useMessage()
@@ -1048,8 +1150,6 @@ const reviewFlipped = ref(false)
 const reviewDoneCount = ref(0)
 
 // ─── 错题重做状态 ───
-// 单题内联重做:redoingIds 记录正在作答的卡片 id,redoAnswer 记录每张卡的输入,redoRevealed 记录是否已揭晓
-// 多选题用 redoMultiAnswer 记字母数组;显示/判等时拼成与 correct_answer 一致的 'A / C' 字符串
 const redoingIds = ref<Set<string>>(new Set())
 const redoAnswer = reactive<Record<string, string>>({})
 const redoMultiAnswer = reactive<Record<string, string[]>>({})
@@ -1064,26 +1164,153 @@ const batchRevealed = ref(false)
 const batchDoneCount = ref(0)
 const batchCorrectCount = ref(0)
 
+// ─── 错题下拉菜单 ───
+const mistakeMenuId = ref<string | null>(null)
+const mistakeMenuStyle = reactive<Record<string, string>>({ top: '0px', left: '0px' })
+const cardMenuId = ref<string | null>(null)
+const cardMenuStyle = reactive<Record<string, string>>({ top: '0px', left: '0px' })
+
+function toggleMistakeMenu(id: string, ev?: MouseEvent) {
+  if (mistakeMenuId.value === id) {
+    mistakeMenuId.value = null
+    return
+  }
+  mistakeMenuId.value = id
+  nextTick(() => {
+    const btn = (ev?.currentTarget as HTMLElement) || document.querySelector(`[data-menu-anchor="${id}"]`) as HTMLElement
+    if (btn) {
+      const rect = btn.getBoundingClientRect()
+      mistakeMenuStyle.top = `${rect.bottom + 4}px`
+      mistakeMenuStyle.left = `${rect.right - 160}px`
+    }
+  })
+}
+
+function toggleCardMenu(id: string, ev?: MouseEvent) {
+  if (cardMenuId.value === id) {
+    cardMenuId.value = null
+    return
+  }
+  cardMenuId.value = id
+  nextTick(() => {
+    const btn = (ev?.currentTarget as HTMLElement) || document.querySelector(`[data-menu-anchor="card-${id}"]`) as HTMLElement
+    if (btn) {
+      const rect = btn.getBoundingClientRect()
+      cardMenuStyle.top = `${rect.bottom + 4}px`
+      cardMenuStyle.left = `${rect.right - 140}px`
+    }
+  })
+}
+
+function closeAllMenus() {
+  mistakeMenuId.value = null
+  cardMenuId.value = null
+}
+
+onMounted(() => document.addEventListener('click', closeAllMenus))
+onUnmounted(() => document.removeEventListener('click', closeAllMenus))
+
 // ─── 错题按题型分支工具 ───
-const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-
 function optionValue(label: string, idx: number): string {
-  // 优先提取 label 文本开头的字母标号（"A. xxx" / "A、xxx" / "A xxx" / "(A) xxx"）
-  const m = String(label || '').trim().match(/^\(?([A-H])[\.、\s)]/)
+  const m = String(label || '').trim().match(/^\(?([A-H])[\.\s\)]/)
   if (m) return m[1]
-  return OPTION_LETTERS[idx] || String(idx)
+  return getChoiceLetter(label, idx)
 }
 
-function onRedoMultiChange(m: MistakeItem, vs: Array<string | number>) {
-  const arr = vs.map(String).sort()
-  redoMultiAnswer[m.id] = arr
-  redoAnswer[m.id] = arr.join(' / ')
+function normalizeChoiceAnswer(value?: string | null): string {
+  const letters = String(value || '').match(/[A-H]/gi)
+  if (letters?.length) return Array.from(new Set(letters.map((x) => x.toUpperCase()))).sort().join('')
+  return String(value || '').trim()
 }
 
-function onBatchMultiChange(vs: Array<string | number>) {
-  const arr = vs.map(String).sort()
-  batchMultiAnswer.value = arr
-  batchAnswer.value = arr.join(' / ')
+function choiceLetter(label: string, idx: number): string {
+  return optionValue(label, idx)
+}
+
+function selectedRedoLetters(m: MistakeItem): string[] {
+  if (m.question_type === 'multiple') return redoMultiAnswer[m.id] || []
+  const answer = normalizeChoiceAnswer(redoAnswer[m.id])
+  return answer ? answer.split('') : []
+}
+
+function selectedBatchLetters(): string[] {
+  const cur = batchQueue.value[batchIndex.value]
+  if (cur?.question_type === 'multiple') return batchMultiAnswer.value
+  const answer = normalizeChoiceAnswer(batchAnswer.value)
+  return answer ? answer.split('') : []
+}
+
+function onSelectRedoChoice(m: MistakeItem, label: string, idx: number) {
+  const letter = choiceLetter(label, idx)
+  if (m.question_type === 'multiple') {
+    const current = new Set(redoMultiAnswer[m.id] || [])
+    if (current.has(letter)) current.delete(letter)
+    else current.add(letter)
+    const next = Array.from(current).sort()
+    redoMultiAnswer[m.id] = next
+    redoAnswer[m.id] = next.join(' / ')
+    return
+  }
+  redoAnswer[m.id] = letter
+}
+
+function onSelectBatchChoice(label: string, idx: number) {
+  const cur = batchQueue.value[batchIndex.value]
+  if (!cur) return
+  const letter = choiceLetter(label, idx)
+  if (cur.question_type === 'multiple') {
+    const current = new Set(batchMultiAnswer.value)
+    if (current.has(letter)) current.delete(letter)
+    else current.add(letter)
+    const next = Array.from(current).sort()
+    batchMultiAnswer.value = next
+    batchAnswer.value = next.join(' / ')
+    return
+  }
+  batchAnswer.value = letter
+}
+
+function isCorrectChoice(correctAnswer: string | null | undefined, label: string, idx: number): boolean {
+  return normalizeChoiceAnswer(correctAnswer).includes(choiceLetter(label, idx))
+}
+
+function isRedoChoiceWrong(m: MistakeItem, label: string, idx: number): boolean {
+  const letter = choiceLetter(label, idx)
+  return selectedRedoLetters(m).includes(letter) && !isCorrectChoice(m.correct_answer, label, idx)
+}
+
+function isBatchChoiceWrong(label: string, idx: number): boolean {
+  const cur = batchQueue.value[batchIndex.value]
+  if (!cur) return false
+  const letter = choiceLetter(label, idx)
+  return selectedBatchLetters().includes(letter) && !isCorrectChoice(cur.correct_answer, label, idx)
+}
+
+function redoChoiceClass(m: MistakeItem, label: string, idx: number, revealed = false): Record<string, boolean> {
+  const letter = choiceLetter(label, idx)
+  const selected = selectedRedoLetters(m).includes(letter)
+  return {
+    'is-selected': selected,
+    'is-submitted': revealed,
+    'is-correct': revealed && isCorrectChoice(m.correct_answer, label, idx),
+    'is-wrong': revealed && selected && !isCorrectChoice(m.correct_answer, label, idx),
+  }
+}
+
+function batchChoiceClass(label: string, idx: number, revealed = false): Record<string, boolean> {
+  const cur = batchQueue.value[batchIndex.value]
+  const letter = choiceLetter(label, idx)
+  const selected = selectedBatchLetters().includes(letter)
+  return {
+    'is-selected': selected,
+    'is-submitted': revealed,
+    'is-correct': Boolean(cur && revealed && isCorrectChoice(cur.correct_answer, label, idx)),
+    'is-wrong': Boolean(cur && revealed && selected && !isCorrectChoice(cur.correct_answer, label, idx)),
+  }
+}
+
+function safeMistakeTags(tags?: string[] | null): string[] {
+  return (tags || []).map(formatMistakeTagLabel).filter(Boolean)
 }
 
 function hasRedoAnswer(m: MistakeItem): boolean {
@@ -1518,7 +1745,6 @@ function askDeleteCollection(c: MistakeCollection) {
 // ─── 复习流程 ───
 async function startReview() {
   if (!store.dueCards || store.dueCards.length === 0) {
-    // 没有 due 时,自动转入"复习全部"模式(支持一天多次复习)
     message.info('今日已复习完,改为复习全部')
     await startReviewAll()
     return
@@ -1573,13 +1799,10 @@ async function onGrade(grade: number) {
   reviewDoneCount.value += 1
   reviewIndex.value += 1
   reviewFlipped.value = false
-  // 全部完成时停留在弹窗
 }
 
 async function closeReview() {
   reviewing.value = false
-  // 显式 await:确保 store 状态在用户切回主页面之前已与后端同步,
-  // 避免"还有未复习的却不能点今日复习"的 UI 假死
   await Promise.all([
     store.fetchStats(),
     store.fetchFlashcards({ page_size: 50 }),
@@ -1612,20 +1835,18 @@ function onRevealRedo(m: MistakeItem) {
   redoRevealed[m.id] = true
 }
 
-// 偷看:不开作答面板,直接在默认区揭晓答案(轻量"看一眼"路径)
 function onPeek(m: MistakeItem) {
   redoingIds.value = new Set([...redoingIds.value, m.id])
   redoAnswer[m.id] = ''
   redoRevealed[m.id] = true
 }
 
-// 简单判等:学生答案 vs 正确答案(容错:忽略首尾空白)
 function isRedoCorrect(m: MistakeItem): boolean {
   const got = (redoAnswer[m.id] || '').trim()
   if (!got) return false
   const expected = String(m.correct_answer || '').trim()
   if (!expected) return false
-  return got === expected
+  return normalizeChoiceAnswer(got) === normalizeChoiceAnswer(expected)
 }
 
 // ─── 错题重做(集中全屏) ───
@@ -1660,11 +1881,10 @@ function isBatchCorrect(): boolean {
   if (!got) return false
   const expected = String(batchQueue.value[batchIndex.value]?.correct_answer || '').trim()
   if (!expected) return false
-  return got === expected
+  return normalizeChoiceAnswer(got) === normalizeChoiceAnswer(expected)
 }
 
 function onBatchNext() {
-  // 计入本轮数据
   if (batchRevealed.value) {
     batchDoneCount.value += 1
     if (isBatchCorrect()) batchCorrectCount.value += 1
@@ -1675,7 +1895,6 @@ function onBatchNext() {
     batchMultiAnswer.value = []
     batchRevealed.value = false
   } else {
-    // 全部完成:把 batchIndex 推到 queue 末尾,触发"完成"视图
     batchIndex.value = batchQueue.value.length
   }
 }
@@ -1691,8 +1910,6 @@ async function onBatchMarkMastered() {
   } catch (e) {
     message.error(e instanceof Error ? e.message : '操作失败')
   }
-  // 标记后这题不必再答,直接下一题
-  // (为简化流程:不立即推进,而是让用户点"下一题"以保留控制感)
 }
 
 async function onBatchConvertToCard() {
@@ -1709,7 +1926,6 @@ async function onBatchConvertToCard() {
 
 function closeBatchRedo() {
   batchRedoing.value = false
-  // 同步刷新列表(可能有些题被标记掌握/转了卡)
   refetchMistakes().catch(() => undefined)
   store.fetchCollections().catch(() => undefined)
 }
@@ -1746,12 +1962,12 @@ function formatSize(bytes?: number | null): string {
 
 function sourceLabel(s: string): string {
   switch (s) {
-    case 'manual': return '手动'
+    case 'manual': return '手动添加'
     case 'mistake': return '错题'
     case 'card': return '知识卡'
     case 'ai': return 'AI'
-    case 'classroom': return '课堂'
-    default: return s
+    case 'classroom': return '课堂同步'
+    default: return '学习记录'
   }
 }
 
@@ -1764,114 +1980,156 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 </script>
 
 <style scoped>
-/* ============ 顶部入口卡 ============ */
-.stat-tile {
-  background: rgb(var(--bg-surface-rgb));
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 12px;
-  padding: 16px 18px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
-  cursor: pointer;
+/* ================================================================
+   Study Tools — Warm Amber Palette
+   Color source: tokens.css --hue-study-rgb: 201 150 60
+   ================================================================ */
+
+/* ── Keyframes ── */
+@keyframes study-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.stat-tile:hover {
-  border-color: rgb(var(--line-strong-rgb));
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-}
-.stat-tile-active {
-  border-color: rgb(var(--hue-study-rgb) / 0.5);
-  box-shadow: 0 0 0 3px rgb(var(--hue-study-rgb) / 0.1);
-}
-.stat-tile-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+@keyframes study-scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
-/* ============ 错题卡 ============ */
-.mistake-card {
-  background: rgb(var(--bg-subtle-rgb));
-  border: 1px solid rgb(var(--line-subtle-rgb));
-  border-radius: 10px;
-  padding: 12px 14px;
-  transition: border-color 200ms var(--ease-out), background 200ms var(--ease-out);
-}
-.mistake-card:hover {
-  border-color: rgb(var(--line-rgb));
-}
-.mistake-card-mastered {
-  opacity: 0.7;
-}
-.mistake-card-mastered .text-ink-1 {
-  text-decoration: line-through;
-  text-decoration-color: rgb(var(--ink-4-rgb));
-}
-.mistake-card-redoing {
-  border-color: rgb(var(--hue-study-rgb) / 0.45);
-  box-shadow: 0 0 0 3px rgb(var(--hue-study-rgb) / 0.08);
-  background: rgb(var(--bg-surface-rgb));
-}
-.mistake-card-selected {
-  border-color: rgb(var(--hue-study-rgb) / 0.55);
-  background: rgb(var(--hue-study-rgb) / 0.04);
+/* ── Page ── */
+.study-tools-page {
+  --study-accent-rgb: 201 150 60;
+  --study-accent-soft-rgb: 251 244 230;
+  background:
+    radial-gradient(ellipse at 12% 8%, rgb(var(--study-accent-rgb) / 0.04), transparent 40%),
+    linear-gradient(180deg, rgb(var(--bg-base-rgb)) 0%, rgb(var(--bg-subtle-rgb) / 0.3) 100%);
 }
 
-/* ============ 错题集筛选条 ============ */
-.collection-bar {
-  display: flex;
-  align-items: center;
+.study-tools-scroll {
+  padding: 0 28px 28px;
+}
+
+.study-shell {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.study-main {
+  min-width: 0;
+  padding-top: 12px;
+}
+
+/* ============ Stats Grid ============ */
+.study-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  padding: 10px 12px;
-  background: rgb(var(--bg-subtle-rgb));
-  border: 1px solid rgb(var(--line-subtle-rgb));
+  margin-bottom: 14px;
+}
+
+/* ============ Tab Bar ============ */
+.study-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 12px;
+  background: rgb(var(--bg-subtle-rgb) / 0.6);
   border-radius: 10px;
+  width: fit-content;
+  animation: study-fade-up 300ms var(--ease-out) both;
+  animation-delay: 80ms;
+}
+.study-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 200ms var(--ease-out), color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  white-space: nowrap;
+}
+.study-tab-btn:hover {
+  color: rgb(var(--ink-2-rgb));
+  background: rgb(var(--bg-surface-rgb) / 0.5);
+}
+.study-tab-btn-active {
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--study-accent-rgb));
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.study-panel {
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb) / 0.7);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 6px 24px -12px rgba(15, 23, 42, 0.08);
+  animation: study-scale-in 320ms var(--ease-out) both;
+  animation-delay: 100ms;
+}
+
+/* ============ 工具栏 ============ */
+.study-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   flex-wrap: wrap;
 }
-.collection-bar-tags {
+
+.study-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.study-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.study-toolbar-chips {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
-.collection-bar-tags::-webkit-scrollbar {
-  height: 4px;
-}
-.collection-bar-tags::-webkit-scrollbar-thumb {
-  background: rgb(var(--line-rgb));
-  border-radius: 2px;
-}
-.collection-chip {
+
+.toolbar-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 10px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 999px;
   background: rgb(var(--bg-surface-rgb));
   color: rgb(var(--ink-2-rgb));
   font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 160ms var(--ease-out);
   white-space: nowrap;
-  flex-shrink: 0;
 }
-.collection-chip:hover {
-  border-color: rgb(var(--hue-study-rgb) / 0.5);
+
+.toolbar-chip:hover {
+  border-color: rgb(var(--study-accent-rgb) / 0.18);
   color: rgb(var(--ink-1-rgb));
 }
-.collection-chip-active {
-  background: rgb(var(--hue-study-rgb) / 0.1);
-  border-color: rgb(var(--hue-study-rgb) / 0.55);
-  color: rgb(var(--hue-study-rgb));
-  font-weight: 500;
+
+.toolbar-chip-active {
+  background: rgb(var(--study-accent-rgb) / 0.06);
+  border-color: rgb(var(--study-accent-rgb) / 0.12);
+  color: rgb(var(--study-accent-rgb));
 }
-.collection-chip-count {
+
+.toolbar-chip-badge {
   font-size: 10.5px;
   padding: 1px 6px;
   border-radius: 999px;
@@ -1879,9 +2137,323 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   color: rgb(var(--ink-3-rgb));
   font-variant-numeric: tabular-nums;
 }
-.collection-chip-active .collection-chip-count {
-  background: rgb(var(--hue-study-rgb) / 0.18);
-  color: rgb(var(--hue-study-rgb));
+
+.toolbar-chip-active .toolbar-chip-badge {
+  background: rgb(var(--study-accent-rgb) / 0.10);
+  color: rgb(var(--study-accent-rgb));
+}
+
+.study-secondary-button {
+  border-color: rgb(var(--line-rgb)) !important;
+  background: rgb(var(--bg-surface-rgb)) !important;
+}
+
+.study-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ============ Stats Tiles ============ */
+.stat-tile {
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb) / 0.7);
+  border-radius: 10px;
+  padding: 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out), transform 200ms var(--ease-out);
+  cursor: pointer;
+  animation: study-scale-in 380ms var(--ease-out) both;
+}
+.stat-tile:nth-child(1) { animation-delay: 0ms; }
+.stat-tile:nth-child(2) { animation-delay: 60ms; }
+.stat-tile:hover {
+  border-color: rgb(var(--study-accent-rgb) / 0.2);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+}
+.stat-tile-active {
+  border-color: rgb(var(--study-accent-rgb) / 0.25);
+  box-shadow: 0 0 0 2px rgb(var(--study-accent-rgb) / 0.08), 0 2px 8px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(135deg, rgb(var(--study-accent-rgb) / 0.02), rgb(var(--bg-surface-rgb)));
+}
+.stat-tile-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.stat-tile-icon::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 14px;
+  opacity: 0;
+  transition: opacity 200ms var(--ease-out);
+}
+.stat-tile:hover .stat-tile-icon::after {
+  opacity: 1;
+}
+.stat-tile-icon-mistakes {
+  background: linear-gradient(135deg, rgb(var(--danger-rgb) / 0.10), rgb(var(--danger-rgb) / 0.05));
+  color: rgb(var(--danger-rgb));
+}
+.stat-tile-icon-mistakes::after {
+  background: rgb(var(--danger-rgb) / 0.04);
+}
+.stat-tile-icon-flashcards {
+  background: linear-gradient(135deg, rgb(var(--study-accent-rgb) / 0.14), rgb(var(--study-accent-rgb) / 0.06));
+  color: rgb(var(--study-accent-rgb));
+}
+.stat-tile-icon-flashcards::after {
+  background: rgb(var(--study-accent-rgb) / 0.04);
+}
+
+/* ============ Mistake Card ============ */
+.mistake-card {
+  position: relative;
+  overflow: visible;
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb) / 0.7);
+  border-radius: 10px;
+  padding: 16px 18px 14px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  animation: study-fade-up 360ms var(--ease-out) both;
+}
+.study-list > .mistake-card:nth-child(-n+8) {
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.study-list > .mistake-card:nth-child(1) { --i: 0; }
+.study-list > .mistake-card:nth-child(2) { --i: 1; }
+.study-list > .mistake-card:nth-child(3) { --i: 2; }
+.study-list > .mistake-card:nth-child(4) { --i: 3; }
+.study-list > .mistake-card:nth-child(5) { --i: 4; }
+.study-list > .mistake-card:nth-child(6) { --i: 5; }
+.study-list > .mistake-card:nth-child(7) { --i: 6; }
+.study-list > .mistake-card:nth-child(8) { --i: 7; }
+.mistake-card:hover {
+  border-color: rgb(var(--study-accent-rgb) / 0.18);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.1);
+}
+.mistake-card-mastered {
+  opacity: 0.82;
+}
+.mistake-card-redoing {
+  border-color: rgb(var(--study-accent-rgb) / 0.18);
+  box-shadow: 0 0 0 3px rgb(var(--study-accent-rgb) / 0.03), 0 18px 38px -30px rgba(15, 23, 42, 0.34);
+}
+.mistake-card-selected {
+  border-color: rgb(var(--study-accent-rgb) / 0.22);
+  background: rgb(var(--study-accent-rgb) / 0.016);
+}
+
+.mistake-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.mistake-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.mistake-card-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.mistake-date {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.study-chip,
+.study-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  max-width: 320px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--line-subtle-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.study-chip-info {
+  max-width: none;
+  white-space: normal;
+  word-break: break-all;
+  background: rgb(var(--study-accent-rgb) / 0.06);
+  border-color: rgb(var(--study-accent-rgb) / 0.12);
+  color: rgb(var(--study-accent-rgb));
+}
+.study-chip-source {
+  background: rgb(var(--bg-subtle-rgb));
+  border-color: rgb(var(--line-rgb));
+  color: rgb(var(--ink-3-rgb));
+}
+.study-chip-collection {
+  background: rgb(var(--study-accent-rgb) / 0.045);
+  border-color: rgb(var(--study-accent-rgb) / 0.10);
+  color: rgb(var(--study-accent-rgb));
+}
+.study-chip-source-mistake {
+  background: rgb(var(--study-accent-rgb) / 0.06);
+  border-color: rgb(var(--study-accent-rgb) / 0.12);
+  color: rgb(var(--study-accent-rgb));
+}
+
+.mistake-stem {
+  margin: 8px 0 13px;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.mistake-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.study-tag {
+  background: rgb(var(--bg-surface-rgb) / 0.76);
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+}
+
+.mistake-source-row {
+  margin-top: 8px;
+}
+.source-tag-inline {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid rgb(var(--line-subtle-rgb));
+  border-radius: 999px;
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+}
+
+/* ============ 选择题样式 ============ */
+.choice-hint {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.study-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.study-choice {
+  appearance: none;
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 9px;
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--ink-2-rgb));
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(28, 25, 23, 0.03);
+  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.study-choice:hover:not(:disabled):not(.is-submitted) {
+  border-color: rgb(var(--study-accent-rgb) / 0.20);
+  background: rgb(var(--study-accent-rgb) / 0.016);
+}
+.study-choice.is-selected:not(.is-submitted) {
+  border-color: rgb(var(--study-accent-rgb) / 0.28);
+  background: rgb(var(--study-accent-rgb) / 0.045);
+  box-shadow: inset 0 0 0 1px rgb(var(--study-accent-rgb) / 0.12);
+  color: rgb(var(--ink-1-rgb));
+}
+.study-choice.is-submitted {
+  cursor: default;
+}
+.study-choice.is-correct {
+  border-color: rgb(var(--study-accent-rgb) / 0.28);
+  background: rgb(var(--study-accent-rgb) / 0.045);
+  color: rgb(var(--ink-1-rgb));
+}
+.study-choice.is-wrong {
+  border-color: rgb(var(--danger-rgb) / 0.32);
+  background: rgb(var(--danger-rgb) / 0.04);
+  color: rgb(var(--danger-rgb));
+}
+.study-choice-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11.5px;
+  font-weight: 750;
+  flex: 0 0 auto;
+  transition: background 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.study-choice.is-selected:not(.is-submitted) .study-choice-letter,
+.study-choice.is-correct .study-choice-letter {
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--study-accent-rgb));
+}
+.study-choice.is-wrong .study-choice-letter {
+  background: rgb(var(--bg-surface-rgb));
+  color: rgb(var(--danger-rgb));
+}
+.study-choice-text {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 520;
+  line-height: 1.45;
+}
+.study-choice-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+.study-choice-icon.selected,
+.study-choice-icon.correct {
+  padding: 2px;
+  border: 2px solid rgb(var(--study-accent-rgb));
+  border-radius: 999px;
+  color: rgb(var(--study-accent-rgb));
+  opacity: 0.75;
+}
+.study-choice-icon.wrong {
+  padding: 2px;
+  border: 2px solid rgb(var(--danger-rgb));
+  border-radius: 999px;
+  color: rgb(var(--danger-rgb));
+  opacity: 0.75;
 }
 
 /* ============ 批量操作条 ============ */
@@ -1891,8 +2463,8 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  background: rgb(var(--hue-study-rgb) / 0.06);
-  border: 1px solid rgb(var(--hue-study-rgb) / 0.3);
+  background: rgb(var(--study-accent-rgb) / 0.035);
+  border: 1px solid rgb(var(--study-accent-rgb) / 0.14);
   border-radius: 10px;
   flex-wrap: wrap;
 }
@@ -1936,8 +2508,8 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   border-color: rgb(var(--line-rgb));
 }
 .collection-manage-row-active {
-  border-color: rgb(var(--hue-study-rgb) / 0.45);
-  background: rgb(var(--hue-study-rgb) / 0.04);
+  border-color: rgb(var(--study-accent-rgb) / 0.22);
+  background: rgb(var(--study-accent-rgb) / 0.024);
 }
 
 .form-label {
@@ -1964,7 +2536,7 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   cursor: zoom-in;
 }
 .attachment-thumb:hover {
-  border-color: rgb(var(--hue-study-rgb) / 0.5);
+  border-color: rgb(var(--study-accent-rgb) / 0.24);
 }
 
 /* ============ 附件管理 popover ============ */
@@ -1992,25 +2564,25 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   padding: 6px 0;
   border-radius: 6px;
   cursor: pointer;
-  color: rgb(var(--hue-study-rgb));
+  color: rgb(var(--study-accent-rgb));
   transition: background 120ms var(--ease-out);
 }
 .attachment-add-row:hover {
-  background: rgb(var(--hue-study-rgb) / 0.08);
+  background: rgb(var(--study-accent-rgb) / 0.045);
 }
 .attachment-add-row input:disabled {
   cursor: not-allowed;
 }
 
-/* 默认态:答案已隐藏的提示行 */
+/* 默认态:答案已隐藏 */
 .reveal-hint {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   margin-bottom: 8px;
-  background: rgb(var(--bg-surface-rgb));
-  border: 1px dashed rgb(var(--line-rgb));
+  background: linear-gradient(90deg, rgb(var(--study-accent-rgb) / 0.024), rgb(var(--bg-subtle-rgb) / 0.56));
+  border: 1px solid rgb(var(--line-subtle-rgb));
   border-radius: 8px;
 }
 .reveal-hint > span:first-child {
@@ -2021,10 +2593,76 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 /* 内联重做输入区 */
 .redo-panel {
   background: rgb(var(--bg-surface-rgb));
-  border: 1px solid rgb(var(--line-rgb));
-  border-radius: 8px;
-  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  padding: 2px 0 4px;
   margin-bottom: 10px;
+}
+
+.redo-result-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 184px;
+  gap: 16px;
+  align-items: start;
+}
+
+.redo-result-main {
+  min-width: 0;
+}
+
+.redo-explain-card {
+  margin-top: 13px;
+  padding: 14px 16px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgb(var(--bg-surface-rgb)), rgb(var(--study-accent-rgb) / 0.016));
+}
+
+.redo-convert-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--study-accent-rgb));
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.redo-knowledge-card {
+  padding: 18px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 10px;
+  background: rgb(var(--bg-surface-rgb));
+  box-shadow: 0 12px 28px -25px rgba(15, 23, 42, 0.34);
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.redo-knowledge-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 13px;
+  color: rgb(var(--study-accent-rgb));
+  font-size: 13px;
+  font-weight: 750;
+  opacity: 0.82;
+}
+
+.mistake-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(var(--line-subtle-rgb));
+  flex-wrap: wrap;
 }
 
 /* 已掌握错题:内联展示答案 */
@@ -2042,7 +2680,7 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 /* 集中重做弹窗的题干 */
 .batch-stem {
   background: rgb(var(--bg-subtle-rgb));
-  border-left: 3px solid rgb(var(--hue-study-rgb));
+  border-left: 3px solid rgb(var(--study-accent-rgb) / 0.72);
   border-radius: 6px;
   padding: 14px 16px;
   font-size: 14.5px;
@@ -2065,16 +2703,157 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   font-weight: 500;
 }
 
-/* ============ 闪卡行 ============ */
-.card-row {
-  background: rgb(var(--bg-subtle-rgb));
-  border: 1px solid rgb(var(--line-subtle-rgb));
-  border-radius: 10px;
-  padding: 11px 14px;
-  transition: border-color 200ms var(--ease-out);
+/* ============ 下拉菜单 ============ */
+.mistake-menu-wrap {
+  position: relative;
 }
+
+.mistake-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--ink-3-rgb));
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.mistake-menu-btn:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+
+.mistake-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.mistake-menu-dropdown {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb) / 0.8);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06);
+  animation: study-scale-in 160ms var(--ease-out) both;
+  transform-origin: top right;
+}
+
+.mistake-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms var(--ease-out), color 100ms var(--ease-out);
+}
+.mistake-menu-item:hover {
+  background: rgb(var(--bg-subtle-rgb));
+  color: rgb(var(--ink-1-rgb));
+}
+.mistake-menu-item-danger:hover {
+  background: rgb(var(--danger-rgb) / 0.04);
+  color: rgb(var(--danger-rgb));
+}
+
+.mistake-menu-divider {
+  height: 1px;
+  margin: 3px 0;
+  background: rgb(var(--line-subtle-rgb));
+}
+
+/* ============ Flashcard Row ============ */
+.card-row {
+  background: rgb(var(--bg-surface-rgb));
+  border: 1px solid rgb(var(--line-rgb) / 0.7);
+  border-radius: 10px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  animation: study-fade-up 360ms var(--ease-out) both;
+}
+.study-list > .card-row:nth-child(-n+8) {
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.study-list > .card-row:nth-child(1) { --i: 0; }
+.study-list > .card-row:nth-child(2) { --i: 1; }
+.study-list > .card-row:nth-child(3) { --i: 2; }
+.study-list > .card-row:nth-child(4) { --i: 3; }
+.study-list > .card-row:nth-child(5) { --i: 4; }
+.study-list > .card-row:nth-child(6) { --i: 5; }
+.study-list > .card-row:nth-child(7) { --i: 6; }
+.study-list > .card-row:nth-child(8) { --i: 7; }
 .card-row:hover {
-  border-color: rgb(var(--line-rgb));
+  border-color: rgb(var(--study-accent-rgb) / 0.18);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.1);
+}
+.card-row-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.card-row-front {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.55;
+  margin-bottom: 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-row-back {
+  color: rgb(var(--ink-2-rgb));
+  font-size: 13px;
+  line-height: 1.75;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgb(var(--study-accent-rgb) / 0.018), rgb(var(--bg-subtle-rgb) / 0.66));
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-row-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(var(--line-subtle-rgb));
+}
+.card-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11.5px;
+  flex-wrap: wrap;
+}
+.card-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card-menu-wrap {
+  position: relative;
 }
 
 /* ============ 复习弹窗卡片翻转 ============ */
@@ -2111,40 +2890,97 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 }
 .flash-face-back {
   transform: rotateY(180deg);
-  background: rgb(var(--accent-soft-rgb) / 0.4);
-  border-color: rgb(var(--accent-rgb) / 0.25);
+  background: linear-gradient(180deg, rgb(var(--bg-surface-rgb)) 0%, rgb(var(--study-accent-rgb) / 0.026) 100%);
+  border-color: rgb(var(--study-accent-rgb) / 0.14);
 }
 
 .grade-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 4px;
+  justify-content: center;
+  padding: 7px 8px;
+  min-height: 34px;
   height: auto;
+  border-color: rgb(var(--line-rgb)) !important;
+  background: rgb(var(--bg-surface-rgb)) !important;
+  color: rgb(var(--ink-2-rgb)) !important;
+  box-shadow: 0 1px 2px rgba(28, 25, 23, 0.03);
+  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out), color 160ms var(--ease-out);
 }
-.grade-btn-0 { color: rgb(var(--danger-rgb)); }
-.grade-btn-1 { color: rgb(var(--warning-rgb)); }
-.grade-btn-3 { color: rgb(var(--accent-rgb)); }
-.grade-btn-5 { color: rgb(var(--success-rgb)); }
+.grade-btn:hover {
+  border-color: rgb(var(--study-accent-rgb) / 0.24) !important;
+  background: rgb(var(--study-accent-rgb) / 0.04) !important;
+  color: rgb(var(--ink-1-rgb)) !important;
+}
+.grade-btn :deep(.n-button__content) {
+  width: 100%;
+  justify-content: center;
+  gap: 5px;
+}
+.grade-btn span {
+  margin-left: 0 !important;
+}
+.grade-btn span:first-child {
+  color: rgb(var(--ink-3-rgb));
+  font-weight: 700;
+  opacity: 1;
+}
+.grade-btn-0 { border-color: rgb(var(--danger-rgb) / 0.18) !important; }
+.grade-btn-1 { border-color: rgb(var(--study-accent-rgb) / 0.20) !important; }
+.grade-btn-3 { border-color: rgb(var(--study-accent-rgb) / 0.18) !important; }
+.grade-btn-5 { border-color: rgb(var(--study-accent-rgb) / 0.22) !important; }
+.grade-btn-0:hover { background: rgb(var(--danger-rgb) / 0.04) !important; }
+.grade-btn-1:hover { background: rgb(var(--study-accent-rgb) / 0.05) !important; }
+.grade-btn-3:hover,
+.grade-btn-5:hover { background: rgb(var(--study-accent-rgb) / 0.045) !important; }
 
-/* ============ Tabs 微调 ============ */
-.study-tabs :deep(.n-tabs-tab) {
-  font-size: 13px;
+/* ============ Tabs 状态容器：切换入口只保留左侧栏 ============ */
+.study-tabs :deep(.n-tabs-nav) {
+  display: none;
 }
-.study-tabs :deep(.n-tabs-tab--active) {
-  color: rgb(var(--hue-study-rgb));
-}
-.study-tabs :deep(.n-tabs-bar) {
-  background-color: rgb(var(--hue-study-rgb)) !important;
+.study-tabs :deep(.n-tabs-pane-wrapper) {
+  padding-top: 0;
 }
 
 /* ============ Mobile ============ */
 @media (max-width: 767px) {
-  .p-6 {
-    padding: 14px;
+  .study-tools-scroll {
+    padding: 0 12px 16px;
+  }
+  .study-main {
+    padding-top: 6px;
+  }
+  .study-stats-grid,
+  .redo-result-layout {
+    grid-template-columns: 1fr;
+  }
+  .study-panel {
+    padding: 12px;
+  }
+  .study-toolbar,
+  .card-row-footer {
+    align-items: stretch;
+  }
+  .study-toolbar-left,
+  .study-toolbar-right,
+  .card-row-meta,
+  .card-row-actions {
+    width: 100%;
+  }
+  .study-toolbar-left :deep(.n-input),
+  .study-toolbar-left :deep(.n-select) {
+    width: 100% !important;
   }
   .stat-tile {
     padding: 14px;
+  }
+  .mistake-card,
+  .card-row {
+    padding: 14px;
+  }
+  .mistake-action-bar {
+    align-items: stretch;
   }
   .flash-face {
     padding: 20px 16px;

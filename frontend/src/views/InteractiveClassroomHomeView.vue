@@ -403,6 +403,7 @@ import {
   deleteInteractiveClassroom,
   getInteractiveClassroom,
   getInteractiveClassroomReport,
+  getInteractiveClassroomGenerationStatus,
   listInteractiveClassrooms,
   renameInteractiveClassroom,
   startInteractiveClassroomGeneration,
@@ -437,6 +438,10 @@ import {
   buildCoursewareClassroomSeed,
   getGeneratedPptJobId,
 } from '@/utils/classroomCourseware'
+import {
+  resolveClassroomGenerationWatchdogAction,
+  resolveClassroomGenerationWatchdogProgress,
+} from '@/utils/classroomGenerationWatchdog'
 
 const router = useRouter()
 const message = useMessage()
@@ -483,6 +488,8 @@ const expandedCourseIds = ref<Record<string, boolean>>({})
 const activeRequestId = ref('')
 const activeStartedAt = ref(0)
 const activeSuccessMessage = ref('课堂已生成')
+let generationWatchdogTimer: number | null = null
+let homeDisposed = false
 
 // SSE 流式进度
 const stream = useInteractiveClassroomStream()
@@ -574,6 +581,13 @@ function stopElapsedTicker() {
   if (elapsedTimer !== null) {
     window.clearInterval(elapsedTimer)
     elapsedTimer = null
+  }
+}
+
+function stopGenerationWatchdog() {
+  if (generationWatchdogTimer !== null) {
+    window.clearInterval(generationWatchdogTimer)
+    generationWatchdogTimer = null
   }
 }
 
@@ -820,6 +834,7 @@ async function beginClassroomGeneration(
     ...body,
     request_id: requestId,
   })
+  startGenerationWatchdog(requestId)
   await router.push({
     name: 'interactive-classroom-player',
     params: { classroomId: 'generating' },
@@ -828,13 +843,63 @@ async function beginClassroomGeneration(
       topic: body.topic,
       generating: '1',
     },
-  })
+  }).catch(() => undefined)
+}
+
+function applyGenerationJobSnapshot(job: Awaited<ReturnType<typeof getInteractiveClassroomGenerationStatus>>) {
+  if (job.stage) stream.stage.value = job.stage
+  if (job.stage_label) stream.stageLabel.value = job.stage_label
+  if (typeof job.stage_index === 'number') stream.stageIndex.value = job.stage_index
+  if (typeof job.stage_total === 'number' && job.stage_total > 0) stream.stageTotal.value = job.stage_total
+  if (typeof job.scene_index === 'number') stream.sceneIndex.value = job.scene_index
+  if (typeof job.scene_total === 'number' && job.scene_total > 0) stream.sceneTotal.value = job.scene_total
+  if (job.last_scene) stream.lastScene.value = job.last_scene
+  progressPercent.value = resolveClassroomGenerationWatchdogProgress(job, progressPercent.value)
+}
+
+function startGenerationWatchdog(requestId: string) {
+  stopGenerationWatchdog()
+  const poll = async () => {
+    if (homeDisposed || !requestId || activeRequestId.value !== requestId) return
+    try {
+      const job = await getInteractiveClassroomGenerationStatus(requestId)
+      if (homeDisposed || activeRequestId.value !== requestId) return
+      applyGenerationJobSnapshot(job)
+      const action = resolveClassroomGenerationWatchdogAction(job)
+      if (action.type === 'continue') return
+      if (action.type === 'done') {
+        finishGeneration()
+        message.success(activeSuccessMessage.value)
+        await loadList()
+        await router.replace(`/interactive-classroom/${action.classroomId}`)
+        return
+      }
+      if (action.type === 'cancelled') {
+        finishGeneration()
+        message.info('已停止课堂生成')
+        return
+      }
+      finishGeneration()
+      message.error(action.message)
+    } catch (err) {
+      const text = err instanceof Error ? err.message : ''
+      if (text.includes('404') || text.includes('生成任务不存在')) {
+        finishGeneration()
+        message.warning('课堂生成状态已失效，请重新生成')
+      }
+    }
+  }
+  void poll()
+  generationWatchdogTimer = window.setInterval(() => {
+    void poll()
+  }, 2000)
 }
 
 function finishGeneration() {
   loading.value = false
   activeRequestId.value = ''
   stopElapsedTicker()
+  stopGenerationWatchdog()
   stream.stop()
   clearPersistedClassroomGeneration()
 }
@@ -857,6 +922,7 @@ function restorePersistedGeneration() {
   activeSuccessMessage.value = '课堂已生成'
   loading.value = true
   startElapsedTicker(persisted.startedAt)
+  startGenerationWatchdog(persisted.requestId)
   router.push({
     name: 'interactive-classroom-player',
     params: { classroomId: 'generating' },
@@ -975,7 +1041,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  homeDisposed = true
   stopElapsedTicker()
+  stopGenerationWatchdog()
   stream.stop()
 })
 </script>

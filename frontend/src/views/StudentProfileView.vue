@@ -312,7 +312,7 @@
                 <div class="change-value">
                   {{ formatProfileUpdateChange(update) }}
                 </div>
-                <p>{{ update.reason || '系统根据近期学习证据提出此建议。' }}</p>
+                <p>{{ formatProfileUpdateReason(update) }}</p>
                 <small>根据 {{ update.evidence_ids?.length || 0 }} 次学习表现分析</small>
                 <div class="update-actions">
                   <button
@@ -354,14 +354,33 @@
               <div class="section-icon"><History :size="19" /></div>
               <div>
                 <h2>下一步建议</h2>
-                <p>根据最近课堂表现和已确认的课程学习情况推荐。</p>
+                <p>先看最值得做的一件事，其他建议作为备选。</p>
               </div>
             </div>
-            <div v-if="recentRecommendations.length" class="recommendation-list">
-              <article v-for="item in recentRecommendations" :key="`${item.classroom_id}-${item.id}`">
-                <strong>{{ item.title }}</strong>
-                <span>{{ item.description }}</span>
-                <small v-if="item.reason">{{ item.reason }}</small>
+            <div v-if="primaryRecommendation" class="next-actions">
+              <article class="next-action-primary">
+                <div>
+                  <span class="next-action-label">现在先做</span>
+                  <strong>{{ primaryRecommendation.title }}</strong>
+                  <p>{{ recommendationDescription(primaryRecommendation) }}</p>
+                </div>
+                <em>{{ recommendationPriorityLabel(primaryRecommendation.priority) }}</em>
+              </article>
+              <div v-if="secondaryRecommendations.length" class="next-action-grid">
+                <article
+                  v-for="(item, index) in secondaryRecommendations"
+                  :key="`${item.classroom_id || 'recent'}-${item.id}`"
+                >
+                  <span>{{ index + 1 }}</span>
+                  <div>
+                    <strong>{{ item.title }}</strong>
+                    <p>{{ recommendationDescription(item) }}</p>
+                  </div>
+                </article>
+              </div>
+              <article v-else-if="primaryRecommendation.reason" class="next-action-reason">
+                <span>推荐依据</span>
+                <p>{{ formatRecommendationReason(primaryRecommendation) }}</p>
               </article>
             </div>
             <div v-else class="empty-panel">完成课堂报告后，这里会显示可执行的后续学习建议。</div>
@@ -399,6 +418,7 @@ import {
   type LearnerProfile,
   type LearnerCourseProfile,
   type LearnerProfileUpdate,
+  type LearnerRecommendation,
 } from '@/api/learnerProfile'
 import {
   clearLearnerCourseProfile,
@@ -413,7 +433,9 @@ import {
   writeLegacyStudentProfile,
 } from '@/utils/learnerProfile'
 import {
+  formatRecommendationReason,
   formatProfileUpdateChange,
+  formatProfileUpdateReason,
   pendingProfileUpdates,
   profileUpdateTitle,
   trendLabel,
@@ -537,8 +559,33 @@ const summaryTags = computed(() => [
 const courseProfiles = computed(() => Object.values(profile.value.courses || {}))
 const pendingUpdates = computed(() => pendingProfileUpdates(profile.value.pending_updates || []))
 const recentRecommendations = computed(() => (
-  [...(profile.value.recent_recommendations || [])].reverse().slice(0, 6)
+  [...(profile.value.recent_recommendations || [])].reverse().slice(0, 4)
 ))
+const primaryRecommendation = computed(() => recentRecommendations.value[0])
+const secondaryRecommendations = computed(() => recentRecommendations.value.slice(1, 4))
+
+function recommendationPriorityLabel(priority: LearnerRecommendation['priority']): string {
+  const normalized = String(priority || '').toLowerCase()
+  if (['high', 'urgent', 'p0', 'p1'].includes(normalized)) return '优先'
+  if (['low', 'p3'].includes(normalized)) return '可选'
+  return '建议'
+}
+
+function recommendationPoints(item: LearnerRecommendation): string {
+  return (item.knowledge_points || []).filter(Boolean).slice(0, 2).join('、')
+}
+
+function recommendationDescription(item: LearnerRecommendation): string {
+  const points = recommendationPoints(item)
+  if (item.type === 'complete_quizzes') return '完成随堂测验，生成后续建议。'
+  if (item.type === 'review_weak_points') {
+    return points ? `回看 ${points} 相关讲解页。` : '回看薄弱知识点讲解页。'
+  }
+  if (item.type === 'practice_weak_points') return '围绕薄弱点做一轮同类题。'
+  if (item.type === 'next_lesson') return '继续学习下一阶段内容。'
+  if (item.type === 'challenge_practice') return '用综合题检查迁移应用能力。'
+  return item.description || '按推荐顺序完成下一步学习。'
+}
 
 function startDirtyWatch() {
   stopWatching?.()
@@ -1216,8 +1263,7 @@ onBeforeUnmount(() => stopWatching?.())
 }
 
 .course-grid,
-.update-list,
-.recommendation-list {
+.update-list {
   display: grid;
   gap: 12px;
 }
@@ -1232,8 +1278,7 @@ onBeforeUnmount(() => stopWatching?.())
 }
 
 .course-card,
-.update-card,
-.recommendation-list article {
+.update-card {
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 12px;
   background: rgb(var(--bg-inset-rgb) / 0.46);
@@ -1255,8 +1300,7 @@ onBeforeUnmount(() => stopWatching?.())
 }
 
 .course-head strong,
-.update-head strong,
-.recommendation-list strong {
+.update-head strong {
   color: rgb(var(--ink-1-rgb));
   font-size: 13px;
 }
@@ -1364,9 +1408,7 @@ onBeforeUnmount(() => stopWatching?.())
   font-weight: 750;
 }
 
-.update-card p,
-.recommendation-list span,
-.recommendation-list small {
+.update-card p {
   display: block;
   color: rgb(var(--ink-3-rgb));
   font-size: 11px;
@@ -1375,6 +1417,111 @@ onBeforeUnmount(() => stopWatching?.())
 
 .update-card small {
   color: rgb(var(--ink-4-rgb));
+}
+
+.next-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.next-action-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 12px;
+  background: rgb(var(--bg-inset-rgb) / 0.46);
+  padding: 15px;
+}
+
+.next-action-label {
+  display: block;
+  margin-bottom: 8px;
+  color: rgb(var(--nav-classroom-rgb));
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.next-action-primary strong {
+  display: block;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.next-action-primary p {
+  margin: 8px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.next-action-primary em {
+  border-radius: 999px;
+  background: rgb(var(--nav-classroom-rgb));
+  color: white;
+  padding: 5px 9px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.next-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.next-action-grid article {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 12px;
+  background: rgb(var(--bg-surface-rgb) / 0.78);
+  padding: 14px;
+}
+
+.next-action-grid article > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgb(var(--amber-rgb) / 0.12);
+  color: rgb(var(--amber-rgb));
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.next-action-grid strong {
+  display: block;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.next-action-grid p,
+.next-action-reason p {
+  display: block;
+  margin: 5px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.next-action-reason {
+  border: 1px dashed rgb(var(--line-strong-rgb));
+  border-radius: 12px;
+  background: rgb(var(--bg-surface-rgb) / 0.58);
+  padding: 12px 14px;
+}
+
+.next-action-reason span {
+  color: rgb(var(--ink-4-rgb));
+  font-size: 10px;
+  font-weight: 760;
 }
 
 .update-actions {
@@ -1482,6 +1629,15 @@ onBeforeUnmount(() => stopWatching?.())
 
   .course-trait-grid {
     grid-template-columns: 1fr;
+  }
+
+  .next-action-primary,
+  .next-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .next-action-primary em {
+    width: fit-content;
   }
 }
 </style>

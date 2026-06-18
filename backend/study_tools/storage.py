@@ -244,6 +244,12 @@ def _normalize_mistake(payload: dict[str, Any], existing: dict[str, Any] | None 
                 else (base.get("source_ref") or {}).get("classroom_id"),
                 80,
             ),
+            "scene_id": _clean_text(
+                (payload.get("source_ref") or {}).get("scene_id")
+                if isinstance(payload.get("source_ref"), dict)
+                else (base.get("source_ref") or {}).get("scene_id"),
+                120,
+            ),
             "question_id": _clean_text(
                 (payload.get("source_ref") or {}).get("question_id")
                 if isinstance(payload.get("source_ref"), dict)

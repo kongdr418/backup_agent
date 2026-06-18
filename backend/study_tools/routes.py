@@ -1,6 +1,11 @@
 """Study Tools API routes — 错题本 / 闪卡 / 错题集 / 统计."""
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
+from interactive_classroom.event_service import (
+    create_flashcard_reviewed_event,
+    create_mistake_mastered_event,
+    record_event,
+)
 from .storage import StudyToolsStorage
 
 
@@ -8,14 +13,21 @@ def create_study_tools_blueprint(
     get_user_id,
     get_storage,
     logger,
+    get_classroom_storage=None,
 ):
     bp = Blueprint("study_tools", __name__)
 
     def _uid():
-        return get_user_id(request)
+        try:
+            return get_user_id(request)
+        except TypeError:
+            return get_user_id()
 
     def _store() -> StudyToolsStorage:
         return get_storage()
+
+    def _classroom_store():
+        return get_classroom_storage() if get_classroom_storage is not None else None
 
     # ─── mistakes ───
 
@@ -30,7 +42,7 @@ def create_study_tools_blueprint(
             mastered=_parse_bool(params.get("mastered")),
             source=params.get("source"),
             collection_id=params.get("collection_id"),
-            q=params.get("q"),
+            query=params.get("q"),
             page=int(params.get("page", 1)),
             page_size=int(params.get("page_size", 20)),
         )
@@ -45,7 +57,7 @@ def create_study_tools_blueprint(
             payload = _json_field("payload") or payload
         item = _store().add_mistake(uid, payload)
         if files:
-            _store().add_attachments(uid, item["id"], files)
+            _store().add_attachments(uid, item["id"], _files_payload(files))
             item = _store().get_mistake(uid, item["id"]) or item
         return jsonify({"success": True, "item": item})
 
@@ -64,9 +76,13 @@ def create_study_tools_blueprint(
 
     @bp.route("/api/study-tools/mistakes/<mistake_id>", methods=["PATCH"])
     def update_mistake(mistake_id):
-        item = _store().update_mistake(_uid(), mistake_id, _json_body())
+        uid = _uid()
+        before = _store().get_mistake(uid, mistake_id)
+        item = _store().update_mistake(uid, mistake_id, _json_body())
         if not item:
             return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        if item.get("mastered") and not (before or {}).get("mastered"):
+            _record_mistake_mastered(uid, item)
         return jsonify({"success": True, "item": item})
 
     @bp.route("/api/study-tools/mistakes/<mistake_id>", methods=["DELETE"])
@@ -84,9 +100,23 @@ def create_study_tools_blueprint(
         files = request.files.getlist("files") or []
         if not files:
             return jsonify({"success": False, "error": "NO_FILES"}), 400
-        saved, rejected = _store().add_attachments(uid, mistake_id, files)
+        saved = _store().add_attachments(uid, mistake_id, _files_payload(files))
         item = _store().get_mistake(uid, mistake_id)
-        return jsonify({"success": True, "saved": saved, "rejected": rejected, "item": item})
+        return jsonify({"success": True, "saved": saved, "rejected": [], "item": item})
+
+    @bp.route(
+        "/api/study-tools/mistakes/<mistake_id>/attachments/<attachment_id>",
+        methods=["GET"],
+    )
+    def get_attachment(mistake_id, attachment_id):
+        resolved = _store().resolve_attachment(_uid(), mistake_id, attachment_id)
+        if not resolved:
+            return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        return send_file(
+            resolved["path"],
+            mimetype=resolved.get("mime") or "application/octet-stream",
+            download_name=resolved.get("name") or attachment_id,
+        )
 
     @bp.route(
         "/api/study-tools/mistakes/<mistake_id>/attachments/<attachment_id>",
@@ -132,7 +162,7 @@ def create_study_tools_blueprint(
             knowledge_point_id=params.get("knowledge_point_id"),
             source=params.get("source"),
             suspended=_parse_bool(params.get("suspended")),
-            q=params.get("q"),
+            query=params.get("q"),
             page=int(params.get("page", 1)),
             page_size=int(params.get("page_size", 20)),
         )
@@ -167,10 +197,12 @@ def create_study_tools_blueprint(
     @bp.route("/api/study-tools/flashcards/<card_id>/review", methods=["POST"])
     def review_flashcard(card_id):
         data = request.json or {}
-        grade = data.get("grade", 0)
-        item = _store().review_flashcard(_uid(), card_id, grade)
+        uid = _uid()
+        grade = int(data.get("grade", 0) or 0)
+        item = _store().review_flashcard(uid, card_id, grade)
         if not item:
             return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        _record_flashcard_reviewed(uid, item, grade)
         return jsonify({"success": True, "item": item})
 
     # ─── stats ───
@@ -247,6 +279,58 @@ def create_study_tools_blueprint(
             return None
         import json
         return json.loads(raw)
+
+    def _files_payload(files) -> list[tuple[str, bytes, str | None]]:
+        payload: list[tuple[str, bytes, str | None]] = []
+        for file in files or []:
+            try:
+                payload.append((file.filename or "", file.read(), file.mimetype))
+            except Exception:
+                logger.warning("[STUDY-TOOLS] attachment_read_failed", exc_info=True)
+        return payload
+
+    def _record_mistake_mastered(uid: str, mistake: dict) -> None:
+        classroom_storage = _classroom_store()
+        source_ref = mistake.get("source_ref") if isinstance(mistake.get("source_ref"), dict) else {}
+        classroom_id = (source_ref.get("classroom_id") or "").strip()
+        if not classroom_storage or not classroom_id:
+            return
+        try:
+            event = create_mistake_mastered_event(
+                user_id=uid,
+                classroom_id=classroom_id,
+                scene_id=(source_ref.get("scene_id") or "").strip(),
+                course_id=mistake.get("course_id") or mistake.get("course_name") or "",
+                mistake=mistake,
+            )
+            record_event(classroom_storage, event)
+        except Exception:
+            logger.warning("[STUDY-TOOLS] mistake_mastered_event_failed", exc_info=True)
+
+    def _record_flashcard_reviewed(uid: str, flashcard: dict, grade: int) -> None:
+        classroom_storage = _classroom_store()
+        if not classroom_storage:
+            return
+        source_ref: dict = {}
+        if flashcard.get("source") == "mistake" and flashcard.get("source_id"):
+            mistake = _store().get_mistake(uid, str(flashcard.get("source_id"))) or {}
+            if isinstance(mistake.get("source_ref"), dict):
+                source_ref = mistake["source_ref"]
+        classroom_id = (source_ref.get("classroom_id") or "").strip()
+        if not classroom_id:
+            return
+        try:
+            event = create_flashcard_reviewed_event(
+                user_id=uid,
+                classroom_id=classroom_id,
+                scene_id=(source_ref.get("scene_id") or "").strip(),
+                course_id=flashcard.get("course_id") or flashcard.get("course_name") or "",
+                flashcard=flashcard,
+                grade=grade,
+            )
+            record_event(classroom_storage, event)
+        except Exception:
+            logger.warning("[STUDY-TOOLS] flashcard_reviewed_event_failed", exc_info=True)
 
     return bp
 

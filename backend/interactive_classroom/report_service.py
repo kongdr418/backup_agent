@@ -30,6 +30,19 @@ def _collect_scene_knowledge(classroom: dict[str, Any]) -> list[str]:
     return points
 
 
+def _study_tool_event_mastered(event: dict[str, Any]) -> bool | None:
+    event_type = event.get("type")
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    if event_type == "mistake_mastered":
+        return True
+    if event_type == "flashcard_reviewed":
+        try:
+            return int(payload.get("grade", 0) or 0) >= 4
+        except (TypeError, ValueError):
+            return False
+    return None
+
+
 def _find_scene_ids_for_points(classroom: dict[str, Any], point_names: list[str]) -> list[str]:
     if not point_names:
         return []
@@ -88,7 +101,7 @@ def _build_recommended_tasks(
                 "id": "task_complete_quizzes",
                 "type": "complete_quizzes",
                 "title": "先完成课堂测验",
-                "description": "完成课堂中的随堂测验后，系统会根据真实答题记录生成薄弱点和后续学习建议。",
+                "description": "完成随堂测验，生成后续建议。",
                 "priority": "high",
                 "knowledge_points": [],
                 "target_scene_ids": [],
@@ -121,7 +134,7 @@ def _build_recommended_tasks(
                 "id": "task_review_weak_points",
                 "type": "review_weak_points",
                 "title": "复听薄弱知识点",
-                "description": f"优先回看 {'、'.join(focus_points)} 相关讲解页，补齐本节理解断点。",
+                "description": f"回看 {'、'.join(focus_points)} 相关讲解页。",
                 "priority": "high",
                 "knowledge_points": focus_points,
                 "target_scene_ids": target_scene_ids,
@@ -133,7 +146,7 @@ def _build_recommended_tasks(
                 "id": "task_practice_weak_points",
                 "type": "practice_weak_points",
                 "title": "完成补强练习",
-                "description": "围绕薄弱点再做一轮同类题，确认概念、判断依据和应用步骤都能独立完成。",
+                "description": "围绕薄弱点做一轮同类题。",
                 "priority": "high" if historical_scores and min(historical_scores) < 65 else "medium",
                 "knowledge_points": focus_points,
                 "target_scene_ids": [],
@@ -160,7 +173,7 @@ def _build_recommended_tasks(
             "id": "task_next_lesson",
             "type": "next_lesson",
             "title": "进入下一节课",
-            "description": "本节掌握情况较稳定，可以继续学习下一阶段内容，保持知识链条连续。",
+            "description": "继续学习下一阶段内容。",
             "priority": "medium",
             "knowledge_points": next_points,
             "target_scene_ids": [],
@@ -172,7 +185,7 @@ def _build_recommended_tasks(
             "id": "task_challenge_practice",
             "type": "challenge_practice",
             "title": "尝试综合挑战题",
-            "description": "用更高综合度的问题检查迁移应用能力，避免只停留在课堂记忆层面。",
+            "description": "用综合题检查迁移应用能力。",
             "priority": "low",
             "knowledge_points": next_points,
             "target_scene_ids": [],
@@ -461,10 +474,35 @@ def build_classroom_report(
                     if covered_scene_id and covered_scene_id not in rows:
                         rows.append(covered_scene_id)
 
+    for event in events or []:
+        mastered = _study_tool_event_mastered(event)
+        if mastered is None:
+            continue
+        event_id = str(event.get("id") or "")
+        for raw_point in event.get("knowledge_points", []):
+            point_name = str(raw_point or "").strip()
+            if not point_name:
+                continue
+            row = knowledge_summary.setdefault(
+                point_name,
+                {"correct": 0, "total": 0, "earned_points": 0, "total_points": 0, "mastery": 0, "event_ids": []},
+            )
+            row["total"] += 1
+            row["total_points"] += 1
+            total_questions += 1
+            total_points += 1
+            if mastered:
+                row["correct"] += 1
+                row["earned_points"] += 1
+                correct_questions += 1
+                earned_points += 1
+            if event_id:
+                row.setdefault("event_ids", []).append(event_id)
+
     # P7: 回填 event_ids 到每个知识点
     for point_name, row in knowledge_summary.items():
         row["mastery"] = round((row["correct"] / row["total"]) * 100) if row["total"] else 0
-        row["event_ids"] = list(set(kp_event_ids.get(point_name, [])))
+        row["event_ids"] = sorted(set([*row.get("event_ids", []), *kp_event_ids.get(point_name, [])]))
 
     score = round((earned_points / total_points) * 100) if total_points else 0
     weak_points = [name for name, row in knowledge_summary.items() if row["mastery"] < 80]

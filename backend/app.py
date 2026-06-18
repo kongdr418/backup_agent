@@ -53,6 +53,8 @@ from interactive_classroom.critic_service import (
 )
 from interactive_classroom.practice_service import ClassroomPracticeService
 from interactive_classroom.runtime_service import ClassroomRuntimeService
+from interactive_classroom.tts_service import ClassroomTTSService
+import interactive_classroom.runtime_service as classroom_runtime_module
 from file_library.routes import create_file_library_blueprint
 import os
 import logging
@@ -106,9 +108,6 @@ PROFILE_ONBOARDING_SERVICE = ProfileOnboardingService(llm_call=content_llm_call)
 CLASSROOM_STORAGE = ClassroomStorage(BACKEND_DIR)
 COURSE_KNOWLEDGE_STORAGE = CourseKnowledgeStorage(BACKEND_DIR)
 STUDY_TOOLS_STORAGE = StudyToolsStorage(BACKEND_DIR)
-
-# Shared mutable settings store (seeded from DEFAULT_SETTINGS)
-live_settings = dict(DEFAULT_SETTINGS)
 COURSE_KNOWLEDGE_EMBEDDINGS = LocalEmbeddingService()
 COURSE_KNOWLEDGE_VECTOR_INDEX = CourseVectorIndex(
     storage=COURSE_KNOWLEDGE_STORAGE,
@@ -216,12 +215,14 @@ def _classroom_completion_service() -> ClassroomCompletionService:
 
 
 def _classroom_runtime_service() -> ClassroomRuntimeService:
+    classroom_runtime_module.ClassroomTTSService = ClassroomTTSService
     return ClassroomRuntimeService(
         classroom_storage=CLASSROOM_STORAGE,
         learner_profile_storage=LEARNER_PROFILE_STORAGE,
         profile_agent=PROFILE_AGENT,
         course_knowledge_retriever=COURSE_KNOWLEDGE_RETRIEVER,
         practice_service=CLASSROOM_PRACTICE_SERVICE,
+        study_tools_storage=STUDY_TOOLS_STORAGE,
         completion_service=_classroom_completion_service(),
         build_tts_config=_build_classroom_tts_config,
         logger=request_logger,
@@ -426,6 +427,7 @@ app.register_blueprint(create_study_tools_blueprint(
     get_user_id=get_request_user_id,
     get_storage=lambda: STUDY_TOOLS_STORAGE,
     logger=request_logger,
+    get_classroom_storage=lambda: CLASSROOM_STORAGE,
 ))
 
 
@@ -441,7 +443,7 @@ app.register_blueprint(create_chat_blueprint(
     get_agent=get_agent,
     get_provider_for_model=_get_provider_for_model,
     apply_content_llm_config=_apply_content_llm_config,
-    default_settings=live_settings,
+    default_settings=DEFAULT_SETTINGS,
     server_api_keys=SERVER_API_KEYS,
     sessions=sessions,
     logger=request_logger,
@@ -452,7 +454,7 @@ app.register_blueprint(create_settings_memory_blueprint(
     get_user_id=get_request_user_id,
     get_agent=get_agent,
     sessions=sessions,
-    default_settings=live_settings,
+    default_settings=DEFAULT_SETTINGS,
     generators_dir=GENERATORS_DIR,
     logger=request_logger,
 ))

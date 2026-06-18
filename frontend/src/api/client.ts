@@ -15,10 +15,8 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   } else if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
     config.data = { ...config.data, user_id: uid }
   } else if (config.data instanceof FormData) {
-    // multipart 也得带 user_id,否则后端只能拿到 'anonymous'
     config.data.append('user_id', uid)
   }
-  // FormData 必须由浏览器自动生成 multipart 边界,不能保留 application/json 默认
   if (config.data instanceof FormData && config.headers) {
     delete (config.headers as Record<string, unknown>)['Content-Type']
     delete (config.headers as Record<string, unknown>)['content-type']

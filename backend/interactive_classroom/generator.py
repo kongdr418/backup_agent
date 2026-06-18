@@ -4,12 +4,19 @@ import asyncio
 import os
 import re
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from difflib import SequenceMatcher
 from html import unescape
 from typing import Any, Callable
 from uuid import uuid4
 
+from .critic_service import (
+    ClassroomCriticService,
+    CriticResult,
+    build_grounding_context,
+    normalize_critic_mode,
+)
 from .schema import ClassroomAction, ClassroomScene, InteractiveClassroom
 from .storage import ClassroomStorage
 from .tts_service import (
@@ -26,6 +33,7 @@ class ClassroomGenerationCancelled(Exception):
 CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[dict[str, Any]], None]
 DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY = 10
+DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY = 4
 
 
 def _emit_progress(
@@ -35,6 +43,8 @@ def _emit_progress(
     stage_index: int,
     scene_index: int = 0,
     scene_total: int = 0,
+    expected_scene_total: int = 0,
+    expected_slide_total: int = 0,
     scene: ClassroomScene | None = None,
 ) -> None:
     """向订阅者推送一帧 progress 事件。callback 抛错不会中断生成。"""
@@ -54,6 +64,10 @@ def _emit_progress(
             "scene_index": scene_index,
             "scene_total": scene_total,
         }
+        if expected_scene_total:
+            payload["expected_scene_total"] = expected_scene_total
+        if expected_slide_total:
+            payload["expected_slide_total"] = expected_slide_total
         if scene is not None:
             payload["scene"] = {
                 "id": scene.id,
@@ -61,10 +75,80 @@ def _emit_progress(
                 "title": scene.title,
                 "order": scene.order,
             }
+            payload["scene_payload"] = {
+                "id": scene.id,
+                "type": scene.type,
+                "title": scene.title,
+                "order": scene.order,
+                "knowledge_points": scene.knowledge_points,
+                "content": scene.content,
+                "actions": [
+                    {
+                        "id": action.id,
+                        "type": action.type,
+                        "agent_id": action.agent_id,
+                        "text": action.text,
+                        "audio_url": action.audio_url,
+                        "speed": action.speed,
+                        "payload": action.payload,
+                    }
+                    for action in scene.actions
+                ],
+            }
         callback(payload)
     except Exception:
         # 进度推送永远不能让生成失败；吞掉回调异常
         pass
+
+
+def _emit_ordered_ready_scenes(
+    callback: ProgressCallback | None,
+    *,
+    stage: str,
+    stage_index: int,
+    ready_scenes: dict[int, ClassroomScene],
+    completed_indexes: set[int] | None = None,
+    next_emit_index: int,
+    scene_total: int,
+    expected_scene_total: int = 0,
+    expected_slide_total: int = 0,
+) -> int:
+    completed = completed_indexes or set(ready_scenes)
+    while next_emit_index in completed:
+        scene = ready_scenes.get(next_emit_index)
+        if scene is not None:
+            _emit_progress(
+                callback,
+                stage=stage,
+                stage_index=stage_index,
+                scene_index=next_emit_index,
+                scene_total=scene_total,
+                expected_scene_total=expected_scene_total,
+                expected_slide_total=expected_slide_total,
+                scene=scene,
+            )
+        next_emit_index += 1
+    return next_emit_index
+
+
+def _synthesize_scene_speech_actions(
+    *,
+    service: ClassroomTTSService,
+    scene: ClassroomScene,
+    audio_dir: str,
+    classroom_id: str,
+    cancel_check: CancelCheck | None = None,
+) -> None:
+    for action in scene.actions:
+        _raise_if_cancelled(cancel_check)
+        if action.type != "speech" or action.audio_url:
+            continue
+        try:
+            filename = service.synthesize_action(action.id, action.text, audio_dir)
+        except Exception:
+            filename = ""
+        if filename:
+            action.audio_url = f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
 
 
 # 阶段定义：与前端 classRoomProgressSteps 的标题一一对应
@@ -95,12 +179,16 @@ def _sorted_svg_files(svg_dir: str) -> list[str]:
 def _clean_text(value: str) -> str:
     value = re.sub(r"<[^>]+>", "", value)
     value = unescape(value)
+    value = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", value)
+    value = re.sub(r"(?m)^\s*[-*+]\s+", "", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value
 
 
 def _clean_quiz_text(value: str) -> str:
     value = unescape(value)
+    # 剥离内部 scene ID（如 scene_slide_002、scene_quiz_001）
+    value = re.sub(r"\bscene_(?:slide|quiz|mindmap)_\d+\b", "", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value
 
@@ -147,6 +235,13 @@ def _clean_knowledge_point(value: str) -> str:
     # 反复剥前缀，最长 4 次（page N 关键点：xxx 关键点：xxx 这种叠层）
     for _ in range(4):
         prev = text
+        # 去掉 scene_slide_002 / scene_quiz_001 等内部 ID
+        text = re.sub(
+            r"^\s*scene_(?:slide|quiz|mindmap)_\d+[\s_\-:：、]*",
+            "",
+            text,
+            flags=re.I,
+        )
         # 去掉开头的 page/slide + 可选分隔 + 数字（中文数字 / 阿拉伯数字）+ 可选分隔
         text = re.sub(
             r"^\s*(page|slide)\s*[\d_一-鿿]+[\s_\-:：、]*",
@@ -167,6 +262,61 @@ def _clean_knowledge_point(value: str) -> str:
         text = text.strip()
 
     return text
+
+
+def _scene_text_values(scene: ClassroomScene) -> list[str]:
+    content = scene.content or {}
+    extracted = content.get("extracted_text", [])
+    values = [scene.title, *scene.knowledge_points]
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
+    return [_clean_text(str(value)) for value in values if _clean_text(str(value))]
+
+
+def _is_decorative_quiz_text(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return True
+    lower = text.lower()
+    # SVG 模板常把零填充章节号和页码计数单独放进 <text>，例如 "01"、
+    # "02"、"3 / 10"。这些是视觉导航元素，不是可用于出题的知识点。
+    # 保留普通年份、公式数字等内容，避免误删 "1943" 或 "100亿+"。
+    if re.fullmatch(r"0\d{1,2}", text):
+        return True
+    if re.fullmatch(r"\d{1,3}\s*/\s*\d{1,3}", text):
+        return True
+    if re.fullmatch(r"\d{4}[年/-]\d{1,2}(?:[月/-]\d{1,2})?", text):
+        return True
+    if re.search(r"(欢迎来到|今天我们|今天，?我们|一起探索|开启.*之旅|探索.*之旅|从.*开始探索)", text):
+        return True
+    if re.search(r"(welcome|exploration|journey)", lower) and not re.search(r"[\u4e00-\u9fff]", text):
+        return True
+    if (
+        not re.search(r"[\u4e00-\u9fff]", text)
+        and " " in text
+        and len(text) <= 48
+        and re.fullmatch(r"[A-Z0-9][A-Z0-9 &:/+_.-]+", text)
+    ):
+        return True
+    return False
+
+
+def _quiz_points_from_scene(scene: ClassroomScene) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    title = _clean_text(scene.title)
+    for value in [*scene.knowledge_points, *_scene_text_values(scene)]:
+        text = _clean_knowledge_point(value)
+        if (
+            not text
+            or text == title
+            or text in seen
+            or _is_decorative_quiz_text(text)
+        ):
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _derive_slide_title(idx: int, filename: str, svg_texts: list[str], manuscript_note: str = "") -> str:
@@ -225,10 +375,20 @@ def _brief(text: str, max_len: int = 220) -> str:
 
 def _speech_text_from_manuscript(text: str, max_len: int = 900) -> str:
     """保留比摘要更完整的备注讲稿，供课堂 TTS 与底部讲稿使用。"""
-    cleaned = _clean_text(text)
+    cleaned = _soften_repetitive_classroom_opening(_clean_text(text))
     if len(cleaned) <= max_len:
         return cleaned
     return cleaned[:max_len].rstrip("，。；、 ") + "。"
+
+
+def _soften_repetitive_classroom_opening(text: str) -> str:
+    """避免每页语音都读成同一套“同学们，今天我们...”开场。"""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"^同学们(?:好)?[，,、\s]*", "", cleaned)
+    cleaned = re.sub(r"^今天(?:这节课)?(?:我们|咱们)(?:来|要|一起)?", "这一页我们", cleaned)
+    return cleaned.strip()
 
 
 def _split_speech_segments(text: str, limit: int = 6) -> list[str]:
@@ -249,6 +409,20 @@ def _split_speech_segments(text: str, limit: int = 6) -> list[str]:
     return segments or [cleaned]
 
 
+def _merge_short_speech_segments(segments: list[str], min_chars: int = 24) -> list[str]:
+    merged: list[str] = []
+    idx = 0
+    while idx < len(segments):
+        current = segments[idx]
+        if len(current) < min_chars and idx + 1 < len(segments):
+            current = f"{current}{segments[idx + 1]}"
+            idx += 2
+        else:
+            idx += 1
+        merged.append(current)
+    return merged
+
+
 def _parse_svg_number(attrs: str, name: str, default: float = 0) -> float:
     match = re.search(rf'\b{name}\s*=\s*["\']\s*([-+]?\d+(?:\.\d+)?)', attrs, flags=re.I)
     if not match:
@@ -264,7 +438,7 @@ def _svg_text_content(raw: str) -> str:
     return _clean_text(raw)
 
 
-def _extract_svg_highlight_targets(svg: str, limit: int = 12) -> list[dict[str, Any]]:
+def _extract_svg_highlight_targets(svg: str, limit: int = 48) -> list[dict[str, Any]]:
     """从 SVG 文本节点提取可高亮目标，并估算 bbox。
 
     当前 PPT 引擎输出的 SVG 文本多数带 x/y/font-size。浏览器端会优先用
@@ -304,6 +478,95 @@ def _extract_svg_highlight_targets(svg: str, limit: int = 12) -> list[dict[str, 
         if len(targets) >= limit:
             break
     return targets
+
+
+def _is_low_signal_teaching_target(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return True
+    if re.fullmatch(r"[xw]\s*[₀-₉0-9]+", cleaned, flags=re.I):
+        return True
+    if re.fullmatch(r"[a-z]\s*[₀-₉0-9]?", cleaned, flags=re.I):
+        return True
+    if re.fullmatch(r"\d+\s*/\s*\d+", cleaned):
+        return True
+    return False
+
+
+def _teaching_target_score(text: str) -> int:
+    cleaned = _clean_text(text)
+    score = 0
+    if re.search(r"[\u4e00-\u9fff]", cleaned):
+        score += 4
+    if re.search(r"(核心|步骤|流程|要点|类比|数学|表达|公式|输入|权重|求和|偏置|激活|输出|判断)", cleaned):
+        score += 6
+    if re.search(r"(Σ|σ|=|\+|×)", cleaned):
+        score += 3
+    if re.match(r"^\d+[.、]\s*", cleaned):
+        score += 4
+    if _is_low_signal_teaching_target(cleaned):
+        score -= 8
+    return score
+
+
+def _select_teaching_targets(targets: list[dict[str, Any]], limit: int = 28) -> list[dict[str, Any]]:
+    """选择给讲稿 LLM 的高亮目标，避免只截 SVG DOM 前几个碎片。
+
+    SVG 文本通常按视觉顺序展开，前面可能连续出现 x1/x2/x3/w1 这类局部标注。
+    如果直接 `targets[:8]`，讲稿模型会看不到后面的求和、激活函数、输出和核心要点。
+    这里优先保留高信息目标，并从整页目标中做有序采样，保证前中后内容都能进入 prompt。
+    """
+    if len(targets) <= limit:
+        return targets
+
+    selected_indexes: set[int] = set()
+    scored = [
+        (idx, _teaching_target_score(str(target.get("text") or "")))
+        for idx, target in enumerate(targets)
+    ]
+
+    for idx, score in sorted(scored, key=lambda item: (-item[1], item[0])):
+        if score <= 0:
+            continue
+        selected_indexes.add(idx)
+        if len(selected_indexes) >= limit:
+            break
+
+    if len(selected_indexes) < min(limit, len(targets)):
+        step = max(1, len(targets) // limit)
+        for idx in range(0, len(targets), step):
+            selected_indexes.add(idx)
+            if len(selected_indexes) >= limit:
+                break
+
+    if len(selected_indexes) < min(limit, len(targets)):
+        for idx, _score in scored:
+            selected_indexes.add(idx)
+            if len(selected_indexes) >= limit:
+                break
+
+    return [targets[idx] for idx in sorted(selected_indexes)]
+
+
+def _visible_text_lines_for_prompt(
+    svg_texts: list[str],
+    targets: list[dict[str, Any]] | None = None,
+    limit: int = 48,
+) -> list[str]:
+    lines: list[str] = []
+    target_texts = [str(target.get("text") or "") for target in (targets or [])]
+    for text in [*svg_texts, *target_texts]:
+        cleaned = _clean_text(text)
+        if (
+            not cleaned
+            or cleaned in lines
+            or re.search(r"\bpage\s*\d+\s*/\s*\d+\b", cleaned, flags=re.I)
+        ):
+            continue
+        lines.append(cleaned)
+        if len(lines) >= limit:
+            break
+    return lines
 
 
 def _match_text_score(segment: str, target_text: str) -> int:
@@ -366,6 +629,72 @@ def _compose_teaching_speech(segments: list[dict[str, Any]]) -> str:
     return "\n".join(str(item.get("text") or "").strip() for item in segments if str(item.get("text") or "").strip())
 
 
+def _truncate_speech_text(text: str, max_chars: int) -> str:
+    cleaned = _clean_text(text)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    candidate = cleaned[:max_chars]
+    sentence_end = max(candidate.rfind(mark) for mark in "。！？；")
+    if sentence_end >= max_chars // 2:
+        return candidate[: sentence_end + 1].strip()
+    return candidate.rstrip("，、：； ") + "。"
+
+
+def _segments_are_similar(left: str, right: str) -> bool:
+    left_key = re.sub(r"[\W_]+", "", left.lower(), flags=re.UNICODE)
+    right_key = re.sub(r"[\W_]+", "", right.lower(), flags=re.UNICODE)
+    if not left_key or not right_key:
+        return False
+    if left_key in right_key or right_key in left_key:
+        return min(len(left_key), len(right_key)) >= 18
+    return SequenceMatcher(None, left_key, right_key).ratio() >= 0.82
+
+
+def _normalize_teaching_segments(
+    segments: list[dict[str, Any]],
+    *,
+    is_intro: bool,
+    is_last: bool,
+) -> list[dict[str, Any]]:
+    """按页面类型限制讲稿长度，并删除重复或近似重复段落。"""
+    if is_intro:
+        max_segments, max_segment_chars, max_total_chars = 2, 80, 140
+    elif is_last:
+        max_segments, max_segment_chars, max_total_chars = 3, 110, 260
+    else:
+        max_segments, max_segment_chars, max_total_chars = 4, 130, 420
+
+    result: list[dict[str, Any]] = []
+    used_chars = 0
+    for row in segments:
+        if not isinstance(row, dict):
+            continue
+        target_id = str(row.get("target_id") or "").strip()
+        text = _truncate_speech_text(str(row.get("text") or ""), max_segment_chars)
+        if not target_id or len(text) < 12:
+            continue
+        if any(_segments_are_similar(text, str(item.get("text") or "")) for item in result):
+            continue
+        remaining = max_total_chars - used_chars
+        if remaining < 12:
+            break
+        if len(text) > remaining:
+            text = _truncate_speech_text(text, remaining)
+        if len(text) < 12:
+            break
+        result.append(
+            {
+                "target_id": target_id,
+                "mode": _safe_segment_mode(row.get("mode"), "outline"),
+                "text": text,
+            }
+        )
+        used_chars += len(text)
+        if len(result) >= max_segments:
+            break
+    return result
+
+
 def _build_highlight_cues_from_teaching_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     usable = [item for item in segments if item.get("target_id") and str(item.get("text") or "").strip()]
     if not usable:
@@ -390,13 +719,172 @@ def _build_highlight_cues_from_teaching_segments(segments: list[dict[str, Any]])
     return cues
 
 
+def _target_for_teaching_text(
+    text: str,
+    targets: list[dict[str, Any]],
+    used_target_ids: set[str],
+) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    best_score = 0
+    text_key = re.sub(r"[\W_]+", "", text.lower(), flags=re.UNICODE)
+    for target in targets:
+        target_id = str(target.get("id") or "")
+        target_text = str(target.get("text") or "")
+        if not target_id or target_id in used_target_ids or _is_low_signal_teaching_target(target_text):
+            continue
+        target_key = re.sub(r"[\W_]+", "", target_text.lower(), flags=re.UNICODE)
+        score = _match_text_score(text, target_text) + max(0, _teaching_target_score(target_text) // 4)
+        if target_key and target_key in text_key:
+            score += 20
+        if "输出" in text and "输出" in target_text:
+            score += 30
+        if "激活" in text and "激活" in target_text:
+            score += 20
+        if "求和" in text and "求和" in target_text:
+            score += 20
+        if score > best_score:
+            best = target
+            best_score = score
+
+    if best is not None and best_score > 0:
+        return best
+
+    for target in targets:
+        target_id = str(target.get("id") or "")
+        target_text = str(target.get("text") or "")
+        if target_id and target_id not in used_target_ids and not _is_low_signal_teaching_target(target_text):
+            return target
+    return None
+
+
+def _build_process_summary_text(svg_texts: list[str]) -> str:
+    visible_text = " ".join(_visible_text_lines_for_prompt(svg_texts, limit=48))
+    has_process = all(term in visible_text for term in ("输入", "权重")) and any(
+        term in visible_text for term in ("求和", "激活函数", "输出")
+    )
+    if not has_process:
+        return ""
+
+    formula = "右侧公式里的 z 对应加权求和加偏置，y=σ(z) 对应经过激活函数后的输出。"
+    if "z = Σ" in visible_text and "y = σ" in visible_text:
+        formula = "右侧公式 z = Σ(xᵢ × wᵢ) + b 对应加权求和，y = σ(z) 对应激活后的输出。"
+    return (
+        "把流程连起来看：多个输入先乘以对应权重并加上偏置完成求和，"
+        "再交给激活函数判断，最后得到输出 y，也就是激活或抑制信号。"
+        f"{formula}"
+    )
+
+
+def _build_formula_summary_text(svg_texts: list[str], targets: list[dict[str, Any]] | None = None) -> str:
+    target_text = " ".join(str(target.get("text") or "") for target in (targets or []))
+    visible_text = f"{' '.join(_visible_text_lines_for_prompt(svg_texts, targets, limit=48))} {target_text}"
+    if "z = Σ" not in visible_text and "y = σ" not in visible_text:
+        return ""
+    return (
+        "页面右侧的数学表达可以对应到这条流程："
+        "z = Σ(xᵢ × wᵢ) + b 表示把输入按权重求和并加上偏置，"
+        "y = σ(z) 表示激活函数把结果转换成最终输出。"
+    )
+
+
+def _build_learning_process_summary_text(
+    svg_texts: list[str],
+    targets: list[dict[str, Any]] | None = None,
+) -> str:
+    visible_text = " ".join(_visible_text_lines_for_prompt(svg_texts, targets, limit=64))
+    has_learning_process = all(
+        term in visible_text
+        for term in ("随机初始化", "训练数据", "计算误差", "反向传播")
+    )
+    if not has_learning_process:
+        return ""
+
+    if "反复迭代" in visible_text:
+        return (
+            "把流程按顺序串起来：先随机初始化权重；再用训练数据给出正确答案；"
+            "接着计算预测和真实答案之间的误差；最后通过反向传播调整权重，"
+            "并反复迭代直到准确率达标。"
+        )
+    return (
+        "把流程按顺序串起来：先随机初始化权重，所以一开始输出可能是错的；"
+        "再用训练数据做教材；接着计算预测和真实答案之间的误差；"
+        "最后通过反向传播持续调整权重。"
+    )
+
+
+def _supplement_teaching_segments_from_targets(
+    result: list[dict[str, Any]],
+    source_targets: list[dict[str, Any]],
+    *,
+    title: str,
+    min_segments: int = 3,
+) -> None:
+    """用页面可见高亮目标补足过短讲稿，避免 TTS 只读一句话就结束。"""
+    if not source_targets:
+        return
+
+    used_target_ids = {str(item.get("target_id") or "") for item in result}
+    existing_text = " ".join(str(item.get("text") or "") for item in result)
+    target_limit = min(len(source_targets), max(min_segments, len(result)))
+    for idx, target in enumerate(source_targets):
+        if len(result) >= target_limit:
+            break
+        target_id = str(target.get("id") or "").strip()
+        target_text = _clean_text(str(target.get("text") or ""))
+        if (
+            not target_id
+            or not target_text
+            or target_id in used_target_ids
+            or _is_low_signal_teaching_target(target_text)
+        ):
+            continue
+        if target_text in existing_text and len(result) >= 2:
+            continue
+
+        variant = len(result) % 3
+        if idx == 0 and not result:
+            text = (
+                f"这一页我们先把视线放到“{target_text}”。"
+                f"它是理解“{title or target_text}”这页内容的入口，"
+                "先抓住它回答的问题，再看后续概念如何展开。"
+            )
+            mode = "spotlight"
+        elif variant == 0:
+            text = (
+                f"接着看“{target_text}”。"
+                f"把它和“{title or source_targets[0].get('text') or '本页主题'}”联系起来，"
+                "先判断它描述的是对象、任务还是方法，再用一个具体场景复述它的作用。"
+            )
+            mode = "outline"
+        elif variant == 1:
+            text = (
+                f"再关注“{target_text}”。"
+                "这里更适合从学习任务角度理解：它通常对应一个需要完成的判断或处理步骤，"
+                "所以听到例子时要先找输入信息，再看最终要得到什么结果。"
+            )
+            mode = "outline"
+        else:
+            text = (
+                f"最后看“{target_text}”。"
+                "请把它和前面概念做一次区分：它关注的范围、输出形式和应用场景各不相同。"
+                "能说清这三个差别，就说明你已经抓住本页结构。"
+            )
+            mode = "outline"
+        result.append({"target_id": target_id, "mode": mode, "text": text})
+        used_target_ids.add(target_id)
+        existing_text = f"{existing_text} {text}"
+
+
 def _fallback_teaching_segments(
     title: str,
     manuscript_note: str,
     targets: list[dict[str, Any]],
     svg_texts: list[str],
+    *,
+    is_intro: bool = False,
+    is_last: bool = False,
 ) -> list[dict[str, Any]]:
-    source_targets = targets[:5]
+    source_targets = _select_teaching_targets(targets, limit=24)
     if not source_targets:
         source_targets = [
             {"id": f"hl_{idx + 1:03d}", "text": text}
@@ -407,6 +895,96 @@ def _fallback_teaching_segments(
         source_targets = [{"id": "hl_001", "text": title or "本页主题"}]
 
     note = _clean_text(manuscript_note)
+    if is_intro:
+        opening = (
+            f"这一页先认识本节主题“{title}”。"
+            "这里先建立整体方向，具体概念和案例会在后续页面逐步展开。"
+        )
+        return _normalize_teaching_segments(
+            [
+                {
+                    "target_id": source_targets[0]["id"],
+                    "mode": "spotlight",
+                    "text": opening,
+                }
+            ],
+            is_intro=True,
+            is_last=False,
+        )
+
+    if note:
+        used_target_ids: set[str] = set()
+        result: list[dict[str, Any]] = []
+        note_segments = _merge_short_speech_segments(_split_speech_segments(note, limit=6))
+        for idx, segment in enumerate(note_segments[:5]):
+            target = _target_for_teaching_text(segment, source_targets, used_target_ids)
+            if target is None:
+                continue
+            segment_text = segment
+            if len(_clean_text(segment_text)) < 12:
+                target_text = _clean_text(str(target.get("text") or title or "本页主题"))
+                segment_text = (
+                    f"{segment_text}"
+                    f"这里先抓住“{target_text}”这个核心词：它是本页其它概念的上位主题，"
+                    "后面几个关键词都可以围绕它来判断用途和区别。"
+                )
+            used_target_ids.add(str(target["id"]))
+            result.append(
+                {
+                    "target_id": target["id"],
+                    "mode": "spotlight" if idx == 0 else "outline",
+                    "text": segment_text,
+                }
+            )
+
+        process_summary = _build_process_summary_text(svg_texts)
+        if process_summary and not any(_segments_are_similar(process_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(process_summary, source_targets, used_target_ids)
+            if target is not None:
+                used_target_ids.add(str(target["id"]))
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": process_summary,
+                    }
+                )
+        formula_summary = _build_formula_summary_text(svg_texts, targets)
+        if formula_summary and not any(_segments_are_similar(formula_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(formula_summary, source_targets, used_target_ids)
+            if target is not None:
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": formula_summary,
+                    }
+                )
+        learning_summary = _build_learning_process_summary_text(svg_texts, targets)
+        if learning_summary and not any(_segments_are_similar(learning_summary, str(item.get("text") or "")) for item in result):
+            target = _target_for_teaching_text(learning_summary, source_targets, used_target_ids)
+            if target is not None:
+                result.append(
+                    {
+                        "target_id": target["id"],
+                        "mode": "outline",
+                        "text": learning_summary,
+                    }
+                )
+
+        if result:
+            _supplement_teaching_segments_from_targets(
+                result,
+                source_targets,
+                title=title,
+                min_segments=3,
+            )
+            return _normalize_teaching_segments(
+                result,
+                is_intro=False,
+                is_last=is_last,
+            )
+
     result: list[dict[str, Any]] = []
     for idx, target in enumerate(source_targets):
         target_text = str(target.get("text") or title or "这一点").strip()
@@ -419,16 +997,31 @@ def _fallback_teaching_segments(
             )
             mode = "spotlight"
         else:
-            text = (
-                f"接着看“{target_text}”。"
-                f"这里不是孤立的信息点，而是对刚才主题的进一步展开。"
-                f"你可以把它和页面上的前一个重点连起来理解：先看它描述的对象，"
-                f"再看它暗示的过程或判断标准。这样回到题目时，就不只是记住一个词，"
-                f"而是知道它在真实任务中怎么发挥作用。"
+            patterns = (
+                (
+                    f"接着看“{target_text}”。先确认它描述的对象或任务，"
+                    "再结合页面文字判断它与主题的关系。重点不是孤立记名词，"
+                    "而是理解它在实际场景中解决什么问题。"
+                ),
+                (
+                    f"再关注“{target_text}”。把它和前面的重点做一次区分，"
+                    "分别观察输入、处理目标和输出结果。这样遇到具体例子时，"
+                    "就能判断当前讨论的是哪个概念。"
+                ),
+                (
+                    f"最后看“{target_text}”。尝试用自己的话说明它的作用，"
+                    "再想一个能够体现这个作用的场景。能完成这两步，"
+                    "才算真正理解了页面上的信息。"
+                ),
             )
+            text = patterns[(idx - 1) % len(patterns)]
             mode = "outline"
         result.append({"target_id": target["id"], "mode": mode, "text": text})
-    return result
+    return _normalize_teaching_segments(
+        result,
+        is_intro=False,
+        is_last=is_last,
+    )
 
 
 def _normalize_student_profile(profile: dict[str, Any] | None) -> dict[str, str]:
@@ -477,7 +1070,7 @@ def _normalize_generation_strategy(strategy: dict[str, Any] | None) -> dict[str,
         for value in strategy.get("avoid", [])
         if _clean_text(str(value))
     ][:8]
-    return {
+    result = {
         "strategy_version": int(strategy.get("strategy_version", 1) or 1),
         "course_id": _clean_text(str(strategy.get("course_id", "")))[:80],
         "course_name": _clean_text(str(strategy.get("course_name", "")))[:120],
@@ -498,6 +1091,15 @@ def _normalize_generation_strategy(strategy: dict[str, Any] | None) -> dict[str,
             str(strategy.get("profile_updated_at", ""))
         )[:40],
     }
+    for key in ("content_strategy", "assessment_strategy", "interaction_strategy"):
+        value = strategy.get(key)
+        result[key] = value if isinstance(value, dict) else {}
+    result["evidence_ids"] = [
+        _clean_text(str(value))[:180]
+        for value in strategy.get("evidence_ids", [])
+        if _clean_text(str(value))
+    ][:20]
+    return result
 
 
 def _option_rows(correct: str, distractors: list[str], offset: int = 0) -> tuple[list[dict[str, str]], str]:
@@ -552,6 +1154,100 @@ def _question(
     }
 
 
+def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]:
+    content = scene.content or {}
+    values: list[str] = []
+    extracted = content.get("extracted_text", [])
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
+    markdown = content.get("markdown", "")
+    if markdown:
+        values.append(str(markdown))
+    for action in scene.actions or []:
+        if action.type == "speech" and action.text:
+            values.append(action.text)
+
+    snippets: list[str] = []
+    for value in values:
+        cleaned = _clean_text(re.sub(r"[#*_`>\-\s]+", " ", str(value)))
+        if not cleaned:
+            continue
+        for part in re.split(r"[。！？!?；;]\s*", cleaned):
+            part = _clean_text(part)
+            if len(part) < 8:
+                continue
+            if _is_decorative_quiz_text(part):
+                continue
+            if part not in snippets:
+                snippets.append(part[:90])
+            if len(snippets) >= max_items:
+                return snippets
+    return snippets
+
+
+def _conceptual_distractors(
+    correct: str,
+    *,
+    scene_title: str,
+    topic: str,
+    pool: list[str],
+) -> list[str]:
+    generic = [
+        f"只记住“{scene_title or topic}”这个标题，不需要说明判断依据",
+        "优先关注页面顺序和视觉样式，而不是概念之间的关系",
+        "遇到题目时直接选择看起来最熟悉的词，不需要结合情境分析",
+        f"把所有问题都归因于{topic or '本节主题'}，不用区分具体条件",
+    ]
+    candidates = [
+        item
+        for item in [*pool, *generic]
+        if item and item != correct
+    ]
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        cleaned = _clean_text(item)[:90]
+        if not cleaned or cleaned in seen or cleaned == correct:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+        if len(result) >= 6:
+            break
+    return result
+
+
+def _question_has_scene_index(text: str) -> bool:
+    return bool(re.search(r"第\s*\d+\s*个讲解场景", text or ""))
+
+
+def _is_meta_practice_question_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(学习报告|报告建议|课堂建议|推荐优先复习|被推荐优先复习|推荐原因|掌握证据|本次课堂报告|复习范围|应围绕哪些核心方面)",
+            _clean_text(text),
+        )
+    )
+
+
+def _practice_evidence_by_point(assessment: dict[str, Any]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    evidence_rows = assessment.get("practice_evidence", [])
+    if not isinstance(evidence_rows, list):
+        return result
+    for row in evidence_rows:
+        if not isinstance(row, dict):
+            continue
+        point = _clean_text(str(row.get("point") or ""))
+        snippets = [
+            _clean_text(str(value))
+            for value in row.get("snippets", [])
+            if _clean_text(str(value))
+        ][:8]
+        if point:
+            result[point] = snippets
+    return result
+
+
 QUIZ_SOURCE_SKIP_KEYWORDS = (
     "课程总结",
     "总结",
@@ -571,12 +1267,118 @@ QUIZ_SOURCE_SKIP_KEYWORDS = (
     "qa",
 )
 
+QUIZ_SOURCE_SUMMARY_SKIP_KEYWORDS = (
+    "\u8bfe\u7a0b\u603b\u7ed3",
+    "\u603b\u7ed3",
+    "\u590d\u76d8",
+    "\u56de\u987e",
+    "\u62d3\u5c55",
+    "\u5c55\u671b",
+    "\u4e0b\u4e00\u6b65",
+    "\u8bfe\u540e",
+    "summary",
+    "review",
+    "wrap up",
+    "next step",
+)
 
-def _is_quiz_source_scene(scene: ClassroomScene) -> bool:
-    text = " ".join([scene.title, *scene.knowledge_points]).lower()
-    if not text.strip():
+QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS = (
+    "\u63d0\u95ee",
+    "\u95ee\u9898",
+    "\u8ba8\u8bba",
+    "\u7b54\u7591",
+    "\u4e92\u52a8",
+    "\u95ee\u7b54",
+    "q&a",
+    "qa",
+    "question",
+    "discussion",
+)
+
+# 开场/封面/目录页关键词 — 用于检测不应出题的非知识内容页
+# 注意：只保留明确的开场/封面/目录关键词，避免"学习目标""课程大纲"等
+# 可能出现在内容页知识点中的词导致误杀
+INTRO_SLIDE_KEYWORDS = (
+    # 封面/标题页（高置信度）
+    "课程介绍", "课程简介", "课程目录", "课程导览", "课程安排",
+    # 目录/大纲页
+    "目录", "内容概览", "章节概览", "学习路径",
+    "agenda", "contents", "outline",
+    # 通用开场
+    "自我介绍", "讲师介绍", "欢迎", "开场",
+    "welcome", "introduction", "intro", "导论",
+)
+
+INTRO_SLIDE_FULL_TEXT_KEYWORDS = (
+    "overview",
+    "课程学习路径",
+    "课程学习路线",
+)
+
+INTRO_FIRST_SLIDE_TITLE_KEYWORDS = (
+    "项目导入",
+    "课程导入",
+    "学习导入",
+    "导学",
+)
+
+
+def _is_intro_slide(scene: ClassroomScene, *, is_first_slide: bool = False) -> bool:
+    """检测开场/封面/目录页，这些页面不应生成测验题。"""
+    title = (scene.title or "").strip()
+    title_lower = title.lower()
+    points = [p.strip() for p in scene.knowledge_points if p.strip()]
+    visible_texts = _scene_text_values(scene)
+    combined_raw = f"{title} {' '.join(points)} {' '.join(visible_texts)}"
+    combined = combined_raw.lower()
+
+    # Signal A: 标题命中关键词 → 直接判定为开场页
+    for kw in INTRO_SLIDE_KEYWORDS:
+        if kw in title_lower:
+            return True
+
+    # Signal A2: 明确的总览/学习路径页，即使标题较长也不作为测验来源。
+    for kw in INTRO_SLIDE_FULL_TEXT_KEYWORDS:
+        if kw.lower() in combined:
+            return True
+
+    # Signal A3: 首页导入页不是知识检测来源；避免泛化到"模块导入"等内容页。
+    if is_first_slide and any(kw in title_lower for kw in INTRO_FIRST_SLIDE_TITLE_KEYWORDS):
         return True
-    return not any(keyword in text for keyword in QUIZ_SOURCE_SKIP_KEYWORDS)
+
+    # Signal B: 标题较短(≤15字符) + (标题+知识点)命中关键词 → 判定为开场页
+    # 避免长标题内容页（如"Python 模块导入详解"）被误杀
+    if len(title) <= 15:
+        for kw in INTRO_SLIDE_KEYWORDS:
+            if kw in combined:
+                return True
+
+    # Signal C: 首页 + 完全无知识点 → 判定为开场页（纯封面/装饰页）
+    if is_first_slide and len(points) == 0:
+        return True
+
+    # Signal D: 首页 + 欢迎/探索之旅/装饰英文标题等封面话术 → 判定为开场页
+    if is_first_slide and (
+        re.search(r"(欢迎来到|今天我们|今天，?我们|一起探索|开启.*之旅|探索.*之旅|从.*开始探索)", combined_raw)
+        or any(_is_decorative_quiz_text(text) for text in visible_texts)
+    ):
+        return True
+
+    return False
+
+
+def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False) -> bool:
+    text = " ".join([scene.title, *_quiz_points_from_scene(scene)]).lower()
+    if not text.strip():
+        return False  # 空标题+空知识点的页面不是有效的出题源
+    if _is_intro_slide(scene, is_first_slide=is_first_slide):
+        return False
+    title = (scene.title or "").lower()
+    if any(keyword in text for keyword in QUIZ_SOURCE_SUMMARY_SKIP_KEYWORDS):
+        return False
+    if any(keyword in title for keyword in QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS):
+        return False
+    return True
 
 
 class InteractiveClassroomGenerator:
@@ -586,11 +1388,51 @@ class InteractiveClassroomGenerator:
         storage: ClassroomStorage,
         quiz_generator: Any | None = None,
         llm_quiz_enabled: bool = True,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self.backend_dir = backend_dir
         self.storage = storage
         self.quiz_generator = quiz_generator
         self.llm_quiz_enabled = llm_quiz_enabled
+        self.semantic_reviewer = semantic_reviewer
+
+    @staticmethod
+    def _critic_summary(
+        result: CriticResult,
+        *,
+        retried: bool = False,
+        fallback: bool = False,
+    ) -> dict[str, Any]:
+        summary = result.to_dict()
+        summary["retried"] = retried
+        summary["fallback"] = fallback
+        return summary
+
+    @staticmethod
+    def _aggregate_critic_summary(
+        mode: str,
+        scenes: list[ClassroomScene],
+    ) -> dict[str, Any]:
+        summaries = [
+            scene.content.get("critic")
+            for scene in scenes
+            if isinstance(scene.content, dict)
+            and isinstance(scene.content.get("critic"), dict)
+        ]
+        issues: list[str] = []
+        for summary in summaries:
+            for issue in summary.get("issue_codes", []):
+                if issue and issue not in issues:
+                    issues.append(str(issue))
+        return {
+            "mode": normalize_critic_mode(mode),
+            "checks": len(summaries),
+            "llm_checks": sum(bool(row.get("llm_checked")) for row in summaries),
+            "retries": sum(bool(row.get("retried")) for row in summaries),
+            "fallbacks": sum(bool(row.get("fallback")) for row in summaries),
+            "duration_ms": sum(int(row.get("duration_ms", 0) or 0) for row in summaries),
+            "issues": issues[:20],
+        }
 
     def _resolve_ppt_job_dir(self, user_id: str, ppt_job_id: str) -> str:
         if not _is_safe_job_id(ppt_job_id):
@@ -648,6 +1490,21 @@ class InteractiveClassroomGenerator:
             }
         )
 
+    @staticmethod
+    def _merge_knowledge_points(
+        base_points: list[str],
+        knowledge_context: dict[str, Any] | None,
+    ) -> list[str]:
+        if not knowledge_context:
+            return base_points
+        standard_points = knowledge_context.get("knowledge_points", [])
+        merged = list(base_points)
+        for kp in standard_points:
+            label = kp.get("label", "").strip() if isinstance(kp, dict) else str(kp).strip()
+            if label and label not in merged:
+                merged.append(label)
+        return merged
+
     def _build_teaching_segments_prompt(
         self,
         *,
@@ -656,14 +1513,36 @@ class InteractiveClassroomGenerator:
         title: str,
         manuscript_note: str,
         targets: list[dict[str, Any]],
+        svg_texts: list[str],
         student_profile: dict[str, str] | None = None,
+        is_intro: bool = False,
     ) -> str:
         target_lines = []
-        for target in targets[:8]:
+        prompt_targets = _select_teaching_targets(targets)
+        for target in prompt_targets:
             target_lines.append(f"- id: {target.get('id')}｜text: {target.get('text')}")
+        visible_lines = [f"- {text}" for text in _visible_text_lines_for_prompt(svg_texts, targets)]
         profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
         position = "first" if page_index == 1 else ("last" if page_index == page_total else "middle")
-        return f"""你是智慧课堂的授课脚本设计师。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
+        is_last = page_total > 1 and page_index == page_total
+        if is_intro:
+            length_rules = (
+                "2. 输出 1 到 2 个 segments，总计不超过 140 个中文字符；每段 35 到 80 个中文字符。\n"
+                "3. 这是标题/封面页，只做主题导入和学习方向提示，不要展开后续页面的知识点，"
+                "不要在标题页讲完整节课。"
+            )
+        elif is_last:
+            length_rules = (
+                "2. 输出 1 到 3 个 segments，总计不超过 260 个中文字符；每段 40 到 110 个中文字符。\n"
+                "3. 只提炼结论和下一步，不要逐页复述整堂课。"
+            )
+        else:
+            length_rules = (
+                "2. 输出 3 到 4 个 segments，总计不超过 420 个中文字符；每段 45 到 130 个中文字符。\n"
+                "3. 每段只讲一个当前页面能看到的具体结构、标签、流程箭头、实验卡片或目标条，"
+                "不要写跨页总结、职业发展展望或泛泛的学习鸡汤。"
+            )
+        return f"""你是智创空间智慧课堂的授课脚本设计智能体。请基于本页 PPT 的可见文字和原始备注，生成自然口语化的讲解段，并让每段讲解绑定一个高亮目标。
 
 ## 页面位置
 第 {page_index} / {page_total} 页，position={position}
@@ -674,6 +1553,9 @@ class InteractiveClassroomGenerator:
 ## 原始 PPT 备注/讲稿
 {manuscript_note or "无"}
 
+## 本页可见文字
+{chr(10).join(visible_lines) or "无"}
+
 ## 可高亮目标
 {chr(10).join(target_lines) or "无"}
 
@@ -682,12 +1564,16 @@ class InteractiveClassroomGenerator:
 
 ## 要求
 1. 直接返回 JSON，不要 Markdown 代码块。
-2. 输出 4 到 6 个 segments；如果可高亮目标少于 4 个，可以重复核心目标，但讲解内容不能重复。
-3. 每个 segment 必须从可高亮目标中选择 target_id。
-4. 每段 text 80 到 140 个中文字符，口语化，像老师在讲课，不要照抄 PPT。
-5. 讲稿必须和当前 target 的文字实际对应：讲“图像分类”就绑定“图像分类”，讲“目标检测”就绑定“目标检测”。
-6. 第一段或真正强调“重点/核心/关键”的段落 mode 用 "spotlight"，其他用 "outline"。
-7. 中间页不要寒暄；第一页可自然开场；最后一页可总结。
+{length_rules}
+4. 每个 segment 必须从可高亮目标中选择 target_id；高亮目标少时就减少段数，不得为了凑段数重复 target_id。
+5. 不得重复句子、结论、例子或同义改写；原始备注与可见文字重复时只讲一次。
+6. 口语化，像老师在讲课，但不要照抄 PPT，不要使用“接下来我们再来看看”一类空泛填充句。
+7. 讲稿必须和当前 target 的文字实际对应：讲“图像分类”就绑定“图像分类”，讲“目标检测”就绑定“目标检测”。
+8. 第一段或真正强调“重点/核心/关键”的段落 mode 用 "spotlight"，其他用 "outline"。
+9. 中间页不要寒暄；第一页仅在封面页自然开场；最后一页可简短总结。
+10. 中间页如果出现流程、步骤、公式、输出或核心要点，必须覆盖前中后关键环节，不要只讲开头几个标签。
+11. 如果页面有编号、卡片或底部目标条，至少选择其中两个具体元素讲清楚它们的关系；不要把它们合并成一段大而空的总结。
+12. 不要主动补充页面没有出现的信息；不要使用“为未来学习和职业发展做好准备”这类泛化结尾。
 
 ## JSON 格式
 {{
@@ -707,46 +1593,112 @@ class InteractiveClassroomGenerator:
         targets: list[dict[str, Any]],
         svg_texts: list[str],
         student_profile: dict[str, str] | None = None,
-    ) -> list[dict[str, Any]]:
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        include_critic: bool = False,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        is_intro: bool = False,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
         valid_ids = {str(target.get("id")) for target in targets if target.get("id")}
+        mode = normalize_critic_mode(critic_mode)
+        is_last = page_total > 1 and page_index == page_total and not is_intro
+        grounding = build_grounding_context(
+            knowledge_context=knowledge_context,
+            visible_texts=svg_texts,
+            manuscript_note=manuscript_note,
+        )
+        critic = ClassroomCriticService(
+            mode=mode,
+            semantic_reviewer=semantic_reviewer or self.semantic_reviewer,
+        )
+        last_result = CriticResult(
+            passed=False,
+            severity="error",
+            issue_codes=["generation_failed"],
+            grounding_level=grounding.level,
+            retry_required=True,
+        )
         if targets and self.llm_quiz_enabled:
-            try:
-                quiz_generator = self._get_quiz_generator()
-                prompt = self._build_teaching_segments_prompt(
-                    page_index=page_index,
-                    page_total=page_total,
-                    title=title,
-                    manuscript_note=manuscript_note,
-                    targets=targets,
-                    student_profile=student_profile,
-                )
-                raw = quiz_generator._call_llm(prompt)  # noqa: SLF001
-                data = json.loads(self._clean_llm_json(raw))
-                rows = data.get("segments") if isinstance(data, dict) else None
-                segments: list[dict[str, Any]] = []
-                if isinstance(rows, list):
-                    for row in rows:
-                        if not isinstance(row, dict):
-                            continue
-                        target_id = str(row.get("target_id") or "").strip()
-                        text = _clean_text(str(row.get("text") or ""))
-                        if target_id not in valid_ids or len(text) < 12:
-                            continue
-                        segments.append(
-                            {
-                                "target_id": target_id,
-                                "mode": _safe_segment_mode(row.get("mode"), "outline"),
-                                "text": text,
-                            }
+            for attempt in range(2):
+                try:
+                    quiz_generator = self._get_quiz_generator()
+                    prompt = self._build_teaching_segments_prompt(
+                        page_index=page_index,
+                        page_total=page_total,
+                        title=title,
+                        manuscript_note=manuscript_note,
+                        targets=targets,
+                        svg_texts=svg_texts,
+                        student_profile=student_profile,
+                        is_intro=is_intro,
+                    )
+                    if attempt:
+                        prompt += (
+                            "\n\n上一次输出未通过检查。请修复过长、重复、目标绑定错误、"
+                            "依据不足或内部画像字段泄露问题。不要增加段数，仍按原 JSON 结构返回。"
                         )
-                        if len(segments) >= 6:
-                            break
-                if len(segments) >= 2:
-                    return segments
-            except Exception:
-                pass
+                    raw = quiz_generator._call_llm(prompt)  # noqa: SLF001
+                    data = json.loads(self._clean_llm_json(raw))
+                    rows = data.get("segments") if isinstance(data, dict) else None
+                    segments: list[dict[str, Any]] = []
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            target_id = str(row.get("target_id") or "").strip()
+                            text = _clean_text(str(row.get("text") or ""))
+                            if not target_id or len(text) < 12:
+                                continue
+                            segments.append(
+                                {
+                                    "target_id": target_id,
+                                    "mode": _safe_segment_mode(row.get("mode"), "outline"),
+                                    "text": text,
+                                }
+                            )
+                            if len(segments) >= 6:
+                                break
+                    segments = _normalize_teaching_segments(
+                        segments,
+                        is_intro=is_intro,
+                        is_last=is_last,
+                    )
+                    last_result = critic.review_teaching_segments(
+                        segments=segments,
+                        valid_target_ids=valid_ids,
+                        grounding=grounding,
+                        is_intro=is_intro,
+                        is_last=is_last,
+                    )
+                    if segments and last_result.passed:
+                        summary = self._critic_summary(
+                            last_result,
+                            retried=attempt > 0,
+                        )
+                        return (segments, summary) if include_critic else segments
+                except Exception:
+                    last_result = CriticResult(
+                        passed=False,
+                        severity="error",
+                        issue_codes=["generation_failed"],
+                        grounding_level=grounding.level,
+                        retry_required=True,
+                    )
 
-        return _fallback_teaching_segments(title, manuscript_note, targets, svg_texts)
+        fallback_segments = _fallback_teaching_segments(
+            title,
+            manuscript_note,
+            targets,
+            svg_texts,
+            is_intro=is_intro,
+            is_last=is_last,
+        )
+        summary = self._critic_summary(
+            last_result,
+            retried=targets and self.llm_quiz_enabled,
+            fallback=True,
+        )
+        return (fallback_segments, summary) if include_critic else fallback_segments
 
     def _build_slide_scenes_from_ppt_job(
         self,
@@ -755,6 +1707,12 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
+        tts_service: ClassroomTTSService | None = None,
+        audio_dir: str = "",
+        classroom_id: str = "",
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> list[ClassroomScene]:
         job_dir = self._resolve_ppt_job_dir(user_id, ppt_job_id)
         if not job_dir:
@@ -788,7 +1746,7 @@ class InteractiveClassroomGenerator:
 
         max_workers = min(DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY, len(svg_files))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-slide") as executor:
-            futures = [
+            future_to_index = {
                 executor.submit(
                     self._build_single_slide_scene_from_svg,
                     idx,
@@ -799,22 +1757,59 @@ class InteractiveClassroomGenerator:
                     ppt_job_id,
                     student_profile,
                     cancel_check,
-                )
+                    critic_mode,
+                    knowledge_context,
+                    semantic_reviewer,
+                ): idx
                 for idx, fname in enumerate(svg_files, start=1)
-            ]
+            }
 
-            for idx, future in enumerate(futures, start=1):
+            completed = 0
+            scenes_by_index: dict[int, ClassroomScene] = {}
+            next_emit_index = 1
+            for future in as_completed(future_to_index):
                 _raise_if_cancelled(cancel_check)
+                idx = future_to_index[future]
                 scene = future.result()
-                scenes.append(scene)
-                _emit_progress(
-                    progress_callback,
-                    stage="build_scenes",
-                    stage_index=1,
-                    scene_index=idx,
-                    scene_total=len(svg_files),
-                    scene=scene,
-                )
+                scenes_by_index[idx] = scene
+                completed += 1
+                if tts_service is None or not audio_dir or not classroom_id:
+                    next_emit_index = _emit_ordered_ready_scenes(
+                        progress_callback,
+                        stage="build_scenes",
+                        stage_index=1,
+                        ready_scenes=scenes_by_index,
+                        next_emit_index=next_emit_index,
+                        scene_total=len(svg_files),
+                    )
+                    continue
+
+                while next_emit_index in scenes_by_index:
+                    ready_scene = scenes_by_index[next_emit_index]
+                    _emit_progress(
+                        progress_callback,
+                        stage="synthesize_tts",
+                        stage_index=3,
+                        scene_index=next_emit_index - 1,
+                        scene_total=len(svg_files),
+                    )
+                    _synthesize_scene_speech_actions(
+                        service=tts_service,
+                        scene=ready_scene,
+                        audio_dir=audio_dir,
+                        classroom_id=classroom_id,
+                        cancel_check=cancel_check,
+                    )
+                    _emit_progress(
+                        progress_callback,
+                        stage="synthesize_tts",
+                        stage_index=3,
+                        scene_index=next_emit_index,
+                        scene_total=len(svg_files),
+                        scene=ready_scene,
+                    )
+                    next_emit_index += 1
+            scenes = [scenes_by_index[idx] for idx in sorted(scenes_by_index)]
         return scenes
 
     def _build_single_slide_scene_from_svg(
@@ -827,6 +1822,9 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str,
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> ClassroomScene:
         _raise_if_cancelled(cancel_check)
         path = os.path.join(svg_dir, fname)
@@ -836,7 +1834,20 @@ class InteractiveClassroomGenerator:
         svg_texts = _extract_svg_texts(svg)
         title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
         highlight_targets = _extract_svg_highlight_targets(svg)
-        teaching_segments = self._generate_teaching_segments(
+        intro_probe = ClassroomScene(
+            id=f"scene_slide_{idx:03d}",
+            type="slide",
+            title=title,
+            order=idx,
+            knowledge_points=svg_texts[:4],
+            content={"extracted_text": svg_texts},
+        )
+        is_intro = _is_intro_slide(intro_probe, is_first_slide=idx == 1) or (
+            idx == 1
+            and len(svg_texts) <= 2
+            and not manuscript_note
+        )
+        teaching_result = self._generate_teaching_segments(
             page_index=idx,
             page_total=page_total,
             title=title,
@@ -844,7 +1855,21 @@ class InteractiveClassroomGenerator:
             targets=highlight_targets,
             svg_texts=svg_texts,
             student_profile=student_profile,
+            critic_mode=critic_mode,
+            knowledge_context=knowledge_context,
+            include_critic=True,
+            semantic_reviewer=semantic_reviewer,
+            is_intro=is_intro,
         )
+        if (
+            isinstance(teaching_result, tuple)
+            and len(teaching_result) == 2
+            and isinstance(teaching_result[1], dict)
+        ):
+            teaching_segments, critic_summary = teaching_result
+        else:
+            teaching_segments = teaching_result  # type: ignore[assignment]
+            critic_summary = {}
         speech_text = _compose_teaching_speech(teaching_segments)
         if not speech_text:
             speech_text = self._build_speech_text(idx, title, svg_texts, manuscript_note, student_profile)
@@ -873,6 +1898,7 @@ class InteractiveClassroomGenerator:
                 "speech_source": "manuscript" if manuscript_note else "svg_text",
                 "speech_segments": speech_segments,
                 "highlight_targets": highlight_targets,
+                "critic": critic_summary,
             },
             actions=[
                 ClassroomAction(
@@ -943,37 +1969,73 @@ class InteractiveClassroomGenerator:
         qid_prefix: str = "q",
     ) -> list[dict[str, Any]]:
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
-        titles = [scene.title for scene in slide_scenes if scene.title]
+        # 过滤开场/目录页，避免生成无意义题目
+        eligible_scenes = [
+            s for i, s in enumerate(slide_scenes)
+            if _is_quiz_source_scene(s, is_first_slide=(i == 0))
+        ]
+        if not eligible_scenes:
+            # 兜底：如果全部被过滤，跳过第一页使用剩余页面
+            eligible_scenes = slide_scenes[1:] if len(slide_scenes) > 1 else slide_scenes
+        titles = [
+            scene.title
+            for scene in eligible_scenes
+            if scene.title and not _is_decorative_quiz_text(scene.title)
+        ]
         all_points: list[str] = []
-        for scene in slide_scenes:
-            all_points.extend([point for point in scene.knowledge_points if point and point != scene.title])
+        for scene in eligible_scenes:
+            all_points.extend(_quiz_points_from_scene(scene))
 
         questions: list[dict[str, Any]] = []
-        for idx, scene in enumerate(slide_scenes[:3], start=1):
-            other_titles = [title for title in titles if title != scene.title]
-            questions.append(
-                _question(
-                    qid=f"{qid_prefix}{len(questions) + 1}",
-                    question=f"第 {idx} 个讲解场景主要围绕哪一项内容展开？",
-                    correct=scene.title,
-                    distractors=other_titles,
-                    analysis=f"该场景标题为“{scene.title}”，课堂讲解和页面内容都围绕这个主题组织。",
-                    knowledge_point=scene.title or topic,
-                )
+        for scene in eligible_scenes[:3]:
+            key_points = _quiz_points_from_scene(scene)
+            snippets = _scene_text_snippets(scene)
+            primary_point = key_points[0] if key_points else (
+                scene.title if scene.title and not _is_decorative_quiz_text(scene.title) else topic
             )
+            other_points = [
+                point
+                for point in [*all_points, *titles]
+                if point and point not in {primary_point, scene.title} and not _is_decorative_quiz_text(point)
+            ]
 
-            key_points = [point for point in scene.knowledge_points if point and point != scene.title]
-            if key_points:
-                correct = key_points[0]
-                distractors = [point for point in all_points if point != correct]
+            if snippets:
+                correct = snippets[0]
+                distractors = _conceptual_distractors(
+                    correct,
+                    scene_title=scene.title,
+                    topic=topic,
+                    pool=[*snippets[1:], *other_points],
+                )
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"以下哪一项是“{scene.title}”页中提到的关键内容？",
+                        question=f"关于“{primary_point}”，以下哪一项最能说明本节要求掌握的判断依据？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"“{correct}”来自该页抽取文本，说明学生需要回到对应页面理解这一要点。",
-                        knowledge_point=scene.title or topic,
+                        analysis=f"这道题考查的是对“{primary_point}”的理解依据，而不是记住它出现在第几页。",
+                        knowledge_point=primary_point,
+                    )
+                )
+
+            if key_points and len(questions) < max_questions:
+                correct = (
+                    f"先识别{primary_point}的适用条件，再结合题目情境选择相应概念或处理步骤"
+                )
+                distractors = _conceptual_distractors(
+                    correct,
+                    scene_title=scene.title,
+                    topic=topic,
+                    pool=other_points,
+                )
+                questions.append(
+                    _question(
+                        qid=f"{qid_prefix}{len(questions) + 1}",
+                        question=f"遇到与“{primary_point}”相关的新题时，应该优先采用哪种应用步骤？",
+                        correct=correct,
+                        distractors=distractors,
+                        analysis=f"补强练习需要验证能否把“{primary_point}”迁移到新情境，而不是只匹配页面标题。",
+                        knowledge_point=primary_point,
                     )
                 )
 
@@ -1019,12 +2081,25 @@ class InteractiveClassroomGenerator:
                     break
             if len(speech_text) > 320:
                 speech_text = speech_text[:320].rstrip("，。；、 ") + "…"
+            knowledge_points = [
+                point for point in _quiz_points_from_scene(scene)
+                if not _is_decorative_quiz_text(point)
+            ][:8]
+            extracted_texts = (
+                [
+                    _clean_text(str(item))
+                    for item in extracted
+                    if _clean_text(str(item)) and not _is_decorative_quiz_text(str(item))
+                ][:16]
+                if isinstance(extracted, list)
+                else []
+            )
             summaries.append(
                 {
                     "scene_id": scene.id,
                     "title": scene.title,
-                    "knowledge_points": scene.knowledge_points[:8],
-                    "extracted_text": extracted[:16] if isinstance(extracted, list) else [],
+                    "knowledge_points": knowledge_points,
+                    "extracted_text": extracted_texts,
                     "speech_excerpt": speech_text,
                 }
             )
@@ -1045,7 +2120,6 @@ class InteractiveClassroomGenerator:
             texts = [str(t).strip() for t in slide.get("extracted_text", []) if str(t).strip()]
             context_lines.append(
                 f"{idx}. 页面标题：{title}\n"
-                f"   覆盖 slide_id：{slide.get('scene_id', '')}\n"
                 f"   关键点：{'；'.join(points[:6]) or '无'}\n"
                 f"   页面文本：{'；'.join(texts[:10]) or '无'}"
             )
@@ -1078,9 +2152,15 @@ class InteractiveClassroomGenerator:
 
 ## 出题要求
 1. 题目必须直接来自上面的页面标题、关键点或页面文本，不能泛泛问主题定义。
+1a. `knowledge_point` 必须逐字复制上方某个“页面标题”或“关键点”，禁止自行概括、改写或扩写。
+1b. **跳过开场/目录类页面**：如果某些页面的标题是课程名称、目录、欢迎语、自我介绍、学习目标概述等开场性质的内容，不要基于这些页面出题。只围绕有实质知识点的页面出题。
+1c. **禁止页面位置匹配题**：不要问"第几页/第几个讲解场景主要围绕什么"、"哪个页面标题是什么"、"某知识点出现在哪一页"。题目必须考概念辨析、判断依据、应用步骤、错因修正或迁移应用。
+1d. **禁止通用套话题**：不得使用“关于 X，以下哪项最能说明本节要求掌握的判断依据”“遇到与 X 相关的新题时应该优先采用哪种步骤”等可替换任意主题的模板。题干必须写出当前页面中的具体对象、条件、过程或因果关系。
+1e. 每道题的正确答案和解析都必须能从页面文字直接核对；如果页面依据不足以支撑一道高质量题，就减少题量，不得用目录词、机构名、页码、章节编号或其他页面碎片凑选项。
+1f. **禁止学习报告/推荐任务元题**：不要问“根据学习报告建议”“课堂建议应围绕哪些方面”“学生被推荐优先复习哪些内容”“推荐原因是什么”。题目必须直接考学生对知识点本身的理解、判断或应用。
 2. 单选题为主，可少量多选题；每题 4 个选项，干扰项要像真实学生会混淆的错误理解。
    **多选题识别强约束**：如果题干含「以下哪些」「下列哪些」「哪些选项」「哪些是」「多选」等表述，**必须**把 `type` 设为「多选题」并给 `answer` 多个字母（如 "A,C"）。否则前端 UI 会按单选渲染，题干和交互对不上。
-3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面或关键点。
+3. 每题必须给出 analysis，说明答案为什么对，并尽量指向具体页面编号（如"第 2 页"）或关键点。不要使用任何内部 ID。
 4. 每题必须给出 knowledge_point，优先使用对应页面标题或关键点。
 5. 不要生成填空题、代码输出题。
 6. 如果有学生画像，题目难度、选项干扰方式和解析语言要匹配画像。
@@ -1124,6 +2204,7 @@ class InteractiveClassroomGenerator:
         question_count: int,
         student_profile: dict[str, str] | None = None,
         require_short_answer: bool = False,
+        critic_feedback: str = "",
     ) -> str:
         quiz_generator = self._get_quiz_generator()
         slide_summaries = self._build_slide_summaries(scenes)
@@ -1135,6 +2216,7 @@ class InteractiveClassroomGenerator:
                     question_count=question_count,
                     student_profile=_normalize_student_profile(student_profile),
                     require_short_answer=require_short_answer,
+                    critic_feedback=critic_feedback,
                 )
             except TypeError:
                 # 外部 quiz_generator 不支持新参数，回退到不带参数版本
@@ -1146,7 +2228,40 @@ class InteractiveClassroomGenerator:
         prompt = self._build_context_quiz_prompt(
             topic, slide_summaries, question_count, student_profile, require_short_answer
         )
+        if critic_feedback:
+            prompt += f"""
+
+## 上一次审查未通过，必须修正
+{critic_feedback}
+
+请丢弃上一次结果并重新生成整套题，不要只修改一个字段。仍然只返回规定的 JSON。
+"""
         return quiz_generator._call_llm(prompt)  # noqa: SLF001
+
+    @staticmethod
+    def _build_quiz_retry_feedback(issue_codes: list[str]) -> str:
+        guidance = {
+            "unsupported_knowledge_point": (
+                "knowledge_point 未被页面原文支持；必须逐字复制页面标题或关键点"
+            ),
+            "answer_analysis_conflict": (
+                "answer 与 analysis 指认的正确选项冲突；重新核对每个选项和答案"
+            ),
+            "invalid_options": "选择题必须有 4 个非空且互不重复的选项",
+            "invalid_answer": "answer 必须对应现有选项",
+            "single_answer_count": "单选题只能有 1 个正确答案",
+            "multiple_answer_count": "多选题至少有 2 个正确答案",
+            "missing_analysis": "每道题必须给出基于页面原文的解析",
+            "missing_questions": "没有生成可用题目",
+            "generation_failed": "JSON 不完整或字段不符合格式要求",
+            "semantic_critic_error": "语义审查未能确认内容，请严格贴合页面原文",
+            "semantic_rejected": "题目与页面依据不一致",
+        }
+        rows = []
+        for code in issue_codes or ["generation_failed"]:
+            rows.append(f"- {code}: {guidance.get(code, '修复该审查问题')}")
+        rows.append("- 禁止生成可替换任意主题的通用题干或通用步骤题")
+        return "\n".join(rows)
 
     def _clean_llm_json(self, value: str) -> str:
         text = (value or "").strip()
@@ -1183,8 +2298,19 @@ class InteractiveClassroomGenerator:
             return []
 
         scene_points: list[str] = []
+        decorative_terms: list[str] = []
         for scene in scenes:
-            scene_points.extend([scene.title, *scene.knowledge_points])
+            if scene.title and not _is_decorative_quiz_text(scene.title):
+                scene_points.append(scene.title)
+            scene_points.extend(_quiz_points_from_scene(scene))
+            decorative_terms.extend(
+                text for text in _scene_text_values(scene)
+                if _is_decorative_quiz_text(text)
+            )
+        decorative_terms = [
+            term for term in dict.fromkeys(decorative_terms)
+            if len(term) >= 4
+        ][:20]
 
         questions: list[dict[str, Any]] = []
         for module in modules:
@@ -1193,6 +2319,12 @@ class InteractiveClassroomGenerator:
                     break
                 text = _clean_quiz_text(str(row.get("text") or row.get("question") or ""))
                 if not text:
+                    continue
+                if _question_has_scene_index(text):
+                    continue
+                if _is_meta_practice_question_text(text):
+                    continue
+                if any(term in text for term in decorative_terms):
                     continue
 
                 # 修复：原先不过滤 LLM 直给的 knowledge_point，导致 "page 15 关键点：xxx"
@@ -1211,6 +2343,8 @@ class InteractiveClassroomGenerator:
                         "",
                     )
                 if not knowledge_point:
+                    knowledge_point = topic
+                if _is_decorative_quiz_text(knowledge_point):
                     knowledge_point = topic
 
                 qtype_raw = str(row.get("type", "单选题"))
@@ -1302,32 +2436,91 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
         require_short_answer: bool = False,
-    ) -> list[dict[str, Any]]:
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         _raise_if_cancelled(cancel_check)
         if not self.llm_quiz_enabled:
-            return []
-        try:
-            raw_json = self._generate_context_quiz_json(
-                topic, scenes, max_questions, student_profile, require_short_answer
+            return [], self._critic_summary(
+                CriticResult(
+                    passed=True,
+                    grounding_level="none",
+                )
             )
-            _raise_if_cancelled(cancel_check)
-            questions = self._convert_llm_quiz_json(
-                raw_json=raw_json,
-                scenes=scenes,
-                max_questions=max_questions,
-                qid_prefix=qid_prefix,
-            )
-            # 兜底：LLM 没出简答但要求了 → 把最后一道单选/多选降级为简答
-            # 这样即使 LLM 偶尔忽略 prompt，仍然能保证 ~50% 测验有简答
-            if (
-                require_short_answer
-                and questions
-                and not any(q.get("type") == "short_answer" for q in questions)
-            ):
-                questions = self._force_one_short_answer(questions)
-            return questions
-        except Exception:
-            return []
+        slide_summaries = self._build_slide_summaries(scenes)
+        visible_texts: list[str] = []
+        for summary in slide_summaries:
+            visible_texts.extend(summary.get("knowledge_points", []))
+            visible_texts.extend(summary.get("extracted_text", []))
+        grounding = build_grounding_context(
+            knowledge_context=knowledge_context,
+            visible_texts=visible_texts,
+            manuscript_note="",
+        )
+        critic = ClassroomCriticService(
+            mode=critic_mode,
+            semantic_reviewer=semantic_reviewer or self.semantic_reviewer,
+        )
+        last_result = CriticResult(
+            passed=False,
+            severity="error",
+            issue_codes=["generation_failed"],
+            grounding_level=grounding.level,
+            retry_required=True,
+        )
+        critic_feedback = ""
+        for attempt in range(3):
+            try:
+                raw_json = self._generate_context_quiz_json(
+                    topic,
+                    scenes,
+                    max_questions,
+                    student_profile,
+                    require_short_answer,
+                    critic_feedback,
+                )
+                _raise_if_cancelled(cancel_check)
+                questions = self._convert_llm_quiz_json(
+                    raw_json=raw_json,
+                    scenes=scenes,
+                    max_questions=max_questions,
+                    qid_prefix=qid_prefix,
+                )
+                if (
+                    require_short_answer
+                    and questions
+                    and not any(q.get("type") == "short_answer" for q in questions)
+                ):
+                    questions = self._force_one_short_answer(questions)
+                last_result = critic.review_quiz_questions(
+                    questions=questions,
+                    grounding=grounding,
+                )
+                if questions and last_result.passed:
+                    return questions, self._critic_summary(
+                        last_result,
+                        retried=attempt > 0,
+                    )
+                critic_feedback = self._build_quiz_retry_feedback(
+                    last_result.issue_codes
+                )
+            except Exception:
+                last_result = CriticResult(
+                    passed=False,
+                    severity="error",
+                    issue_codes=["generation_failed"],
+                    grounding_level=grounding.level,
+                    retry_required=True,
+                )
+                critic_feedback = self._build_quiz_retry_feedback(
+                    last_result.issue_codes
+                )
+        return [], self._critic_summary(
+            last_result,
+            retried=True,
+            fallback=True,
+        )
 
     @staticmethod
     def _force_one_short_answer(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1367,10 +2560,13 @@ class InteractiveClassroomGenerator:
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
         require_short_answer: bool = False,
-    ) -> ClassroomScene:
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> ClassroomScene | None:
         _raise_if_cancelled(cancel_check)
         qid_prefix = f"q{quiz_index}_"
-        questions = self._build_llm_quiz_questions(
+        questions, critic_summary = self._build_llm_quiz_questions(
             topic,
             scenes,
             max_questions=max_questions,
@@ -1378,9 +2574,11 @@ class InteractiveClassroomGenerator:
             student_profile=student_profile,
             cancel_check=cancel_check,
             require_short_answer=require_short_answer,
+            critic_mode=critic_mode,
+            knowledge_context=knowledge_context,
+            semantic_reviewer=semantic_reviewer,
         )
         _raise_if_cancelled(cancel_check)
-        quiz_source = "llm_json" if questions else "slide_text"
         if not questions:
             questions = self._build_quiz_questions(
                 topic,
@@ -1388,6 +2586,7 @@ class InteractiveClassroomGenerator:
                 max_questions=max_questions,
                 qid_prefix=qid_prefix,
             )
+        quiz_source = "llm_json" if self.llm_quiz_enabled and not critic_summary.get("fallback") else "slide_text"
         knowledge_points: list[str] = []
         for scene in scenes:
             for point in [scene.title, *scene.knowledge_points]:
@@ -1404,9 +2603,28 @@ class InteractiveClassroomGenerator:
                 "questions": questions,
                 "quiz_source": quiz_source,
                 "covered_scene_ids": [scene.id for scene in scenes],
+                "critic": critic_summary,
             },
             actions=[],
         )
+
+    @staticmethod
+    def _renumber_quiz_scenes(scenes: list[ClassroomScene], topic: str) -> None:
+        quiz_index = 1
+        for scene in scenes:
+            if scene.type != "quiz":
+                continue
+
+            scene.id = f"scene_quiz_{quiz_index:03d}"
+            scene.title = f"随堂测验 {quiz_index}：{topic}"
+
+            questions = scene.content.get("questions", []) if isinstance(scene.content, dict) else []
+            if isinstance(questions, list):
+                for question_number, question in enumerate(questions, start=1):
+                    if isinstance(question, dict):
+                        question["id"] = f"q{quiz_index}_{question_number}"
+
+            quiz_index += 1
 
     def build_practice_quiz_scene(
         self,
@@ -1423,21 +2641,28 @@ class InteractiveClassroomGenerator:
         ][:5]
         if not clean_points:
             clean_points = [_clean_text(topic) or "综合理解"]
+        assessment = (
+            generation_strategy.get("assessment_strategy", {})
+            if isinstance(generation_strategy, dict)
+            else {}
+        )
+        diagnostic_notes = [
+            _clean_text(str(value))
+            for value in assessment.get("practice_diagnostic_notes", [])
+            if _clean_text(str(value))
+        ][:5]
+        evidence_by_point = _practice_evidence_by_point(assessment)
         source_scenes = [
             ClassroomScene(
                 id=f"practice_source_{idx:03d}",
                 type="slide",
-                title=point,
+                title=f"补强材料 {idx}",
                 order=idx,
                 knowledge_points=[point],
                 content={
                     "extracted_text": [
                         point,
-                        (
-                            f"围绕{point}完成迁移应用和综合判断。"
-                            if task_type == "challenge_practice"
-                            else f"围绕{point}复习概念、判断依据和应用步骤。"
-                        ),
+                        *evidence_by_point.get(point, []),
                     ]
                 },
                 actions=[],
@@ -1452,16 +2677,54 @@ class InteractiveClassroomGenerator:
             scenes=source_scenes,
             max_questions=4,
             student_profile=profile,
-            require_short_answer=False,
+            require_short_answer=task_type == "challenge_practice",
         )
+        if scene is None:
+            raise RuntimeError("练习题连续审查失败，已停止生成以避免返回通用保底题")
         scene.title = (
             f"挑战练习：{'、'.join(clean_points[:3])}"
             if task_type == "challenge_practice"
             else f"补强练习：{'、'.join(clean_points[:3])}"
         )
         scene.content["practice_task_type"] = task_type
+        scene.content["error_targets"] = list(assessment.get("error_targets", []))
+        scene.content["diagnostic_notes"] = diagnostic_notes
+        scene.content["transfer_level"] = assessment.get(
+            "transfer_level",
+            "unobserved",
+        )
         scene.content["covered_scene_ids"] = []
         return scene
+
+    @staticmethod
+    def _practice_strategy_instruction(
+        point: str,
+        task_type: str,
+        generation_strategy: dict[str, Any] | None,
+    ) -> str:
+        assessment = (
+            generation_strategy.get("assessment_strategy", {})
+            if isinstance(generation_strategy, dict)
+            else {}
+        )
+        error_targets = set(assessment.get("error_targets", []))
+        requirements: list[str] = []
+        if "concept_confusion" in error_targets:
+            requirements.append("加入相近概念对比辨析")
+        if "prerequisite_gap" in error_targets:
+            requirements.append("先检查前置知识")
+        if "procedural_error" in error_targets:
+            requirements.append("要求展示关键步骤")
+        if "application_failure" in error_targets:
+            requirements.append("加入变式和应用情境")
+        if "expression_gap" in error_targets:
+            requirements.append("加入简答表达与要点核对")
+        base = (
+            f"围绕{point}完成迁移应用和综合判断"
+            if task_type == "challenge_practice"
+            else f"围绕{point}复习概念、判断依据和应用步骤"
+        )
+        return f"{base}；{'；'.join(requirements)}。" if requirements else f"{base}。"
 
     def _build_mindmap_prompt(
         self,
@@ -1617,6 +2880,10 @@ class InteractiveClassroomGenerator:
         student_profile: dict[str, str] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
+        expected_extra_scene_count: int = 0,
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> list[ClassroomScene]:
         _raise_if_cancelled(cancel_check)
         slide_scenes = [scene for scene in scenes if scene.type == "slide"]
@@ -1626,29 +2893,27 @@ class InteractiveClassroomGenerator:
         # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
         # 密度：每 3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final 测验
         # 实际 mid 数 = max(0, (N-1)//3)，加 1 个 final
-        _n = len([s for s in slide_scenes if _is_quiz_source_scene(s)])
+        _n = len([s for i, s in enumerate(slide_scenes) if _is_quiz_source_scene(s, is_first_slide=(i == 0))])
         quiz_count_estimate = max(0, (_n - 1) // 3) + 1
 
-        result: list[ClassroomScene] = []
+        result_plan: list[tuple[str, ClassroomScene | int]] = []
+        quiz_jobs: list[dict[str, Any]] = []
         quiz_index = 1
         pending_slides: list[ClassroomScene] = []
-        quiz_source_slides = [scene for scene in slide_scenes if _is_quiz_source_scene(scene)]
+        quiz_source_slides = [
+            scene for i, scene in enumerate(slide_scenes)
+            if _is_quiz_source_scene(scene, is_first_slide=(i == 0))
+        ]
+        # 兜底：如果所有页面都被过滤为开场页，回退使用全部 slide（避免完全无测验）
+        if not quiz_source_slides and slide_scenes:
+            quiz_source_slides = list(slide_scenes)
         quiz_source_ids = {scene.id for scene in quiz_source_slides}
         total_quiz_source_slides = len(quiz_source_slides)
         quiz_source_index = 0
 
-        # 阶段 3 推进：开始生成互动
-        _emit_progress(
-            progress_callback,
-            stage="insert_quizzes",
-            stage_index=2,
-            scene_index=0,
-            scene_total=max(quiz_count_estimate, 1),
-        )
-
         for scene in slide_scenes:
             _raise_if_cancelled(cancel_check)
-            result.append(scene)
+            result_plan.append(("slide", scene))
             if scene.id not in quiz_source_ids:
                 continue
 
@@ -1661,34 +2926,95 @@ class InteractiveClassroomGenerator:
             enough_for_final_quiz = is_last and pending_slides
 
             if enough_for_mid_quiz or enough_for_final_quiz:
-                # 课堂主流程固定为全单选/多选 ——
-                # 之前 P1-3 强制每 3 场出 1 道简答，但简答由 LLM 评分（80 分阈值），
-                # 答错的题不能 100% 进错题本，破坏了"答错自动入错题本"的核心体验。
-                # 见 commit a8cf6ea 的回退说明。
-                require_short_answer = False
-                quiz_scene = self._build_quiz_scene(
-                    quiz_index=quiz_index,
-                    order=0,
-                    topic=topic,
-                    scenes=pending_slides,
-                    max_questions=2 if not is_last else 3,
-                    student_profile=student_profile,
-                    cancel_check=cancel_check,
-                    progress_callback=progress_callback,
-                    require_short_answer=require_short_answer,
+                # P1-3 调优：每 3 个测验页出 1 道简答题（quiz_index 3/6/9/...）
+                # 配合"默认不强制"prompt，理论 ~33% 测验含简答。
+                require_short_answer = (quiz_index % 3 == 0)
+                quiz_jobs.append(
+                    {
+                        "quiz_index": quiz_index,
+                        "scenes": list(pending_slides),
+                        "max_questions": 2 if not is_last else 3,
+                        "require_short_answer": require_short_answer,
+                    }
                 )
-                result.append(quiz_scene)
-                _emit_progress(
-                    progress_callback,
-                    stage="insert_quizzes",
-                    stage_index=2,
-                    scene_index=quiz_index,
-                    scene_total=max(quiz_count_estimate, 1),
-                    scene=quiz_scene,
-                )
+                result_plan.append(("quiz", quiz_index))
                 quiz_index += 1
                 pending_slides = []
 
+        if not quiz_jobs:
+            return [item for kind, item in result_plan if kind == "slide" and isinstance(item, ClassroomScene)]
+
+        expected_scene_total = len(result_plan) + max(0, expected_extra_scene_count)
+        _emit_progress(
+            progress_callback,
+            stage="insert_quizzes",
+            stage_index=2,
+            scene_index=0,
+            scene_total=len(quiz_jobs),
+            expected_scene_total=expected_scene_total,
+            expected_slide_total=len(slide_scenes),
+        )
+
+        quiz_order_by_index: dict[int, int] = {
+            int(item): order
+            for order, (kind, item) in enumerate(result_plan, start=1)
+            if kind == "quiz"
+        }
+        quiz_by_index: dict[int, ClassroomScene] = {}
+        completed_quiz_indexes: set[int] = set()
+        max_workers = min(DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY, len(quiz_jobs))
+        if self.llm_quiz_enabled:
+            self._get_quiz_generator()
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-quiz") as executor:
+            future_to_job = {
+                executor.submit(
+                    self._build_quiz_scene,
+                    quiz_index=job["quiz_index"],
+                    order=0,
+                    topic=topic,
+                    scenes=job["scenes"],
+                    max_questions=job["max_questions"],
+                    student_profile=student_profile,
+                    cancel_check=cancel_check,
+                    progress_callback=progress_callback,
+                    require_short_answer=job["require_short_answer"],
+                    critic_mode=critic_mode,
+                    knowledge_context=knowledge_context,
+                    semantic_reviewer=semantic_reviewer,
+                ): job
+                for job in quiz_jobs
+            }
+            next_emit_quiz_index = 1
+            for done_idx, future in enumerate(as_completed(future_to_job), start=1):
+                _raise_if_cancelled(cancel_check)
+                job = future_to_job[future]
+                quiz_scene = future.result()
+                quiz_index = int(job["quiz_index"])
+                completed_quiz_indexes.add(quiz_index)
+                if quiz_scene is not None:
+                    quiz_scene.order = quiz_order_by_index.get(quiz_index, quiz_scene.order)
+                    quiz_by_index[quiz_index] = quiz_scene
+                next_emit_quiz_index = _emit_ordered_ready_scenes(
+                    progress_callback,
+                    stage="insert_quizzes",
+                    stage_index=2,
+                    ready_scenes=quiz_by_index,
+                    completed_indexes=completed_quiz_indexes,
+                    next_emit_index=next_emit_quiz_index,
+                    scene_total=len(quiz_jobs),
+                    expected_scene_total=expected_scene_total,
+                    expected_slide_total=len(slide_scenes),
+                )
+
+        result: list[ClassroomScene] = []
+        for kind, item in result_plan:
+            if kind == "slide" and isinstance(item, ClassroomScene):
+                result.append(item)
+            elif kind == "quiz":
+                quiz_scene = quiz_by_index.get(int(item))
+                if quiz_scene is not None:
+                    result.append(quiz_scene)
+        self._renumber_quiz_scenes(result, topic)
         return result
 
     def generate(
@@ -1700,9 +3026,12 @@ class InteractiveClassroomGenerator:
         ppt_job_id: str = "",
         student_profile: dict[str, Any] | None = None,
         generation_strategy: dict[str, Any] | None = None,
+        knowledge_context: dict[str, Any] | None = None,
         lineage: dict[str, Any] | None = None,
         cancel_check: CancelCheck | None = None,
         progress_callback: ProgressCallback | None = None,
+        critic_mode: str = "standard",
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_check)
         now = datetime.now().isoformat()
@@ -1724,15 +3053,28 @@ class InteractiveClassroomGenerator:
             "next_lesson" if parent_classroom_id else "root"
         )
         normalized_strategy = _normalize_generation_strategy(generation_strategy)
+        normalized_critic_mode = normalize_critic_mode(critic_mode)
         normalized_profile = (
             self._profile_from_generation_strategy(normalized_strategy)
             if normalized_strategy
             else _normalize_student_profile(student_profile)
         )
+        audio_dir = self.storage.audio_dir(user_id, classroom_id)
+        tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
 
         if ppt_job_id:
             scenes = self._build_slide_scenes_from_ppt_job(
-                user_id, ppt_job_id, normalized_profile, cancel_check, progress_callback
+                user_id,
+                ppt_job_id,
+                normalized_profile,
+                cancel_check,
+                progress_callback,
+                tts,
+                audio_dir,
+                classroom_id,
+                normalized_critic_mode,
+                knowledge_context,
+                semantic_reviewer,
             )
             if not scenes:
                 scenes = self._build_fallback_slide_scenes(
@@ -1744,23 +3086,49 @@ class InteractiveClassroomGenerator:
             )
 
         _raise_if_cancelled(cancel_check)
-        scenes = self._insert_quiz_scenes(topic, scenes, normalized_profile, cancel_check, progress_callback)
-
-        # 阶段 2.5：在末尾追加一个 mindmap 场景（知识结构回顾）
-        # 仅当有 >= 2 个 slide 场景时才有意义
-        if sum(1 for s in scenes if s.type == "slide") >= 2:
-            mindmap_scene = self._build_mindmap_scene(
-                topic, scenes, normalized_profile, cancel_check
-            )
-            if mindmap_scene is not None:
-                _emit_progress(
-                    progress_callback,
-                    stage="build_scenes",
-                    stage_index=1,
-                    scene_index=len(scenes),
-                    scene_total=len(scenes) + 1,
+        slide_count = sum(1 for s in scenes if s.type == "slide")
+        if slide_count >= 2:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="classroom-mindmap") as executor:
+                mindmap_future = executor.submit(
+                    self._build_mindmap_scene,
+                    topic,
+                    list(scenes),
+                    normalized_profile,
+                    cancel_check,
                 )
-                scenes.append(mindmap_scene)
+                scenes = self._insert_quiz_scenes(
+                    topic,
+                    scenes,
+                    normalized_profile,
+                    cancel_check,
+                    progress_callback,
+                    expected_extra_scene_count=1,
+                    critic_mode=normalized_critic_mode,
+                    knowledge_context=knowledge_context,
+                    semantic_reviewer=semantic_reviewer,
+                )
+                _raise_if_cancelled(cancel_check)
+                mindmap_scene = mindmap_future.result()
+                if mindmap_scene is not None:
+                    _emit_progress(
+                        progress_callback,
+                        stage="build_scenes",
+                        stage_index=1,
+                        scene_index=len(scenes),
+                        scene_total=len(scenes) + 1,
+                    )
+                    scenes.append(mindmap_scene)
+        else:
+            scenes = self._insert_quiz_scenes(
+                topic,
+                scenes,
+                normalized_profile,
+                cancel_check,
+                progress_callback,
+                critic_mode=normalized_critic_mode,
+                knowledge_context=knowledge_context,
+                semantic_reviewer=semantic_reviewer,
+            )
 
         for idx, scene in enumerate(scenes, start=1):
             _raise_if_cancelled(cancel_check)
@@ -1788,6 +3156,10 @@ class InteractiveClassroomGenerator:
             lesson_index=lesson_index,
             lesson_kind=lesson_kind,
             source={"type": "ppt_svg_job" if ppt_job_id else "topic_fallback", "job_id": ppt_job_id},
+            critic_summary=self._aggregate_critic_summary(
+                normalized_critic_mode,
+                scenes,
+            ),
             agents=[
                 {
                     "id": "teacher",
@@ -1798,18 +3170,15 @@ class InteractiveClassroomGenerator:
                     "persona": "讲解清晰，先讲重点，再做练习。",
                 }
             ],
-            knowledge_points=[topic],
+            knowledge_points=self._merge_knowledge_points([topic], knowledge_context),
             scenes=scenes,
         )
-
-        audio_dir = self.storage.audio_dir(user_id, classroom_id)
-        tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
 
         # 阶段 4：合成音频（并发）
         speech_actions: list[tuple[ClassroomScene, ClassroomAction]] = []
         for scene in classroom.scenes:
             for action in scene.actions:
-                if action.type == "speech":
+                if action.type == "speech" and not action.audio_url:
                     speech_actions.append((scene, action))
         _emit_progress(
             progress_callback,
@@ -1824,6 +3193,9 @@ class InteractiveClassroomGenerator:
             # 保留 scene 引用以便 on_action_done 回写 audio_url
             action_by_id: dict[str, ClassroomAction] = {
                 a.id: a for _, a in speech_actions
+            }
+            scene_by_action_id: dict[str, ClassroomScene] = {
+                a.id: scene for scene, a in speech_actions
             }
             tts_input: list[tuple[str, str]] = [
                 (a.id, a.text) for _, a in speech_actions
@@ -1842,6 +3214,7 @@ class InteractiveClassroomGenerator:
                     action.audio_url = (
                         f"/api/interactive-classroom/{classroom_id}/audio/{filename}"
                     )
+                scene = scene_by_action_id.get(action_id)
                 # 推 progress（按完成顺序，不一定是输入顺序）
                 _emit_progress(
                     progress_callback,
@@ -1849,6 +3222,7 @@ class InteractiveClassroomGenerator:
                     stage_index=3,
                     scene_index=done_idx,
                     scene_total=total,
+                    scene=scene,
                 )
 
             # ClassroomGenerationCancelled 由并行函数内部透传，asyncio.run 会重新抛

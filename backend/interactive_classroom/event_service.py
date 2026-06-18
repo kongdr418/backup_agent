@@ -204,6 +204,73 @@ def create_classroom_completed_event(
     )
 
 
+def create_mistake_mastered_event(
+    user_id: str,
+    classroom_id: str,
+    scene_id: str,
+    course_id: str,
+    mistake: dict[str, Any],
+) -> LearningEvent:
+    knowledge_point = str(mistake.get("knowledge_point_name") or "").strip()
+    mistake_id = str(mistake.get("id") or "")
+    return LearningEvent(
+        id=_new_event_id(),
+        type="mistake_mastered",
+        user_id=user_id,
+        classroom_id=classroom_id,
+        scene_id=scene_id,
+        course_id=course_id,
+        created_at=_now_iso(),
+        knowledge_points=[knowledge_point] if knowledge_point else [],
+        payload={
+            "mistake_id": mistake_id,
+            "course_name": mistake.get("course_name", ""),
+            "knowledge_point_id": mistake.get("knowledge_point_id"),
+        },
+        dedupe_key=_build_dedupe_key("mistake_mastered", classroom_id, scene_id, mistake_id),
+    )
+
+
+def create_flashcard_reviewed_event(
+    user_id: str,
+    classroom_id: str,
+    scene_id: str,
+    course_id: str,
+    flashcard: dict[str, Any],
+    grade: int,
+    ) -> LearningEvent:
+    knowledge_point = str(flashcard.get("knowledge_point_name") or "").strip()
+    card_id = str(flashcard.get("id") or "")
+    sm2 = flashcard.get("sm2") or {}
+    repetitions = sm2.get("repetitions", 0)
+    review_marker = flashcard.get("last_reviewed_at") or sm2.get("due_date") or repetitions
+    return LearningEvent(
+        id=_new_event_id(),
+        type="flashcard_reviewed",
+        user_id=user_id,
+        classroom_id=classroom_id,
+        scene_id=scene_id,
+        course_id=course_id,
+        created_at=_now_iso(),
+        knowledge_points=[knowledge_point] if knowledge_point else [],
+        payload={
+            "flashcard_id": card_id,
+            "grade": grade,
+            "repetitions": repetitions,
+            "source": flashcard.get("source", ""),
+            "source_id": flashcard.get("source_id"),
+            "course_name": flashcard.get("course_name", ""),
+            "knowledge_point_id": flashcard.get("knowledge_point_id"),
+        },
+        dedupe_key=_build_dedupe_key(
+            "flashcard_reviewed",
+            classroom_id,
+            scene_id,
+            f"{card_id}:{review_marker}:{grade}",
+        ),
+    )
+
+
 def record_event(
     storage: ClassroomStorage,
     event: LearningEvent,

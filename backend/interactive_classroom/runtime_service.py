@@ -7,6 +7,8 @@ from learner_profile.profile_agent import build_course_id
 
 from .event_service import (
     create_classroom_completed_event,
+    create_flashcard_reviewed_event,
+    create_mistake_mastered_event,
     create_quiz_submitted_event,
     create_recommended_task_completed_event,
     create_recommended_task_opened_event,
@@ -25,6 +27,14 @@ from .report_service import (
 from .tts_service import ClassroomTTSService
 
 
+def _format_answer_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return " / ".join(str(item).strip() for item in value if str(item).strip())
+    return str(value).strip()
+
+
 class ClassroomRuntimeService:
     def __init__(
         self,
@@ -37,12 +47,14 @@ class ClassroomRuntimeService:
         completion_service: Any,
         build_tts_config: Callable[..., dict],
         logger: Any,
+        study_tools_storage: Any | None = None,
     ) -> None:
         self.classroom_storage = classroom_storage
         self.learner_profile_storage = learner_profile_storage
         self.profile_agent = profile_agent
         self.course_knowledge_retriever = course_knowledge_retriever
         self.practice_service = practice_service
+        self.study_tools_storage = study_tools_storage
         self.completion_service = completion_service
         self.build_tts_config = build_tts_config
         self.logger = logger
@@ -92,6 +104,14 @@ class ClassroomRuntimeService:
             eval_result=eval_result,
             answers=answers,
         )
+        mistake_sync = self._sync_wrong_answers_to_mistakes(
+            user_id=user_id,
+            classroom_id=classroom_id,
+            classroom=classroom,
+            scene=scene,
+            scene_id=scene_id,
+            eval_result=eval_result,
+        )
         feedback_action = self._build_feedback_action(
             user_id=user_id,
             classroom_id=classroom_id,
@@ -107,6 +127,7 @@ class ClassroomRuntimeService:
             "earned_points": eval_result.get("earned_points", 0),
             "total_points": eval_result.get("total_points", 0),
             "results": eval_result.get("results", []),
+            "mistake_sync": mistake_sync,
             "feedback_action": feedback_action,
         }
 
@@ -330,6 +351,23 @@ class ClassroomRuntimeService:
                 quiz_total=int(payload.get("quiz_total", 0)),
                 answered_total=int(payload.get("answered_total", 0)),
             )
+        elif event_type == "mistake_mastered":
+            event = create_mistake_mastered_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                scene_id=scene_id,
+                course_id=course_id,
+                mistake=payload.get("mistake", {}),
+            )
+        elif event_type == "flashcard_reviewed":
+            event = create_flashcard_reviewed_event(
+                user_id=user_id,
+                classroom_id=classroom_id,
+                scene_id=scene_id,
+                course_id=course_id,
+                flashcard=payload.get("flashcard", {}),
+                grade=int(payload.get("grade", 0)),
+            )
         else:
             raise ValueError(f"不支持的 event_type: {event_type}")
 
@@ -337,6 +375,76 @@ class ClassroomRuntimeService:
         if event_type == "classroom_completed":
             self.completion_service.handle_completion(user_id, classroom)
         return saved
+
+    def _sync_wrong_answers_to_mistakes(
+        self,
+        *,
+        user_id: str,
+        classroom_id: str,
+        classroom: dict,
+        scene: dict,
+        scene_id: str,
+        eval_result: dict,
+    ) -> dict[str, int]:
+        if self.study_tools_storage is None:
+            return {"added": 0, "deduped": 0}
+
+        questions = {
+            str(question.get("id") or ""): question
+            for question in scene.get("content", {}).get("questions", [])
+            if isinstance(question, dict)
+        }
+        course_name = classroom.get("course") or classroom.get("topic") or ""
+        course_id = build_course_id(course_name) if course_name else ""
+        items: list[dict[str, Any]] = []
+
+        for result in eval_result.get("results", []):
+            if result.get("correct") is not False:
+                continue
+            question_id = str(result.get("question_id") or "")
+            if not question_id:
+                continue
+            question = questions.get(question_id, {})
+            items.append(
+                {
+                    "source": "classroom",
+                    "source_evidence_id": f"{classroom_id}:{scene_id}:{question_id}:wrong",
+                    "source_ref": {
+                        "classroom_id": classroom_id,
+                        "scene_id": scene_id,
+                        "question_id": question_id,
+                    },
+                    "course_id": course_id,
+                    "course_name": course_name,
+                    "knowledge_point_name": (
+                        result.get("knowledge_point")
+                        or question.get("knowledge_point")
+                        or ""
+                    ),
+                    "stem": question.get("question") or "",
+                    "question_type": question.get("type") or "",
+                    "options": question.get("options") or [],
+                    "correct_answer": _format_answer_text(result.get("correct_answer")),
+                    "user_answer": _format_answer_text(result.get("your_answer")),
+                    "analysis": result.get("analysis") or question.get("analysis") or "",
+                    "tags": ["classroom"],
+                }
+            )
+
+        if not items:
+            return {"added": 0, "deduped": 0}
+        try:
+            outcome = self.study_tools_storage.bulk_add_mistakes(user_id, items)
+            return {
+                "added": int(outcome.get("added_count", 0) or 0),
+                "deduped": int(outcome.get("deduped_count", 0) or 0),
+            }
+        except Exception:
+            self.logger.warning(
+                "[INTERACTIVE-CLASSROOM] study_tools_mistake_sync_failed",
+                exc_info=True,
+            )
+            return {"added": 0, "deduped": 0}
 
     def _record_answer_events(
         self,

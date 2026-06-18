@@ -265,6 +265,7 @@ defineExpose({})
 .hue-ppt { --hue-active: var(--nav-ppt); }
 
 .hue-classroom { --hue-active: var(--nav-classroom); }
+.hue-study { --hue-active: var(--nav-study); }
 .hue-library { --hue-active: var(--nav-library); }
 .hue-memory { --hue-active: var(--nav-memory); }
 .hue-settings { --hue-active: var(--nav-settings); }
