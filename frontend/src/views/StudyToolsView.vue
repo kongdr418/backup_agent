@@ -66,6 +66,15 @@
             <Layers class="w-3.5 h-3.5" />
             闪卡复习
           </button>
+          <button
+            class="study-tab-btn"
+            :class="activeTab === 'labs' ? 'study-tab-btn-active' : ''"
+            type="button"
+            @click="activeTab = 'labs'"
+          >
+            <Code2 class="w-3.5 h-3.5" />
+            实操实验
+          </button>
         </div>
 
         <!-- 主体 Tab -->
@@ -744,6 +753,143 @@
                 </div>
               </div>
             </n-tab-pane>
+
+            <n-tab-pane name="labs" tab="实操实验">
+              <div class="practice-lab-layout pt-2">
+                <section class="practice-lab-builder">
+                  <div class="practice-lab-section-head">
+                    <div>
+                      <div class="practice-lab-title">生成实操资产</div>
+                      <div class="practice-lab-subtitle">动画演示 / 视频分镜 / 代码练习</div>
+                    </div>
+                    <n-tag size="small" :bordered="false" type="success">课堂可嵌入</n-tag>
+                  </div>
+
+                  <div class="practice-type-switch">
+                    <button
+                      type="button"
+                      class="practice-type-btn"
+                      :class="labForm.type === 'animation' ? 'practice-type-btn-active' : ''"
+                      @click="labForm.type = 'animation'"
+                    >
+                      <Film class="w-3.5 h-3.5" />
+                      动画演示
+                    </button>
+                    <button
+                      type="button"
+                      class="practice-type-btn"
+                      :class="labForm.type === 'code' ? 'practice-type-btn-active' : ''"
+                      @click="labForm.type = 'code'"
+                    >
+                      <Code2 class="w-3.5 h-3.5" />
+                      代码实操
+                    </button>
+                  </div>
+
+                  <n-input v-model:value="labForm.topic" size="small" placeholder="主题，例如：梯度下降可视化 / 二分查找" />
+                  <n-input v-model:value="labForm.course" size="small" placeholder="课程名称，例如：人工智能导论" />
+                  <n-input v-model:value="labForm.knowledgePointsText" size="small" placeholder="知识点，用顿号或逗号分隔" />
+                  <n-input
+                    v-if="labForm.type === 'code'"
+                    v-model:value="labForm.starterCode"
+                    type="textarea"
+                    :autosize="{ minRows: 6, maxRows: 10 }"
+                    placeholder="可选：function solve(input) { return Number(input) * Number(input) }"
+                  />
+
+                  <n-button
+                    type="primary"
+                    size="small"
+                    :loading="labsLoading"
+                    :disabled="!labForm.topic.trim()"
+                    @click="onGenerateLab"
+                  >
+                    <Play class="w-3.5 h-3.5 mr-1" />
+                    生成实验
+                  </n-button>
+                </section>
+
+                <section class="practice-lab-list-panel">
+                  <div class="practice-lab-section-head">
+                    <div>
+                      <div class="practice-lab-title">实验资产</div>
+                      <div class="practice-lab-subtitle">共 {{ labsTotal }} 个</div>
+                    </div>
+                    <n-button quaternary size="tiny" @click="fetchLabs">
+                      <RefreshCw class="w-3.5 h-3.5" />
+                    </n-button>
+                  </div>
+
+                  <div v-if="labsLoading && labs.length === 0" class="text-center text-[12px] text-ink-3 py-8">加载中...</div>
+                  <EmptyState
+                    v-else-if="labs.length === 0"
+                    :icon="Code2"
+                    title="还没有实操实验"
+                    description="生成一个动画演示或代码练习，用来补齐多模态与动手学习场景"
+                  />
+                  <div v-else class="practice-lab-list">
+                    <button
+                      v-for="lab in labs"
+                      :key="lab.id"
+                      type="button"
+                      class="practice-lab-card"
+                      :class="selectedLabId === lab.id ? 'practice-lab-card-active' : ''"
+                      @click="selectedLabId = lab.id"
+                    >
+                      <div class="practice-lab-card-main">
+                        <span class="practice-lab-kind">
+                          <component :is="lab.type === 'code' ? Code2 : Film" class="w-3 h-3" />
+                          {{ lab.type === 'code' ? '代码实操' : '动画演示' }}
+                          · {{ lab.content.generation_mode === 'llm' ? 'LLM 生成' : '模板回退' }}
+                        </span>
+                        <strong>{{ lab.title }}</strong>
+                        <span>{{ lab.summary }}</span>
+                      </div>
+                      <n-button size="tiny" quaternary type="error" @click.stop="onDeleteLab(lab.id)">
+                        <Trash2 class="w-3 h-3" />
+                      </n-button>
+                    </button>
+                  </div>
+                </section>
+              </div>
+
+              <section v-if="selectedLab" class="practice-lab-preview">
+                <div class="practice-lab-preview-head">
+                  <div>
+                    <div class="practice-lab-title">{{ selectedLab.title }}</div>
+                    <div class="practice-lab-subtitle">{{ selectedLab.course || '通用课程' }} · {{ selectedLab.topic }}</div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <n-tag size="small" :bordered="false" :type="selectedLab.content.generation_mode === 'llm' ? 'success' : 'warning'">
+                      {{ selectedLab.content.generation_mode === 'llm' ? 'LLM 生成' : '模板回退' }}
+                    </n-tag>
+                    <n-tag
+                      v-for="point in selectedLab.knowledge_points.slice(0, 3)"
+                      :key="point"
+                      size="small"
+                      :bordered="false"
+                    >
+                      {{ point }}
+                    </n-tag>
+                  </div>
+                </div>
+
+                <div v-if="selectedLab.type === 'animation'" class="video-prompt-box">
+                  <MonitorPlay class="w-4 h-4 text-hue-study" />
+                  <div>
+                    <div class="text-[12px] font-medium text-ink-1 mb-1">视频生成提示词</div>
+                    <div class="text-[12px] text-ink-2 leading-relaxed">{{ selectedLab.content.video_prompt }}</div>
+                  </div>
+                </div>
+
+                <iframe
+                  :key="`${selectedLab.id}-${selectedLab.updated_at}`"
+                  class="practice-lab-frame"
+                  sandbox="allow-scripts"
+                  :srcdoc="selectedLab.content.html || ''"
+                />
+              </section>
+            </n-tab-pane>
           </n-tabs>
         </div>
         </main>
@@ -1100,7 +1246,7 @@ import {
 import {
   BookMarked, Calendar, Check, CheckCheck, CheckSquare, ChevronRight, Eye, FolderOpen,
   FolderPlus, Layers, MoreHorizontal, Paperclip, PenLine, Pencil, Play, Plus, RefreshCw, RotateCw, Search, Send,
-  Settings, Tag, Trash2, X as XIcon,
+  Settings, Tag, Trash2, X as XIcon, Code2, Film, MonitorPlay,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -1108,7 +1254,9 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import AddMistakeModal from '@/components/studyTools/AddMistakeModal.vue'
 import AddFlashcardModal from '@/components/studyTools/AddFlashcardModal.vue'
 import { useStudyToolsStore } from '@/stores/studyToolsStore'
-import type { FlashcardItem, MistakeCollection, MistakeItem } from '@/api/studyTools'
+import { useSettingStore } from '@/stores/settingStore'
+import type { FlashcardItem, MistakeCollection, MistakeItem, PracticeLabItem, PracticeLabType } from '@/api/studyTools'
+import { createPracticeLab, deletePracticeLab, listPracticeLabs } from '@/api/studyTools'
 import {
   formatMistakeSourceLabel,
   formatMistakeTagLabel,
@@ -1117,10 +1265,11 @@ import {
 } from '@/utils/studyToolsDisplay'
 
 const store = useStudyToolsStore()
+const settingStore = useSettingStore()
 const message = useMessage()
 const dialog = useDialog()
 
-type TabName = 'mistakes' | 'flashcards'
+type TabName = 'mistakes' | 'flashcards' | 'labs'
 const activeTab = ref<TabName>('mistakes')
 
 // 错题过滤(NSelect 不接 boolean,改用字符串映射)
@@ -1163,6 +1312,113 @@ const batchMultiAnswer = ref<string[]>([])
 const batchRevealed = ref(false)
 const batchDoneCount = ref(0)
 const batchCorrectCount = ref(0)
+
+// ─── 实操实验室 ───
+const labs = ref<PracticeLabItem[]>([])
+const labsTotal = ref(0)
+const labsLoading = ref(false)
+const selectedLabId = ref('')
+const labForm = reactive<{
+  type: PracticeLabType
+  topic: string
+  course: string
+  knowledgePointsText: string
+  starterCode: string
+}>({
+  type: 'animation',
+  topic: '',
+  course: '',
+  knowledgePointsText: '',
+  starterCode: '',
+})
+
+const selectedLab = computed(() => labs.value.find((lab) => lab.id === selectedLabId.value) || labs.value[0] || null)
+
+function parseKnowledgePoints(text: string): string[] {
+  return text
+    .split(/[，,、/|]/)
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .slice(0, 10)
+}
+
+function isRequestTimeout(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '')
+  return /timeout|exceeded|超时/i.test(message)
+}
+
+async function fetchLabs() {
+  labsLoading.value = true
+  try {
+    const result = await listPracticeLabs({ page_size: 50 })
+    labs.value = result.items
+    labsTotal.value = result.total
+    if (!selectedLabId.value && result.items[0]) selectedLabId.value = result.items[0].id
+    if (selectedLabId.value && !result.items.some((lab) => lab.id === selectedLabId.value)) {
+      selectedLabId.value = result.items[0]?.id || ''
+    }
+  }
+  catch (err) {
+    console.error(err)
+    message.error('实操实验加载失败')
+  }
+  finally {
+    labsLoading.value = false
+  }
+}
+
+async function onGenerateLab() {
+  const topic = labForm.topic.trim()
+  if (!topic) return
+  labsLoading.value = true
+  try {
+    const lab = await createPracticeLab({
+      type: labForm.type,
+      topic,
+      course: labForm.course.trim(),
+      knowledge_points: parseKnowledgePoints(labForm.knowledgePointsText),
+      starter_code: labForm.type === 'code' ? labForm.starterCode : undefined,
+      content_model: settingStore.settings.content_model,
+      content_api_key: settingStore.getEffectiveContentApiKey(),
+      content_base_url: settingStore.getEffectiveContentBaseUrl(),
+      content_provider_type: settingStore.getContentProviderType(),
+    })
+    selectedLabId.value = lab.id
+    await fetchLabs()
+    selectedLabId.value = lab.id
+    await nextTick()
+    message.success('实操实验已生成')
+  }
+  catch (err) {
+    console.error(err)
+    if (isRequestTimeout(err)) {
+      message.warning('生成耗时较长，后端可能仍在完成，稍后自动刷新列表')
+      window.setTimeout(() => {
+        void fetchLabs()
+      }, 8000)
+    }
+    else {
+      message.error('生成失败，请检查模型配置或稍后重试')
+    }
+  }
+  finally {
+    labsLoading.value = false
+  }
+}
+
+async function onDeleteLab(id: string) {
+  try {
+    await deletePracticeLab(id)
+    labs.value = labs.value.filter((lab) => lab.id !== id)
+    labsTotal.value = Math.max(0, labsTotal.value - 1)
+    if (selectedLabId.value === id) selectedLabId.value = labs.value[0]?.id || ''
+    message.success('实验已删除')
+  }
+  catch (err) {
+    console.error(err)
+    message.error('删除失败')
+  }
+}
 
 // ─── 错题下拉菜单 ───
 const mistakeMenuId = ref<string | null>(null)
@@ -1407,6 +1663,9 @@ async function refreshAll() {
       store.fetchMistakes({ page_size: 50 }),
       store.fetchFlashcards({ page_size: 50 }),
       store.fetchDueCards(50),
+      fetchLabs(),
+      settingStore.fetchSettings(),
+      settingStore.fetchProviders(),
     ])
   } catch (e) {
     message.error(e instanceof Error ? e.message : '加载失败')
@@ -2935,6 +3194,135 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 .grade-btn-3:hover,
 .grade-btn-5:hover { background: rgb(var(--study-accent-rgb) / 0.045) !important; }
 
+/* ============ 实操实验室 ============ */
+.practice-lab-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 14px;
+}
+.practice-lab-builder,
+.practice-lab-list-panel,
+.practice-lab-preview {
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-surface-rgb));
+  border-radius: 8px;
+  padding: 14px;
+}
+.practice-lab-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-self: start;
+}
+.practice-lab-section-head,
+.practice-lab-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.practice-lab-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: rgb(var(--ink-1-rgb));
+}
+.practice-lab-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgb(var(--ink-3-rgb));
+}
+.practice-type-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.practice-type-btn {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 6px;
+  background: rgb(var(--bg-soft-rgb));
+  color: rgb(var(--ink-2-rgb));
+  font-size: 12px;
+}
+.practice-type-btn-active {
+  border-color: rgb(var(--study-accent-rgb) / 0.32);
+  background: rgb(var(--study-accent-rgb) / 0.08);
+  color: rgb(var(--ink-1-rgb));
+}
+.practice-lab-list {
+  display: grid;
+  gap: 10px;
+}
+.practice-lab-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgb(var(--line-rgb));
+  background: rgb(var(--bg-soft-rgb));
+  border-radius: 8px;
+  padding: 12px;
+}
+.practice-lab-card:hover,
+.practice-lab-card-active {
+  border-color: rgb(var(--study-accent-rgb) / 0.28);
+  background: rgb(var(--study-accent-rgb) / 0.045);
+}
+.practice-lab-card-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.practice-lab-card-main strong {
+  color: rgb(var(--ink-1-rgb));
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.practice-lab-card-main span:not(.practice-lab-kind) {
+  color: rgb(var(--ink-3-rgb));
+  font-size: 12px;
+  line-height: 1.45;
+}
+.practice-lab-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgb(var(--study-accent-rgb));
+  font-size: 11px;
+  font-weight: 600;
+}
+.practice-lab-preview {
+  margin-top: 14px;
+}
+.video-prompt-box {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgb(var(--study-accent-rgb) / 0.16);
+  background: rgb(var(--study-accent-rgb) / 0.035);
+  border-radius: 8px;
+}
+.practice-lab-frame {
+  width: 100%;
+  height: min(78vh, 760px);
+  min-height: 680px;
+  border: 1px solid rgb(var(--line-rgb));
+  border-radius: 8px;
+  background: #fff;
+}
+
 /* ============ Tabs 状态容器：切换入口只保留左侧栏 ============ */
 .study-tabs :deep(.n-tabs-nav) {
   display: none;
@@ -2952,7 +3340,8 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
     padding-top: 6px;
   }
   .study-stats-grid,
-  .redo-result-layout {
+  .redo-result-layout,
+  .practice-lab-layout {
     grid-template-columns: 1fr;
   }
   .study-panel {
@@ -2984,6 +3373,10 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   }
   .flash-face {
     padding: 20px 16px;
+  }
+  .practice-lab-frame {
+    height: 620px;
+    min-height: 520px;
   }
 }
 </style>

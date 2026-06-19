@@ -80,6 +80,23 @@
           />
         </div>
 
+        <div v-else-if="currentScene.type === 'animation_lab'" class="animation-lab-wrap">
+          <div class="animation-lab-panel">
+            <div class="animation-lab-head">
+              <div>
+                <div class="animation-lab-kicker">互动动画实验</div>
+                <h2>{{ currentScene.title }}</h2>
+                <p>{{ animationLabSummary || '通过参数调节观察关键变量之间的关系。' }}</p>
+              </div>
+            </div>
+            <iframe
+              class="animation-lab-frame"
+              sandbox="allow-scripts"
+              :srcdoc="animationLabHtml"
+            />
+          </div>
+        </div>
+
         <div v-else-if="currentScene.type === 'quiz'" class="quiz-wrap">
           <div v-for="(q, qIndex) in questions" :key="q.id" class="question-card">
             <div class="question-head">
@@ -774,6 +791,100 @@ const sceneMarkmapMd = computed(() => {
   return (content.markmap_md as string) || ''
 })
 
+const ANIMATION_LAB_EMBED_CSS = `
+<style id="ai-creator-animation-lab-embed">
+html,
+body {
+  width: 100% !important;
+  min-height: 100% !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  background: #ffffff !important;
+}
+body {
+  box-sizing: border-box !important;
+  padding: 10px !important;
+  color: #0f172a !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+h1,
+h2 {
+  margin: 0 0 8px !important;
+  color: #2D5016 !important;
+  font-size: clamp(18px, 2.3vw, 24px) !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+}
+body > h1:first-child,
+body > h2:first-child {
+  display: none !important;
+}
+.container,
+main,
+.app,
+#app {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+canvas,
+svg {
+  display: block !important;
+  width: 100% !important;
+  max-width: min(100%, calc(166.67vh - 226px)) !important;
+  height: auto !important;
+  max-height: calc(100vh - 136px) !important;
+  margin: 0 auto !important;
+}
+.controls,
+form {
+  margin-top: 8px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px 12px !important;
+}
+label,
+.info,
+p {
+  margin-block: 4px !important;
+  line-height: 1.38 !important;
+}
+input[type="range"] {
+  width: min(520px, 58vw) !important;
+}
+button {
+  min-height: 32px !important;
+}
+</style>
+`
+
+function withAnimationLabEmbedCss(html: string): string {
+  if (!html) return ''
+  if (html.includes('ai-creator-animation-lab-embed')) return html
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${ANIMATION_LAB_EMBED_CSS}</head>`)
+  }
+  return `${ANIMATION_LAB_EMBED_CSS}${html}`
+}
+
+const animationLabHtml = computed(() => {
+  const content = currentScene.value?.content || {}
+  return withAnimationLabEmbedCss((content.html as string) || '')
+})
+
+const animationLabSummary = computed(() => {
+  const content = currentScene.value?.content || {}
+  return (content.summary as string) || ''
+})
+
 const questions = computed(() => {
   const content = currentScene.value?.content || {}
   return ((content.questions as InteractiveClassroomQuestion[]) || [])
@@ -860,6 +971,7 @@ const lastContentSceneIndex = computed(() => Math.max(0, baseScenes.value.length
 const sceneKindLabel = computed(() => {
   if (currentScene.value?.type === 'quiz') return '课堂互动'
   if (currentScene.value?.type === 'report') return '学习档案'
+  if (currentScene.value?.type === 'animation_lab') return '动画实验'
   return '教师讲解'
 })
 
@@ -1891,6 +2003,7 @@ function formatSceneTitle(scene: InteractiveClassroomScene): string {
 function sceneTypeLabel(type: string) {
   if (type === 'quiz') return '测验'
   if (type === 'mindmap') return '知识结构'
+  if (type === 'animation_lab') return '动画实验'
   if (type === 'report') return canOpenReportScene.value ? '报告' : '未解锁'
   return '讲解'
 }
@@ -2635,6 +2748,68 @@ async function runTask(task: ClassroomRecommendedTask) {
   min-height: 360px;
   display: flex;
   flex-direction: column;
+}
+
+.animation-lab-wrap {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+}
+
+.animation-lab-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.animation-lab-head {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  border-left: 3px solid rgba(45, 80, 22, 0.38);
+  padding: 4px 0 4px 12px;
+}
+
+.animation-lab-kicker {
+  color: #2D5016;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.animation-lab-head h2 {
+  margin: 0;
+  color: rgb(var(--ink-1-rgb));
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.animation-lab-head p {
+  margin: 4px 0 0;
+  color: rgb(var(--ink-3-rgb));
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.animation-lab-frame {
+  width: 100%;
+  flex: 1;
+  height: clamp(240px, calc(100vh - 430px), 560px);
+  min-height: 240px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .quiz-wrap {
@@ -3798,6 +3973,15 @@ async function runTask(task: ClassroomRecommendedTask) {
   .result-box {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .animation-lab-head {
+    min-height: auto;
+  }
+
+  .animation-lab-frame {
+    height: clamp(300px, 58vh, 560px);
+    min-height: 300px;
   }
 
   .report-grid,

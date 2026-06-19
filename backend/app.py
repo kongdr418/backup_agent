@@ -378,13 +378,43 @@ def _resolve_classroom_critic_mode(data: dict) -> str:
 
 def _resolve_content_llm_request_config(data: dict) -> dict[str, str]:
     """解析一次请求里的 LLM 配置，并在缺 key / base_url / provider_type 时做 provider 回退。"""
+    saved_settings = {}
+    try:
+        saved_settings = (
+            get_memory_manager()
+            .get_config()
+            .get('content_settings', {})
+        )
+    except Exception:
+        saved_settings = {}
+
     content_model = (data.get('content_model') or '').strip()
     content_api_key = data.get('content_api_key') or ''
     content_base_url = (data.get('content_base_url') or '').strip()
     content_provider_type = (data.get('content_provider_type') or '').strip()
+    content_provider_id = (data.get('content_provider') or '').strip()
 
+    if not content_model:
+        content_model = (
+            saved_settings.get('content_model')
+            or DEFAULT_SETTINGS.get('content_model')
+            or ''
+        ).strip()
+    if not content_provider_id:
+        content_provider_id = (
+            saved_settings.get('content_provider')
+            or DEFAULT_SETTINGS.get('content_provider')
+            or ''
+        ).strip()
+
+    pid = ''
+    provider = None
     if content_model:
         pid, provider, _ = _get_provider_for_model(content_model)
+    if content_provider_id and content_provider_id in PROVIDERS:
+        pid = content_provider_id
+        provider = PROVIDERS.get(content_provider_id)
+    if content_model:
         if not content_api_key and pid and pid in SERVER_API_KEYS:
             content_api_key = SERVER_API_KEYS[pid]
         if not content_base_url and provider:
@@ -428,6 +458,8 @@ app.register_blueprint(create_study_tools_blueprint(
     get_storage=lambda: STUDY_TOOLS_STORAGE,
     logger=request_logger,
     get_classroom_storage=lambda: CLASSROOM_STORAGE,
+    llm_call=content_llm_call,
+    resolve_content_llm_request_config=_resolve_content_llm_request_config,
 ))
 
 

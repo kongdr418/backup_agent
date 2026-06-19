@@ -34,6 +34,7 @@ CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[dict[str, Any]], None]
 DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY = 10
 DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY = 4
+DEFAULT_ANIMATION_LAB_MAX_TOKENS = 6500
 
 
 def _emit_progress(
@@ -301,6 +302,39 @@ def _is_decorative_quiz_text(value: str) -> bool:
     return False
 
 
+def _is_low_quality_quiz_fragment(value: str) -> bool:
+    text = _clean_text(value)
+    if not text or _is_decorative_quiz_text(text):
+        return True
+    if re.match(r"^[—\-–_·•、：:，,\s]+", text):
+        return True
+    if re.match(r"^(情况[一二三四五六七八九十\d]+|第[一二三四五六七八九十\d]+种情况)\s*[：:、，,]?", text):
+        return True
+    if re.search(r"(同学们|大家|我们来看|我们来看看|接下来|首先|然后|现在|这里|本页|这一页)", text):
+        return True
+    if re.search(r"(示意图|页面|标题|主光轴)$", text) and len(text) <= 12:
+        return True
+    if re.fullmatch(r"[fuv]\s*[<≤>=]\s*[u2f\d\s<≤>=]+", text, flags=re.I):
+        return True
+    if len(text) < 10 and not re.search(r"(实像|虚像|倒立|正立|放大|缩小|焦距|物距|像距|会聚|发散)", text):
+        return True
+    return False
+
+
+def _is_explanatory_quiz_sentence(value: str) -> bool:
+    text = _clean_text(value)
+    if _is_low_quality_quiz_fragment(text):
+        return False
+    if len(text) < 14:
+        return False
+    return bool(
+        re.search(
+            r"(当|如果|因为|因此|所以|会|能够|不能|形成|决定|说明|表示|位于|大于|小于|等于|之间|以内|以外|实际|反向|会聚|发散|倒立|正立|放大|缩小|实像|虚像)",
+            text,
+        )
+    )
+
+
 def _quiz_points_from_scene(scene: ClassroomScene) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -312,6 +346,7 @@ def _quiz_points_from_scene(scene: ClassroomScene) -> list[str]:
             or text == title
             or text in seen
             or _is_decorative_quiz_text(text)
+            or _is_low_quality_quiz_fragment(text)
         ):
             continue
         seen.add(text)
@@ -1157,15 +1192,15 @@ def _question(
 def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]:
     content = scene.content or {}
     values: list[str] = []
-    extracted = content.get("extracted_text", [])
-    if isinstance(extracted, list):
-        values.extend(str(item) for item in extracted)
-    markdown = content.get("markdown", "")
-    if markdown:
-        values.append(str(markdown))
     for action in scene.actions or []:
         if action.type == "speech" and action.text:
             values.append(action.text)
+    markdown = content.get("markdown", "")
+    if markdown:
+        values.append(str(markdown))
+    extracted = content.get("extracted_text", [])
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
 
     snippets: list[str] = []
     for value in values:
@@ -1176,7 +1211,7 @@ def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]
             part = _clean_text(part)
             if len(part) < 8:
                 continue
-            if _is_decorative_quiz_text(part):
+            if not _is_explanatory_quiz_sentence(part):
                 continue
             if part not in snippets:
                 snippets.append(part[:90])
@@ -1201,7 +1236,7 @@ def _conceptual_distractors(
     candidates = [
         item
         for item in [*pool, *generic]
-        if item and item != correct
+        if item and item != correct and not _is_low_quality_quiz_fragment(item)
     ]
     result: list[str] = []
     seen: set[str] = set()
@@ -1379,6 +1414,210 @@ def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False
     if any(keyword in title for keyword in QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS):
         return False
     return True
+
+
+def _repair_animation_js_line_comments(script: str) -> str:
+    if "//" not in script:
+        return script
+    boundary = (
+        r"(?=(?:function\s+|const\s+|let\s+|var\s+|if\s*\(|else\b|for\s*\(|"
+        r"while\s*\(|return\b|document\.|ctx\.|canvas\.|requestAnimationFrame\s*\(|"
+        r"[A-Za-z_$][\w$]*\s*=|//))"
+    )
+
+    def repl(match: re.Match) -> str:
+        comment = (match.group(1) or "").strip()
+        return f"/* {comment} */" if comment else ""
+
+    return re.sub(r"//\s*([^/\n\r]*?)\s*" + boundary, repl, script)
+
+
+ANIMATION_LAB_EMBED_STYLE = """
+
+<style id="ai-creator-animation-lab-embed">
+html,
+body {
+  width: 100% !important;
+  min-height: 100% !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  background: #ffffff !important;
+}
+body {
+  box-sizing: border-box !important;
+  padding: 10px !important;
+  color: #0f172a !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+h1,
+h2 {
+  margin: 0 0 8px !important;
+  color: #2D5016 !important;
+  font-size: clamp(18px, 2.3vw, 24px) !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+}
+body > h1:first-child,
+body > h2:first-child {
+  display: none !important;
+}
+.container,
+main,
+.app,
+#app {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+canvas,
+svg {
+  display: block !important;
+  width: 100% !important;
+  max-width: min(100%, calc(166.67vh - 226px)) !important;
+  height: auto !important;
+  max-height: calc(100vh - 136px) !important;
+  margin: 0 auto !important;
+}
+.controls,
+form {
+  margin-top: 8px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px 12px !important;
+}
+label,
+.info,
+p {
+  margin-block: 4px !important;
+  line-height: 1.38 !important;
+}
+input[type="range"] {
+  width: min(520px, 58vw) !important;
+}
+button {
+  min-height: 32px !important;
+}
+</style>
+"""
+
+
+def _inject_animation_embed_style(html: str) -> str:
+    text = str(html or "")
+    if "ai-creator-animation-lab-embed" in text:
+        return text
+    if "</head>" in text.lower():
+        return re.sub(
+            r"</head>",
+            f"{ANIMATION_LAB_EMBED_STYLE}</head>",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return f"{ANIMATION_LAB_EMBED_STYLE}{text}"
+
+
+def _upgrade_animation_canvas_resolution(html: str) -> str:
+    text = str(html or "")
+
+    def repl(match: re.Match) -> str:
+        tag = match.group(0)
+
+        def read_attr(name: str) -> int | None:
+            found = re.search(rf'\b{name}\s*=\s*["\']?(\d+)', tag, flags=re.IGNORECASE)
+            return int(found.group(1)) if found else None
+
+        width = read_attr("width")
+        height = read_attr("height")
+        target_w = max(width or 0, 1200)
+        target_h = max(height or 0, 720)
+        if width and height and width >= 1000 and height >= 620:
+            return tag
+        if width:
+            tag = re.sub(r'\bwidth\s*=\s*["\']?\d+["\']?', f'width="{target_w}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' width="{target_w}">'
+        if height:
+            tag = re.sub(r'\bheight\s*=\s*["\']?\d+["\']?', f'height="{target_h}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' height="{target_h}">'
+        return tag
+
+    text = re.sub(r"<canvas\b[^>]*>", repl, text, count=3, flags=re.IGNORECASE)
+    responsive_rule = (
+        "\ncanvas { max-width: 100% !important; height: auto !important; "
+        "image-rendering: auto; }\n"
+    )
+    if "</style>" in text.lower():
+        text = re.sub(r"</style>", responsive_rule + "</style>", text, count=1, flags=re.IGNORECASE)
+    else:
+        text = re.sub(
+            r"</head>",
+            f"<style>{responsive_rule}</style></head>",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
+def _repair_animation_html_for_display(html: str) -> str:
+    text = _upgrade_animation_canvas_resolution(str(html or ""))
+    text = _inject_animation_embed_style(text)
+
+    def repair_script(match: re.Match) -> str:
+        open_tag, script, close_tag = match.group(1), match.group(2), match.group(3)
+        return f"{open_tag}{_repair_animation_js_line_comments(script)}{close_tag}"
+
+    return re.sub(
+        r"(<script\b[^>]*>)(.*?)(</script>)",
+        repair_script,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _sanitize_animation_lab_html(html: str) -> str:
+    text = str(html or "").strip()
+    text = re.sub(r"^```(?:html)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = _repair_animation_html_for_display(text)
+    lowered = text.lower()
+    if not lowered.lstrip().startswith("<!doctype html") and "<html" not in lowered:
+        return ""
+    blocked = [
+        "<script src=",
+        "<iframe",
+        "<object",
+        "<embed",
+        "http://",
+        "https://",
+        "fetch(",
+        "xmlhttprequest",
+        "localstorage",
+        "sessionstorage",
+        "document.cookie",
+        "navigator.sendbeacon",
+        "websocket",
+    ]
+    if any(token in lowered for token in blocked):
+        return ""
+    if len(re.findall(r"<!doctype html", lowered)) > 1 or len(re.findall(r"<html", lowered)) > 1:
+        return ""
+    if "</html>" not in lowered:
+        return ""
+    if "<canvas" not in lowered and "<svg" not in lowered:
+        return ""
+    if "<button" not in lowered and 'type="range"' not in lowered and "type='range'" not in lowered:
+        return ""
+    return text[:120000]
 
 
 class InteractiveClassroomGenerator:
@@ -2010,10 +2249,10 @@ class InteractiveClassroomGenerator:
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"关于“{primary_point}”，以下哪一项最能说明本节要求掌握的判断依据？",
+                        question=f"根据课堂对“{primary_point}”的讲解，哪一项表述最准确？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"这道题考查的是对“{primary_point}”的理解依据，而不是记住它出现在第几页。",
+                        analysis=f"这道题考查的是对“{primary_point}”相关概念和条件的理解，而不是记住页面标题。",
                         knowledge_point=primary_point,
                     )
                 )
@@ -2031,10 +2270,10 @@ class InteractiveClassroomGenerator:
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"遇到与“{primary_point}”相关的新题时，应该优先采用哪种应用步骤？",
+                        question=f"分析“{primary_point}”相关题目时，最关键的第一步是什么？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"补强练习需要验证能否把“{primary_point}”迁移到新情境，而不是只匹配页面标题。",
+                        analysis=f"这类题需要先识别“{primary_point}”的适用条件，再结合题目情境判断。",
                         knowledge_point=primary_point,
                     )
                 )
@@ -2873,6 +3112,201 @@ class InteractiveClassroomGenerator:
             ],
         )
 
+    def _call_content_llm_animation_lab(self, prompt: str) -> str:
+        """Ask the content LLM whether a classroom animation lab is useful, and generate it."""
+        from generators.shared_config import content_llm_call
+
+        return content_llm_call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是智创空间的互动课堂动画实验设计 agent。"
+                        "你的任务不是每次都生成动画，而是判断课堂内容是否真的需要一个可交互动画实验。"
+                        "只输出 JSON 对象，不要 markdown，不要代码围栏，不要解释。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.35,
+            max_tokens=DEFAULT_ANIMATION_LAB_MAX_TOKENS,
+        )
+
+    def _build_animation_lab_prompt(
+        self,
+        *,
+        topic: str,
+        course: str,
+        slide_summaries: list[dict[str, Any]],
+        student_profile: dict[str, str] | None = None,
+    ) -> str:
+        context_lines: list[str] = []
+        for idx, slide in enumerate(slide_summaries, start=1):
+            title = _clean_text(str(slide.get("title") or ""))
+            points = [
+                _clean_text(str(p))
+                for p in slide.get("knowledge_points", [])
+                if _clean_text(str(p))
+            ][:6]
+            texts = [
+                _clean_text(str(t))
+                for t in slide.get("extracted_text", [])
+                if _clean_text(str(t))
+            ][:10]
+            speech = _clean_text(str(slide.get("speech_excerpt") or ""))[:220]
+            context_lines.append(
+                f"{idx}. scene_id={slide.get('scene_id')}\n"
+                f"   标题：{title or '无'}\n"
+                f"   关键点：{'；'.join(points) or '无'}\n"
+                f"   页面文本：{'；'.join(texts) or '无'}\n"
+                f"   讲稿摘录：{speech or '无'}"
+            )
+        profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
+        profile_section = f"\n## 学生画像\n{profile_hint}\n" if profile_hint else ""
+        return f"""请判断《{course or '通用课程'}》中《{topic}》这节互动课堂是否需要插入一个“动画实验”场景。
+
+## 已生成课堂页面
+{chr(10).join(context_lines)}
+{profile_section}
+
+## 生成判断
+只有当课堂里存在以下内容之一时才生成动画：
+- 几何、空间关系、物理过程、光路、电路、力学、化学变化、数据结构、算法过程、系统流程、概率/函数变化等可视化对象；
+- 学生仅靠文字/静态页容易误解，需要通过拖动参数或逐步播放观察规律；
+- 动画能明确服务某个页面里的关键知识点，而不是装饰。
+
+如果只是概念定义、历史背景、课程介绍、纯文本总结、学习建议，返回 should_generate=false。
+
+## JSON 输出格式
+必须返回 JSON 对象：
+{{
+  "should_generate": boolean,
+  "reason": "为什么生成或不生成，20-80字",
+  "placement_after_scene_id": "若生成，填最适合插入其后的 scene_id；若不生成可为空",
+  "title": "若生成，动画场景标题",
+  "summary": "若生成，动画实验摘要",
+  "knowledge_points": ["若生成，1-5个知识点"],
+  "video_prompt": "若生成，可用于视频生成的提示词",
+  "html": "若生成，完整 <!doctype html> 离线 HTML 文档"
+}}
+
+## HTML 硬性要求（should_generate=true 时）
+1. 完整 <!doctype html> 文档，只用内联 CSS/JS，不得引用外部 URL。
+2. 必须包含 canvas 或 SVG 动画，且至少一个 slider/button 交互控件。
+3. 动画逻辑必须贴合课堂页面内容，不要生成通用波形、通用粒子或无关占位。
+4. canvas width/height 内部缓冲不低于 1200x720，CSS 响应式适配容器。
+5. JavaScript 不得使用 // 行注释；注释必须使用 /* ... */。
+6. 页面会嵌入课堂 iframe，画布、标题和控件必须在 16:9 视口内完整展示，不依赖滚动；控件紧凑排列，避免大段说明。
+7. 不要给 body、主容器或 .container 添加卡片式边框、阴影、厚 padding；课堂播放器外层已提供承载区域。
+8. 浅色专业风格，主色 #0f172a 和 #2D5016。
+"""
+
+    def _maybe_build_animation_lab_scene(
+        self,
+        *,
+        topic: str,
+        course: str,
+        scenes: list[ClassroomScene],
+        student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
+    ) -> ClassroomScene | None:
+        _raise_if_cancelled(cancel_check)
+        if not self.llm_quiz_enabled:
+            return None
+        slide_scenes = [s for s in scenes if s.type == "slide"]
+        if not slide_scenes:
+            return None
+
+        slide_summaries = self._build_slide_summaries(slide_scenes)
+        try:
+            prompt = self._build_animation_lab_prompt(
+                topic=topic,
+                course=course,
+                slide_summaries=slide_summaries,
+                student_profile=student_profile,
+            )
+            raw = self._call_content_llm_animation_lab(prompt)
+            _raise_if_cancelled(cancel_check)
+            data = json.loads(self._clean_llm_json(raw))
+        except Exception:
+            return None
+
+        if not isinstance(data, dict) or not bool(data.get("should_generate")):
+            return None
+        html = _sanitize_animation_lab_html(str(data.get("html") or ""))
+        if not html:
+            return None
+
+        title = _clean_text(str(data.get("title") or ""))[:80] or f"{topic} 动画实验"
+        summary = _clean_text(str(data.get("summary") or ""))[:300] or (
+            f"通过交互动画观察《{topic}》中的关键变化。"
+        )
+        reason = _clean_text(str(data.get("reason") or ""))[:300]
+        placement_after_scene_id = _clean_text(str(data.get("placement_after_scene_id") or ""))[:128]
+        points = [
+            _clean_text(str(item))[:60]
+            for item in data.get("knowledge_points", [])
+            if _clean_text(str(item))
+        ][:5] if isinstance(data.get("knowledge_points"), list) else []
+        if not points:
+            points = [topic]
+        video_prompt = _clean_text(str(data.get("video_prompt") or ""))[:1000]
+
+        scene_ts = int(datetime.now().timestamp() * 1000)
+        speech_text = (
+            f"这里插入一个互动动画实验：{title}。"
+            f"{summary}"
+            f"{' 生成原因是：' + reason if reason else ''}"
+            "你可以拖动控件观察变量变化，再回到后面的测验验证理解。"
+        )
+        return ClassroomScene(
+            id=f"scene_animation_{scene_ts}",
+            type="animation_lab",
+            title=title,
+            order=0,
+            knowledge_points=points,
+            content={
+                "format": "html",
+                "html": html,
+                "summary": summary,
+                "video_prompt": video_prompt,
+                "decision_reason": reason,
+                "placement_after_scene_id": placement_after_scene_id,
+                "source": "llm_decision",
+                "asset_kind": "interactive_animation",
+            },
+            actions=[
+                ClassroomAction(
+                    id=f"act_animation_{scene_ts}",
+                    type="speech",
+                    text=speech_text,
+                )
+            ],
+        )
+
+    def _insert_animation_lab_scene(
+        self,
+        scenes: list[ClassroomScene],
+        animation_scene: ClassroomScene,
+    ) -> list[ClassroomScene]:
+        placement_after_scene_id = str(
+            (animation_scene.content or {}).get("placement_after_scene_id") or ""
+        ).strip()
+        for idx, scene in enumerate(scenes):
+            if placement_after_scene_id and scene.id == placement_after_scene_id:
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        slide_seen = 0
+        for idx, scene in enumerate(scenes):
+            if scene.type != "slide":
+                continue
+            slide_seen += 1
+            if _is_quiz_source_scene(scene, is_first_slide=(slide_seen == 1)):
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        for idx, scene in enumerate(scenes):
+            if scene.type == "slide":
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        return [animation_scene, *scenes]
+
     def _insert_quiz_scenes(
         self,
         topic: str,
@@ -3128,6 +3562,29 @@ class InteractiveClassroomGenerator:
                 critic_mode=normalized_critic_mode,
                 knowledge_context=knowledge_context,
                 semantic_reviewer=semantic_reviewer,
+            )
+
+        _raise_if_cancelled(cancel_check)
+        animation_scene = (
+            self._maybe_build_animation_lab_scene(
+                topic=topic,
+                course=course or "通用课程",
+                scenes=scenes,
+                student_profile=normalized_profile,
+                cancel_check=cancel_check,
+            )
+            if semantic_reviewer is not None
+            else None
+        )
+        if animation_scene is not None:
+            scenes = self._insert_animation_lab_scene(scenes, animation_scene)
+            _emit_progress(
+                progress_callback,
+                stage="build_scenes",
+                stage_index=1,
+                scene_index=len(scenes),
+                scene_total=len(scenes),
+                scene=animation_scene,
             )
 
         for idx, scene in enumerate(scenes, start=1):
