@@ -5,13 +5,15 @@ import sys
 import tempfile
 import unittest
 
+from flask import Flask
+
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from study_tools.storage import StudyToolsStorage
-from study_tools.routes import _build_llm_lab_payload, _repair_lab_html_for_display
+from study_tools.routes import create_study_tools_blueprint, _build_llm_lab_payload, _repair_lab_html_for_display
 
 
 class StudyToolsPracticeLabsTest(unittest.TestCase):
@@ -169,6 +171,75 @@ class StudyToolsPracticeLabsTest(unittest.TestCase):
 
         self.assertIn("/* 焦距固定 */function draw()", repaired)
         self.assertIn("slider.addEventListener", repaired)
+
+    def test_llm_animation_payload_rejects_generic_topic_mismatch(self) -> None:
+        def fake_llm(messages, **kwargs):  # noqa: ANN001
+            return """
+            {
+              "title": "冒泡排序 动画演示",
+              "summary": "观察变量变化。",
+              "knowledge_points": ["变量变化"],
+              "video_prompt": "生成变量曲线",
+              "storyboard": [],
+              "html": "<!doctype html><html><body><canvas id='c' width='1200' height='720'></canvas><label>变量强度</label><script>let x=1;</script></body></html>"
+            }
+            """
+
+        payload = _build_llm_lab_payload(
+            {"type": "animation", "topic": "冒泡排序", "course": "算法"},
+            lab_type="animation",
+            llm_call=fake_llm,
+            llm_config={},
+            logger=_NullLogger(),
+        )
+
+        self.assertIsNone(payload)
+
+    def test_llm_animation_payload_accepts_raw_topic_html(self) -> None:
+        def fake_llm(messages, **kwargs):  # noqa: ANN001
+            return """
+            <!doctype html>
+            <html><body>
+              <canvas id="stage" width="1200" height="720"></canvas>
+              <button>播放比较</button>
+              <script>
+                const steps = ['数组元素', '比较相邻元素', '交换', '已排序区'];
+              </script>
+            </body></html>
+            """
+
+        payload = _build_llm_lab_payload(
+            {"type": "animation", "topic": "冒泡排序", "course": "算法"},
+            lab_type="animation",
+            llm_call=fake_llm,
+            llm_config={},
+            logger=_NullLogger(),
+        )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual("llm", payload["content"]["generation_mode"])
+        self.assertIn("比较相邻元素", payload["content"]["html"])
+
+    def test_animation_route_does_not_save_invalid_fallback(self) -> None:
+        def fake_llm(messages, **kwargs):  # noqa: ANN001
+            return "not json"
+
+        app = Flask(__name__)
+        app.register_blueprint(create_study_tools_blueprint(
+            get_user_id=lambda: "user_1",
+            get_storage=lambda: self.storage,
+            logger=_NullLogger(),
+            llm_call=fake_llm,
+        ))
+        resp = app.test_client().post(
+            "/api/study-tools/practice-labs",
+            json={"type": "animation", "topic": "凸透镜成像", "course": "物理"},
+        )
+
+        self.assertEqual(502, resp.status_code)
+        self.assertEqual("ANIMATION_GENERATION_INVALID", resp.get_json()["error"])
+        self.assertEqual(0, self.storage.list_labs("user_1")["total"])
 
 
 class _NullLogger:

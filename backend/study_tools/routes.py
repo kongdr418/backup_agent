@@ -310,11 +310,13 @@ def create_study_tools_blueprint(
             logger=logger,
         )
         if payload is None:
-            payload = (
-                _build_code_lab_payload(data)
-                if lab_type == "code"
-                else _build_animation_lab_payload(data)
-            )
+            if lab_type == "animation":
+                return jsonify({
+                    "success": False,
+                    "error": "ANIMATION_GENERATION_INVALID",
+                    "message": "动画生成结果不完整或与主题不匹配，请重试或更换内容模型。",
+                }), 502
+            payload = _build_code_lab_payload(data)
         item = _store().add_lab(uid, payload)
         return jsonify({"success": True, "item": _prepare_lab_for_response(item)})
 
@@ -438,6 +440,81 @@ def _clean_code_text(value, max_length: int = 6000) -> str:
     return text[:max_length]
 
 
+def _animation_domain_profile(topic: str, points: list[str] | None = None) -> dict:
+    text = f"{topic} {' '.join(points or [])}".lower()
+    compact = re.sub(r"\s+", "", text)
+    profiles = [
+        {
+            "matches": ("排序", "sort"),
+            "required": ("数组", "元素", "比较", "交换", "指针", "轮次", "已排序"),
+            "prompt": "当前主题属于排序算法，动画必须展示数组元素、比较位置、交换过程、轮次推进和已排序区。",
+        },
+        {
+            "matches": ("查找", "search", "二分", "binary"),
+            "required": ("数组", "目标", "区间", "指针", "low", "high", "mid", "中点"),
+            "prompt": "当前主题属于查找算法，动画必须展示数据集合、目标值、指针或区间边界，以及每一步如何缩小搜索范围。",
+        },
+        {
+            "matches": ("透镜", "成像", "光路", "焦距", "凸透镜", "凹透镜", "lens", "optics"),
+            "required": ("透镜", "光线", "焦点", "焦距", "物距", "像距", "主光轴", "实像", "虚像"),
+            "prompt": "当前主题属于光学成像，动画必须展示透镜、主光轴、焦点、物体、像、光线传播路径，以及物距变化对成像的影响。",
+        },
+        {
+            "matches": ("化学", "反应", "实验", "溶液", "沉淀", "滴定", "酸碱", "氧化", "还原", "chem"),
+            "required": ("反应", "试剂", "烧杯", "溶液", "分子", "沉淀", "气体", "颜色", "温度", "滴定"),
+            "prompt": "当前主题属于化学实验或反应过程，动画必须展示实验器材、试剂/粒子、反应现象、变量控制和结果变化。",
+        },
+        {
+            "matches": ("电路", "电流", "电压", "电阻", "欧姆", "circuit"),
+            "required": ("电路", "电流", "电压", "电阻", "开关", "导线", "灯泡", "仪表"),
+            "prompt": "当前主题属于电学过程，动画必须展示电路元件、连接关系、电流方向和参数变化对结果的影响。",
+        },
+    ]
+    for profile in profiles:
+        if any(token in compact for token in profile["matches"]):
+            return profile
+    return {
+        "matches": (),
+        "required": (),
+        "prompt": "请先识别主题里的真实可视化对象，再围绕这些对象设计动画；禁止生成与主题无关的通用曲线、粒子或占位图。",
+    }
+
+
+def _animation_payload_matches_topic(payload: dict, topic: str, points: list[str] | None = None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    content = payload.get("content")
+    if not isinstance(content, dict):
+        return False
+    html = str(content.get("html") or "")
+    if not html:
+        return False
+    semantic_fields = json.dumps({
+        "title": payload.get("title"),
+        "summary": payload.get("summary"),
+        "knowledge_points": payload.get("knowledge_points"),
+        "video_prompt": content.get("video_prompt"),
+        "storyboard": content.get("storyboard"),
+        "html": html,
+    }, ensure_ascii=False)
+    searchable = semantic_fields.lower()
+    generic_markers = (
+        "变量强度",
+        "系统响应越明显",
+        "局部变化走向整体规律",
+        "通用波形",
+        "通用粒子",
+    )
+    if any(marker in searchable for marker in generic_markers):
+        return False
+    profile = _animation_domain_profile(topic, points)
+    required = profile.get("required") or ()
+    if not required:
+        return True
+    hits = sum(1 for token in required if token.lower() in searchable)
+    return hits >= 2
+
+
 def _build_llm_lab_payload(
     data: dict,
     *,
@@ -464,8 +541,21 @@ def _build_llm_lab_payload(
         )
         payload = _parse_llm_lab_payload(raw, lab_type=lab_type, source=data)
         if payload is not None:
+            if lab_type == "animation" and not _animation_payload_matches_topic(payload, topic, points):
+                logger.warning(
+                    "[STUDY-TOOLS] practice_lab_llm_payload_rejected type=%s topic=%s reason=topic_mismatch",
+                    lab_type,
+                    topic,
+                )
+                return None
             payload["content"]["generation_mode"] = "llm"
             return payload
+        logger.warning(
+            "[STUDY-TOOLS] practice_lab_llm_payload_rejected type=%s topic=%s reason=parse_failed raw_len=%s",
+            lab_type,
+            topic,
+            len(str(raw or "")),
+        )
     except Exception:
         logger.warning(
             "[STUDY-TOOLS] practice_lab_llm_generation_failed type=%s topic=%s",
@@ -493,6 +583,7 @@ def _build_lab_prompt(
         "必须使用简体中文，内容严谨、适合高校学生。"
     )
     if lab_type == "animation":
+        domain_prompt = _animation_domain_profile(topic, points).get("prompt", "")
         return [
             {
                 "role": "system",
@@ -514,6 +605,8 @@ def _build_lab_prompt(
                     "HTML 要求：完整 <!doctype html> 文档；只用内联 CSS/JS；不得引用外部 URL；"
                     "必须包含 canvas 或 SVG 动画，必须包含至少一个 slider/button 交互控件；"
                     "动画逻辑必须贴合主题，不要使用与主题无关的通用波形占位；"
+                    "如果主题是排序或查找算法，必须展示数组、指针、比较、交换或区间收缩等算法状态；"
+                    f"{domain_prompt}"
                     "canvas 的 width/height 内部缓冲不得低于 1200x720，CSS 需要响应式适配容器；"
                     "JavaScript 不得使用 // 行注释，注释必须使用 /* ... */，避免压缩成一行后脚本失效；"
                     "画面风格浅色、专业、主色 #0f172a 和 #2D5016。"
@@ -554,6 +647,28 @@ def _build_lab_prompt(
 
 def _parse_llm_lab_payload(raw: str, *, lab_type: str, source: dict) -> dict | None:
     data = _extract_json_object(raw)
+    if not isinstance(data, dict) and lab_type == "animation":
+        html = _sanitize_lab_html(_extract_html_document(raw))
+        if html:
+            topic = _clean_route_text(source.get("topic"), 160)
+            course = _clean_route_text(source.get("course"), 120) or "通用课程"
+            points = _clean_route_list(source.get("knowledge_points"))
+            title = _clean_route_text(source.get("title"), 120) or f"{topic} 动画演示"
+            return {
+                "type": "animation",
+                "title": title,
+                "course": course,
+                "topic": topic,
+                "knowledge_points": points,
+                "summary": f"围绕「{topic}」生成的交互式动画实验。",
+                "content": {
+                    "html": html,
+                    "video_prompt": f"生成一段关于「{topic}」的教学动画视频。",
+                    "storyboard": [],
+                    "duration_seconds": 45,
+                    "asset_kind": "interactive_animation",
+                },
+            }
     if not isinstance(data, dict):
         return None
     topic = _clean_route_text(source.get("topic"), 160)
@@ -642,6 +757,23 @@ def _extract_json_object(raw: str) -> dict | None:
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         return None
+
+
+def _extract_html_document(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^```(?:html)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    lower = text.lower()
+    start_candidates = [idx for idx in (lower.find("<!doctype html"), lower.find("<html")) if idx >= 0]
+    if not start_candidates:
+        return ""
+    start = min(start_candidates)
+    end = lower.rfind("</html>")
+    if end < start:
+        return ""
+    return text[start:end + len("</html>")]
 
 
 def _sanitize_lab_html(html: str) -> str:
@@ -805,40 +937,6 @@ def _normalize_code_tests(value) -> list[dict]:
     return rows
 
 
-def _build_animation_lab_payload(data: dict) -> dict:
-    topic = _clean_route_text(data.get("topic"), 160)
-    course = _clean_route_text(data.get("course"), 120) or "通用课程"
-    points = _clean_route_list(data.get("knowledge_points"))
-    title = _clean_route_text(data.get("title"), 120) or f"{topic} 动画演示"
-    summary = f"用可拖动参数和逐帧动画展示「{topic}」的核心变化过程。"
-    storyboard = [
-        {"shot": 1, "title": "问题引入", "description": f"用生活化问题引出 {topic}。"},
-        {"shot": 2, "title": "变量变化", "description": "展示关键变量如何影响系统状态。"},
-        {"shot": 3, "title": "规律总结", "description": "把观察结果归纳为可复述的知识点。"},
-    ]
-    video_prompt = (
-        f"生成一段 16:9 教学动画视频，主题为「{topic}」，课程为「{course}」。"
-        "画面干净、浅色背景、包含动态箭头和变量标注，最后给出知识规律总结。"
-    )
-    html = _animation_html(title, topic, course, points)
-    return {
-        "type": "animation",
-        "title": title,
-        "course": course,
-        "topic": topic,
-        "knowledge_points": points,
-        "summary": summary,
-        "content": {
-            "html": html,
-            "video_prompt": video_prompt,
-            "storyboard": storyboard,
-            "duration_seconds": 45,
-            "asset_kind": "interactive_animation",
-            "generation_mode": "fallback",
-        },
-    }
-
-
 def _build_code_lab_payload(data: dict) -> dict:
     topic = _clean_route_text(data.get("topic"), 160)
     course = _clean_route_text(data.get("course"), 120) or "通用课程"
@@ -883,98 +981,6 @@ def _build_code_lab_payload(data: dict) -> dict:
             "generation_mode": "fallback",
         },
     }
-
-
-def _animation_html(title: str, topic: str, course: str, points: list[str]) -> str:
-    safe_title = escape(title)
-    safe_topic = escape(topic)
-    safe_course = escape(course)
-    safe_points = ", ".join(escape(p) for p in points[:5]) or "核心概念, 变量变化, 规律总结"
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{safe_title}</title>
-  <style>
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
-    .wrap {{ min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding: 18px; }}
-    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }}
-    h1 {{ margin: 0; font-size: 20px; }}
-    .meta {{ color: #64748b; font-size: 13px; margin-top: 4px; }}
-    canvas {{ width: 100%; height: 100%; min-height: 360px; border: 1px solid #dbe3ea; background: #ffffff; border-radius: 8px; }}
-    .controls {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid #dbe3ea; border-radius: 8px; background: #ffffff; }}
-    input[type=range] {{ width: 100%; }}
-    button {{ border: 1px solid #cbd5e1; background: #0f172a; color: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }}
-    .hint {{ color: #475569; font-size: 13px; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <div>
-        <h1>{safe_title}</h1>
-        <div class="meta">{safe_course} · {safe_points}</div>
-      </div>
-      <div class="hint">拖动参数，观察「{safe_topic}」的动态变化</div>
-    </header>
-    <canvas id="stage" width="1000" height="560"></canvas>
-    <div class="controls">
-      <label>变量强度 <input id="speed" type="range" min="1" max="100" value="48" /></label>
-      <button id="toggle">暂停</button>
-    </div>
-  </div>
-  <script>
-    const canvas = document.getElementById('stage');
-    const ctx = canvas.getContext('2d');
-    const slider = document.getElementById('speed');
-    const toggle = document.getElementById('toggle');
-    let t = 0;
-    let playing = true;
-    toggle.onclick = () => {{ playing = !playing; toggle.textContent = playing ? '暂停' : '播放'; }};
-    function draw() {{
-      if (playing) t += Number(slider.value) / 1800;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = '#dbe3ea';
-      ctx.lineWidth = 2;
-      for (let x = 80; x < 940; x += 80) {{ ctx.beginPath(); ctx.moveTo(x, 90); ctx.lineTo(x, 470); ctx.stroke(); }}
-      for (let y = 120; y < 460; y += 70) {{ ctx.beginPath(); ctx.moveTo(70, y); ctx.lineTo(930, y); ctx.stroke(); }}
-      ctx.fillStyle = '#0f172a';
-      ctx.font = '600 24px sans-serif';
-      ctx.fillText('{safe_topic}', 70, 58);
-      ctx.font = '14px sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('观察变量增强后，系统状态如何从局部变化走向整体规律。', 70, 82);
-      const amp = 45 + Number(slider.value) * 0.8;
-      ctx.beginPath();
-      for (let i = 0; i <= 760; i++) {{
-        const x = 100 + i;
-        const y = 300 + Math.sin(i / 58 + t * 3) * amp * Math.sin(i / 220 + 0.8);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }}
-      ctx.strokeStyle = '#2D5016';
-      ctx.lineWidth = 5;
-      ctx.stroke();
-      for (let i = 0; i < 8; i++) {{
-        const x = 130 + i * 100;
-        const y = 300 + Math.sin((x - 100) / 58 + t * 3) * amp * Math.sin((x - 100) / 220 + 0.8);
-        ctx.beginPath();
-        ctx.arc(x, y, 12, 0, Math.PI * 2);
-        ctx.fillStyle = i % 2 ? '#0f766e' : '#2D5016';
-        ctx.fill();
-      }}
-      ctx.fillStyle = '#0f172a';
-      ctx.font = '600 16px sans-serif';
-      ctx.fillText('结论：变量越强，系统响应越明显；需要结合边界条件判断最终趋势。', 110, 510);
-      requestAnimationFrame(draw);
-    }}
-    draw();
-  </script>
-</body>
-</html>"""
 
 
 def _code_lab_html(
