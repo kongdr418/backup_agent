@@ -87,6 +87,45 @@ export interface StatsResult {
   }
 }
 
+export type PracticeLabType = 'animation' | 'code'
+
+export interface PracticeLabItem {
+  id: string
+  type: PracticeLabType
+  title: string
+  course: string
+  topic: string
+  knowledge_points: string[]
+  summary: string
+  content: {
+    html?: string
+    video_prompt?: string
+    storyboard?: { shot: number; title: string; description: string }[]
+    duration_seconds?: number
+    language?: string
+    starter_code?: string
+    test_cases?: { input: string; expected: string; description: string }[]
+    asset_kind?: string
+    generation_mode?: 'llm' | 'fallback' | string
+  }
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePracticeLabPayload {
+  type: PracticeLabType
+  title?: string
+  course?: string
+  topic: string
+  knowledge_points?: string[] | string
+  starter_code?: string
+  test_cases?: { input: string; expected: string; description?: string }[]
+  content_model?: string
+  content_api_key?: string
+  content_base_url?: string
+  content_provider_type?: string
+}
+
 // ─── 错题本 ───
 
 export interface ListMistakesParams {
@@ -214,6 +253,34 @@ export async function addFlashcard(payload: Partial<FlashcardItem>): Promise<Fla
     payload,
   )
   return res.data.item
+}
+
+// ─── 实操实验室 ───
+
+export async function listPracticeLabs(params: {
+  type?: PracticeLabType
+  q?: string
+  page?: number
+  page_size?: number
+} = {}): Promise<PagedResult<PracticeLabItem>> {
+  const res = await client.get<{ success: boolean } & PagedResult<PracticeLabItem>>(
+    '/api/study-tools/practice-labs',
+    { params },
+  )
+  return { items: res.data.items, total: res.data.total, page: res.data.page, page_size: res.data.page_size }
+}
+
+export async function createPracticeLab(payload: CreatePracticeLabPayload): Promise<PracticeLabItem> {
+  const res = await client.post<{ success: boolean; item: PracticeLabItem }>(
+    '/api/study-tools/practice-labs',
+    payload,
+    { timeout: 180_000 },
+  )
+  return res.data.item
+}
+
+export async function deletePracticeLab(id: string): Promise<void> {
+  await client.delete(`/api/study-tools/practice-labs/${id}`)
 }
 
 export async function listDueFlashcards(limit = 50): Promise<FlashcardItem[]> {

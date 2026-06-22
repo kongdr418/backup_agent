@@ -398,6 +398,40 @@ def _normalize_flashcard(payload: dict[str, Any], existing: dict[str, Any] | Non
     }
 
 
+_ALLOWED_LAB_TYPES = {"animation", "code"}
+
+
+def _clean_lab_type(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _ALLOWED_LAB_TYPES else "animation"
+
+
+def _normalize_lab(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    now = _now_iso()
+    base = existing or {}
+    content = payload.get("content") if isinstance(payload.get("content"), dict) else base.get("content")
+    if not isinstance(content, dict):
+        content = {}
+    return {
+        "id": _clean_text(base.get("id") or payload.get("id"), 64) or f"lab_{uuid.uuid4().hex[:16]}",
+        "type": _clean_lab_type(payload.get("type") or base.get("type")),
+        "title": _clean_text(payload.get("title") or base.get("title") or "未命名实操", 120),
+        "course": _clean_text(payload.get("course") or base.get("course"), 120),
+        "topic": _clean_text(payload.get("topic") or base.get("topic"), 160),
+        "knowledge_points": _clean_list(
+            payload.get("knowledge_points")
+            if "knowledge_points" in payload
+            else base.get("knowledge_points"),
+            max_items=12,
+            item_len=60,
+        ),
+        "summary": _clean_text(payload.get("summary") or base.get("summary"), 500),
+        "content": json.loads(json.dumps(content, ensure_ascii=False)),
+        "created_at": _clean_text(base.get("created_at") or now, 40),
+        "updated_at": now,
+    }
+
+
 class StudyToolsStorage:
     def __init__(self, backend_dir: str) -> None:
         self.root = os.path.join(backend_dir, "study_tools", "users")
@@ -419,6 +453,9 @@ class StudyToolsStorage:
 
     def _collections_path(self, user_id: str) -> str:
         return os.path.join(self._user_dir(user_id), "mistake_collections.json")
+
+    def _labs_path(self, user_id: str) -> str:
+        return os.path.join(self._user_dir(user_id), "practice_labs.json")
 
     def _load(self, path: str) -> dict[str, Any]:
         if not os.path.exists(path):
@@ -923,6 +960,95 @@ class StudyToolsStorage:
             if changed:
                 self._save(mpath, mdata)
         return changed
+
+    # ───────────── 实操实验室 ─────────────
+
+    def list_labs(
+        self,
+        user_id: str,
+        lab_type: str | None = None,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 30,
+    ) -> dict[str, Any]:
+        with self._lock:
+            data = self._load(self._labs_path(user_id))
+        items = [_normalize_lab(it) for it in data["items"]]
+        if lab_type in _ALLOWED_LAB_TYPES:
+            items = [it for it in items if it.get("type") == lab_type]
+        if query:
+            q = query.lower()
+            items = [
+                it for it in items
+                if q in (it.get("title") or "").lower()
+                or q in (it.get("topic") or "").lower()
+                or q in (it.get("course") or "").lower()
+                or q in " ".join(it.get("knowledge_points") or []).lower()
+            ]
+        items_sorted = sorted(items, key=lambda it: it.get("created_at") or "", reverse=True)
+        total = len(items_sorted)
+        page = max(1, int(page or 1))
+        page_size = max(1, min(100, int(page_size or 30)))
+        start = (page - 1) * page_size
+        return {
+            "items": items_sorted[start:start + page_size],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def get_lab(self, user_id: str, lab_id: str) -> dict[str, Any] | None:
+        if not lab_id or not _SAFE_ID.fullmatch(lab_id):
+            return None
+        with self._lock:
+            data = self._load(self._labs_path(user_id))
+        for it in data["items"]:
+            if it.get("id") == lab_id:
+                return _normalize_lab(it)
+        return None
+
+    def add_lab(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        item = _normalize_lab(payload)
+        with self._lock:
+            path = self._labs_path(user_id)
+            data = self._load(path)
+            data["items"].insert(0, item)
+            self._save(path, data)
+        return item
+
+    def update_lab(
+        self,
+        user_id: str,
+        lab_id: str,
+        patch: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not lab_id or not _SAFE_ID.fullmatch(lab_id):
+            return None
+        with self._lock:
+            path = self._labs_path(user_id)
+            data = self._load(path)
+            for idx, it in enumerate(data["items"]):
+                if it.get("id") == lab_id:
+                    item = _normalize_lab({**it, **(patch or {})}, it)
+                    item["id"] = it["id"]
+                    item["created_at"] = it.get("created_at") or item["created_at"]
+                    data["items"][idx] = item
+                    self._save(path, data)
+                    return item
+        return None
+
+    def delete_lab(self, user_id: str, lab_id: str) -> bool:
+        if not lab_id or not _SAFE_ID.fullmatch(lab_id):
+            return False
+        with self._lock:
+            path = self._labs_path(user_id)
+            data = self._load(path)
+            new_items = [it for it in data["items"] if it.get("id") != lab_id]
+            if len(new_items) == len(data["items"]):
+                return False
+            data["items"] = new_items
+            self._save(path, data)
+        return True
 
     # ───────────── 闪卡 ─────────────
 

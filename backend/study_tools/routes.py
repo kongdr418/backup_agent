@@ -1,5 +1,8 @@
-"""Study Tools API routes — 错题本 / 闪卡 / 错题集 / 统计."""
+"""Study Tools API routes — 错题本 / 闪卡 / 错题集 / 实操实验 / 统计."""
 
+import json
+import re
+from html import escape
 from flask import Blueprint, request, jsonify, send_file
 from interactive_classroom.event_service import (
     create_flashcard_reviewed_event,
@@ -14,6 +17,8 @@ def create_study_tools_blueprint(
     get_storage,
     logger,
     get_classroom_storage=None,
+    llm_call=None,
+    resolve_content_llm_request_config=None,
 ):
     bp = Blueprint("study_tools", __name__)
 
@@ -28,6 +33,15 @@ def create_study_tools_blueprint(
 
     def _classroom_store():
         return get_classroom_storage() if get_classroom_storage is not None else None
+
+    def _resolve_llm_config(data: dict) -> dict:
+        if resolve_content_llm_request_config is None:
+            return {}
+        try:
+            return resolve_content_llm_request_config(data)
+        except Exception:
+            logger.warning("[STUDY-TOOLS] practice_lab_llm_config_failed", exc_info=True)
+            return {}
 
     # ─── mistakes ───
 
@@ -262,6 +276,69 @@ def create_study_tools_blueprint(
         _store().remove_mistake_from_collection(_uid(), collection_id, mistake_id)
         return jsonify({"success": True})
 
+    # ─── practice labs ───
+
+    @bp.route("/api/study-tools/practice-labs", methods=["GET"])
+    def list_practice_labs():
+        uid = _uid()
+        params = request.args
+        result = _store().list_labs(
+            user_id=uid,
+            lab_type=params.get("type"),
+            query=params.get("q"),
+            page=int(params.get("page", 1)),
+            page_size=int(params.get("page_size", 30)),
+        )
+        result["items"] = [_prepare_lab_for_response(item) for item in result.get("items", [])]
+        return jsonify({"success": True, **result})
+
+    @bp.route("/api/study-tools/practice-labs", methods=["POST"])
+    def create_practice_lab():
+        uid = _uid()
+        data = _json_body()
+        lab_type = str(data.get("type") or "animation").strip().lower()
+        if lab_type not in {"animation", "code"}:
+            return jsonify({"success": False, "error": "INVALID_TYPE"}), 400
+        topic = _clean_route_text(data.get("topic"), 160)
+        if not topic:
+            return jsonify({"success": False, "error": "TOPIC_REQUIRED"}), 400
+        payload = _build_llm_lab_payload(
+            data,
+            lab_type=lab_type,
+            llm_call=llm_call,
+            llm_config=_resolve_llm_config(data),
+            logger=logger,
+        )
+        if payload is None:
+            payload = (
+                _build_code_lab_payload(data)
+                if lab_type == "code"
+                else _build_animation_lab_payload(data)
+            )
+        item = _store().add_lab(uid, payload)
+        return jsonify({"success": True, "item": _prepare_lab_for_response(item)})
+
+    @bp.route("/api/study-tools/practice-labs/<lab_id>", methods=["GET"])
+    def get_practice_lab(lab_id):
+        item = _store().get_lab(_uid(), lab_id)
+        if not item:
+            return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        return jsonify({"success": True, "item": _prepare_lab_for_response(item)})
+
+    @bp.route("/api/study-tools/practice-labs/<lab_id>", methods=["PATCH"])
+    def update_practice_lab(lab_id):
+        item = _store().update_lab(_uid(), lab_id, _json_body())
+        if not item:
+            return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        return jsonify({"success": True, "item": item})
+
+    @bp.route("/api/study-tools/practice-labs/<lab_id>", methods=["DELETE"])
+    def delete_practice_lab(lab_id):
+        ok = _store().delete_lab(_uid(), lab_id)
+        if not ok:
+            return jsonify({"success": False, "error": "NOT_FOUND"}), 404
+        return jsonify({"success": True})
+
     # ─── helpers ───
 
     def _json_body() -> dict:
@@ -333,6 +410,676 @@ def create_study_tools_blueprint(
             logger.warning("[STUDY-TOOLS] flashcard_reviewed_event_failed", exc_info=True)
 
     return bp
+
+
+def _clean_route_text(value, max_length: int = 200) -> str:
+    return " ".join(str(value or "").split())[:max_length]
+
+
+def _clean_route_list(value, max_items: int = 10) -> list[str]:
+    if isinstance(value, str):
+        rows = [x.strip() for x in value.replace("，", ",").replace("、", ",").split(",")]
+    elif isinstance(value, list):
+        rows = value
+    else:
+        rows = []
+    out: list[str] = []
+    for row in rows:
+        text = _clean_route_text(row, 60)
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _clean_code_text(value, max_length: int = 6000) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    return text[:max_length]
+
+
+def _build_llm_lab_payload(
+    data: dict,
+    *,
+    lab_type: str,
+    llm_call,
+    llm_config: dict,
+    logger,
+) -> dict | None:
+    if llm_call is None:
+        return None
+    topic = _clean_route_text(data.get("topic"), 160)
+    course = _clean_route_text(data.get("course"), 120) or "通用课程"
+    points = _clean_route_list(data.get("knowledge_points"))
+    try:
+        messages = _build_lab_prompt(data, lab_type=lab_type, topic=topic, course=course, points=points)
+        raw = llm_call(
+            messages,
+            model=llm_config.get("content_model", ""),
+            api_key=llm_config.get("content_api_key", ""),
+            base_url=llm_config.get("content_base_url", ""),
+            provider_type=llm_config.get("content_provider_type", ""),
+            temperature=0.35,
+            max_tokens=6500 if lab_type == "animation" else 3600,
+        )
+        payload = _parse_llm_lab_payload(raw, lab_type=lab_type, source=data)
+        if payload is not None:
+            payload["content"]["generation_mode"] = "llm"
+            return payload
+    except Exception:
+        logger.warning(
+            "[STUDY-TOOLS] practice_lab_llm_generation_failed type=%s topic=%s",
+            lab_type,
+            topic,
+            exc_info=True,
+        )
+    return None
+
+
+def _build_lab_prompt(
+    data: dict,
+    *,
+    lab_type: str,
+    topic: str,
+    course: str,
+    points: list[str],
+) -> list[dict]:
+    point_text = "、".join(points) if points else "由主题自动提炼"
+    common = (
+        "你是智创空间的多智能体学习资源生成器。"
+        "请为学生生成一个可直接用于课堂的实操学习资产。"
+        "只输出 JSON 对象，不要 markdown，不要代码围栏，不要解释。"
+        f"课程：{course}\n主题：{topic}\n知识点：{point_text}\n"
+        "必须使用简体中文，内容严谨、适合高校学生。"
+    )
+    if lab_type == "animation":
+        return [
+            {
+                "role": "system",
+                "content": common
+                + "\n生成类型：动画演示。你需要输出一个离线可运行的 HTML 动画实验。",
+            },
+            {
+                "role": "user",
+                "content": (
+                    "输出 JSON schema："
+                    "{"
+                    '"title": string,'
+                    '"summary": string,'
+                    '"knowledge_points": string[],'
+                    '"video_prompt": string,'
+                    '"storyboard": [{"shot": number, "title": string, "description": string}],'
+                    '"html": string'
+                    "}\n"
+                    "HTML 要求：完整 <!doctype html> 文档；只用内联 CSS/JS；不得引用外部 URL；"
+                    "必须包含 canvas 或 SVG 动画，必须包含至少一个 slider/button 交互控件；"
+                    "动画逻辑必须贴合主题，不要使用与主题无关的通用波形占位；"
+                    "canvas 的 width/height 内部缓冲不得低于 1200x720，CSS 需要响应式适配容器；"
+                    "JavaScript 不得使用 // 行注释，注释必须使用 /* ... */，避免压缩成一行后脚本失效；"
+                    "画面风格浅色、专业、主色 #0f172a 和 #2D5016。"
+                ),
+            },
+        ]
+    starter = _clean_code_text(data.get("starter_code"), 2000).strip()
+    starter_hint = f"\n用户提供的 starter_code：\n{starter}" if starter else ""
+    return [
+        {
+            "role": "system",
+            "content": common
+            + "\n生成类型：代码实操。你需要输出浏览器内 JavaScript 练习配置。",
+        },
+        {
+            "role": "user",
+            "content": (
+                "输出 JSON schema："
+                "{"
+                '"title": string,'
+                '"summary": string,'
+                '"knowledge_points": string[],'
+                '"task_description": string,'
+                '"starter_code": string,'
+                '"test_cases": [{"input": string, "expected": string, "description": string}],'
+                '"hints": string[],'
+                '"solution": string'
+                "}\n"
+                "代码要求：starter_code 必须定义 function solve(input)；"
+                "test_cases 至少 3 个，expected 必须与 solution 的输出一致；"
+                "练习要贴合主题，不能一律生成平方数示例；"
+                "只允许 JavaScript，不要 TypeScript、Python、Java、C++。"
+                f"{starter_hint}"
+            ),
+        },
+    ]
+
+
+def _parse_llm_lab_payload(raw: str, *, lab_type: str, source: dict) -> dict | None:
+    data = _extract_json_object(raw)
+    if not isinstance(data, dict):
+        return None
+    topic = _clean_route_text(source.get("topic"), 160)
+    course = _clean_route_text(source.get("course"), 120) or "通用课程"
+    points = _clean_route_list(data.get("knowledge_points")) or _clean_route_list(source.get("knowledge_points"))
+    title = _clean_route_text(data.get("title"), 120) or (
+        f"{topic} 代码实操" if lab_type == "code" else f"{topic} 动画演示"
+    )
+    summary = _clean_route_text(data.get("summary"), 500)
+
+    if lab_type == "animation":
+        html = _sanitize_lab_html(str(data.get("html") or ""))
+        if not html:
+            return None
+        storyboard = _normalize_storyboard(data.get("storyboard"))
+        return {
+            "type": "animation",
+            "title": title,
+            "course": course,
+            "topic": topic,
+            "knowledge_points": points,
+            "summary": summary or f"围绕「{topic}」生成的交互式动画实验。",
+            "content": {
+                "html": html,
+                "video_prompt": _clean_route_text(data.get("video_prompt"), 1000)
+                or f"生成一段关于「{topic}」的教学动画视频。",
+                "storyboard": storyboard,
+                "duration_seconds": 45,
+                "asset_kind": "interactive_animation",
+            },
+        }
+
+    starter_code = str(data.get("starter_code") or "").strip()
+    solution = str(data.get("solution") or "").strip()
+    test_cases = _normalize_code_tests(data.get("test_cases"))
+    if not starter_code or "function solve" not in starter_code or not test_cases:
+        return None
+    task_description = _clean_route_text(data.get("task_description"), 800)
+    hints = _clean_route_list(data.get("hints"), max_items=5)
+    html = _code_lab_html(
+        title,
+        topic,
+        course,
+        starter_code,
+        test_cases,
+        task_description=task_description,
+        hints=hints,
+    )
+    return {
+        "type": "code",
+        "title": title,
+        "course": course,
+        "topic": topic,
+        "knowledge_points": points,
+        "summary": summary or f"通过代码运行和测试用例练习「{topic}」。",
+        "content": {
+            "html": html,
+            "language": "javascript",
+            "starter_code": starter_code,
+            "solution": solution,
+            "test_cases": test_cases,
+            "hints": hints,
+            "task_description": task_description,
+            "asset_kind": "code_playground",
+        },
+    }
+
+
+def _extract_json_object(raw: str) -> dict | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _sanitize_lab_html(html: str) -> str:
+    text = str(html or "").strip()
+    text = re.sub(r"^```(?:html)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = _repair_lab_html_for_display(text)
+    if not text.lower().lstrip().startswith("<!doctype html") and "<html" not in text.lower():
+        return ""
+    lowered = text.lower()
+    blocked = [
+        "<script src=",
+        "<iframe",
+        "<object",
+        "<embed",
+        "http://",
+        "https://",
+        "fetch(",
+        "xmlhttprequest",
+        "localstorage",
+        "sessionstorage",
+        "document.cookie",
+    ]
+    if any(token in lowered for token in blocked):
+        return ""
+    if len(re.findall(r"<!doctype html", lowered)) > 1 or len(re.findall(r"<html", lowered)) > 1:
+        return ""
+    if "</html>" not in lowered:
+        return ""
+    return text[:120000]
+
+
+def _prepare_lab_for_response(item: dict) -> dict:
+    if not isinstance(item, dict):
+        return item
+    content = item.get("content")
+    if not isinstance(content, dict):
+        return item
+    html = content.get("html")
+    if not isinstance(html, str) or not html:
+        return item
+    return {
+        **item,
+        "content": {
+            **content,
+            "html": _repair_lab_html_for_display(html),
+        },
+    }
+
+
+def _repair_lab_html_for_display(html: str) -> str:
+    """Repair common LLM HTML issue: one-line scripts with // comments swallow code."""
+    text = str(html or "")
+    text = _upgrade_canvas_resolution(text)
+
+    def repair_script(match: re.Match) -> str:
+        open_tag, script, close_tag = match.group(1), match.group(2), match.group(3)
+        return f"{open_tag}{_repair_js_line_comments(script)}{close_tag}"
+
+    return re.sub(
+        r"(<script\b[^>]*>)(.*?)(</script>)",
+        repair_script,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _upgrade_canvas_resolution(html: str) -> str:
+    """Raise tiny LLM canvas buffers so previews look crisp when scaled."""
+    text = str(html or "")
+
+    def repl(match: re.Match) -> str:
+        tag = match.group(0)
+
+        def read_attr(name: str) -> int | None:
+            found = re.search(rf'\b{name}\s*=\s*["\']?(\d+)', tag, flags=re.IGNORECASE)
+            return int(found.group(1)) if found else None
+
+        width = read_attr("width")
+        height = read_attr("height")
+        target_w = max(width or 0, 1200)
+        target_h = max(height or 0, 720)
+        if width and height and width >= 1000 and height >= 620:
+            return tag
+        if width:
+            tag = re.sub(r'\bwidth\s*=\s*["\']?\d+["\']?', f'width="{target_w}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' width="{target_w}">'
+        if height:
+            tag = re.sub(r'\bheight\s*=\s*["\']?\d+["\']?', f'height="{target_h}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' height="{target_h}">'
+        return tag
+
+    text = re.sub(r"<canvas\b[^>]*>", repl, text, count=3, flags=re.IGNORECASE)
+    responsive_rule = (
+        "\ncanvas { max-width: 100% !important; height: auto !important; "
+        "image-rendering: auto; }\n"
+    )
+    if "</style>" in text.lower():
+        text = re.sub(r"</style>", responsive_rule + "</style>", text, count=1, flags=re.IGNORECASE)
+    else:
+        text = re.sub(
+            r"</head>",
+            f"<style>{responsive_rule}</style></head>",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
+def _repair_js_line_comments(script: str) -> str:
+    if "//" not in script:
+        return script
+    boundary = (
+        r"(?=(?:function\s+|const\s+|let\s+|var\s+|if\s*\(|else\b|for\s*\(|"
+        r"while\s*\(|return\b|document\.|ctx\.|canvas\.|slider\.|uValue\.|"
+        r"requestAnimationFrame\s*\(|draw\s*\(|[A-Za-z_$][\w$]*\s*=|//))"
+    )
+
+    def repl(match: re.Match) -> str:
+        comment = (match.group(1) or "").strip()
+        return f"/* {comment} */" if comment else ""
+
+    repaired = re.sub(r"//\s*([^/\n\r]*?)\s*" + boundary, repl, script)
+    return repaired
+
+
+def _normalize_storyboard(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for idx, raw in enumerate(value[:8], start=1):
+        if not isinstance(raw, dict):
+            continue
+        rows.append({
+            "shot": int(raw.get("shot") or idx),
+            "title": _clean_route_text(raw.get("title"), 80),
+            "description": _clean_route_text(raw.get("description"), 300),
+        })
+    return rows
+
+
+def _normalize_code_tests(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for idx, raw in enumerate(value[:8], start=1):
+        if not isinstance(raw, dict):
+            continue
+        input_text = _clean_route_text(raw.get("input"), 160)
+        expected = _clean_route_text(raw.get("expected"), 160)
+        if expected == "":
+            continue
+        rows.append({
+            "input": input_text,
+            "expected": expected,
+            "description": _clean_route_text(raw.get("description"), 160) or f"测试 {idx}",
+        })
+    return rows
+
+
+def _build_animation_lab_payload(data: dict) -> dict:
+    topic = _clean_route_text(data.get("topic"), 160)
+    course = _clean_route_text(data.get("course"), 120) or "通用课程"
+    points = _clean_route_list(data.get("knowledge_points"))
+    title = _clean_route_text(data.get("title"), 120) or f"{topic} 动画演示"
+    summary = f"用可拖动参数和逐帧动画展示「{topic}」的核心变化过程。"
+    storyboard = [
+        {"shot": 1, "title": "问题引入", "description": f"用生活化问题引出 {topic}。"},
+        {"shot": 2, "title": "变量变化", "description": "展示关键变量如何影响系统状态。"},
+        {"shot": 3, "title": "规律总结", "description": "把观察结果归纳为可复述的知识点。"},
+    ]
+    video_prompt = (
+        f"生成一段 16:9 教学动画视频，主题为「{topic}」，课程为「{course}」。"
+        "画面干净、浅色背景、包含动态箭头和变量标注，最后给出知识规律总结。"
+    )
+    html = _animation_html(title, topic, course, points)
+    return {
+        "type": "animation",
+        "title": title,
+        "course": course,
+        "topic": topic,
+        "knowledge_points": points,
+        "summary": summary,
+        "content": {
+            "html": html,
+            "video_prompt": video_prompt,
+            "storyboard": storyboard,
+            "duration_seconds": 45,
+            "asset_kind": "interactive_animation",
+            "generation_mode": "fallback",
+        },
+    }
+
+
+def _build_code_lab_payload(data: dict) -> dict:
+    topic = _clean_route_text(data.get("topic"), 160)
+    course = _clean_route_text(data.get("course"), 120) or "通用课程"
+    points = _clean_route_list(data.get("knowledge_points"))
+    title = _clean_route_text(data.get("title"), 120) or f"{topic} 代码实操"
+    starter_code = _clean_code_text(data.get("starter_code"), 2000).strip() or (
+        "function solve(input) {\n"
+        "  const value = Number(input);\n"
+        "  // TODO: 修改这里，让函数返回你的答案\n"
+        "  return value;\n"
+        "}"
+    )
+    test_cases = data.get("test_cases")
+    if not isinstance(test_cases, list) or not test_cases:
+        test_cases = [
+            {"input": "2", "expected": "4", "description": "示例 1"},
+            {"input": "5", "expected": "25", "description": "示例 2"},
+        ]
+    cleaned_tests = []
+    for idx, row in enumerate(test_cases[:8], start=1):
+        if not isinstance(row, dict):
+            continue
+        cleaned_tests.append({
+            "input": _clean_route_text(row.get("input"), 120),
+            "expected": _clean_route_text(row.get("expected"), 120),
+            "description": _clean_route_text(row.get("description"), 120) or f"测试 {idx}",
+        })
+    html = _code_lab_html(title, topic, course, starter_code, cleaned_tests)
+    return {
+        "type": "code",
+        "title": title,
+        "course": course,
+        "topic": topic,
+        "knowledge_points": points,
+        "summary": f"通过浏览器内代码运行和测试用例校验练习「{topic}」。",
+        "content": {
+            "html": html,
+            "language": "javascript",
+            "starter_code": starter_code,
+            "test_cases": cleaned_tests,
+            "asset_kind": "code_playground",
+            "generation_mode": "fallback",
+        },
+    }
+
+
+def _animation_html(title: str, topic: str, course: str, points: list[str]) -> str:
+    safe_title = escape(title)
+    safe_topic = escape(topic)
+    safe_course = escape(course)
+    safe_points = ", ".join(escape(p) for p in points[:5]) or "核心概念, 变量变化, 规律总结"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{safe_title}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
+    .wrap {{ min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding: 18px; }}
+    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }}
+    h1 {{ margin: 0; font-size: 20px; }}
+    .meta {{ color: #64748b; font-size: 13px; margin-top: 4px; }}
+    canvas {{ width: 100%; height: 100%; min-height: 360px; border: 1px solid #dbe3ea; background: #ffffff; border-radius: 8px; }}
+    .controls {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid #dbe3ea; border-radius: 8px; background: #ffffff; }}
+    input[type=range] {{ width: 100%; }}
+    button {{ border: 1px solid #cbd5e1; background: #0f172a; color: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }}
+    .hint {{ color: #475569; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>{safe_title}</h1>
+        <div class="meta">{safe_course} · {safe_points}</div>
+      </div>
+      <div class="hint">拖动参数，观察「{safe_topic}」的动态变化</div>
+    </header>
+    <canvas id="stage" width="1000" height="560"></canvas>
+    <div class="controls">
+      <label>变量强度 <input id="speed" type="range" min="1" max="100" value="48" /></label>
+      <button id="toggle">暂停</button>
+    </div>
+  </div>
+  <script>
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    const slider = document.getElementById('speed');
+    const toggle = document.getElementById('toggle');
+    let t = 0;
+    let playing = true;
+    toggle.onclick = () => {{ playing = !playing; toggle.textContent = playing ? '暂停' : '播放'; }};
+    function draw() {{
+      if (playing) t += Number(slider.value) / 1800;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#dbe3ea';
+      ctx.lineWidth = 2;
+      for (let x = 80; x < 940; x += 80) {{ ctx.beginPath(); ctx.moveTo(x, 90); ctx.lineTo(x, 470); ctx.stroke(); }}
+      for (let y = 120; y < 460; y += 70) {{ ctx.beginPath(); ctx.moveTo(70, y); ctx.lineTo(930, y); ctx.stroke(); }}
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '600 24px sans-serif';
+      ctx.fillText('{safe_topic}', 70, 58);
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('观察变量增强后，系统状态如何从局部变化走向整体规律。', 70, 82);
+      const amp = 45 + Number(slider.value) * 0.8;
+      ctx.beginPath();
+      for (let i = 0; i <= 760; i++) {{
+        const x = 100 + i;
+        const y = 300 + Math.sin(i / 58 + t * 3) * amp * Math.sin(i / 220 + 0.8);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }}
+      ctx.strokeStyle = '#2D5016';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      for (let i = 0; i < 8; i++) {{
+        const x = 130 + i * 100;
+        const y = 300 + Math.sin((x - 100) / 58 + t * 3) * amp * Math.sin((x - 100) / 220 + 0.8);
+        ctx.beginPath();
+        ctx.arc(x, y, 12, 0, Math.PI * 2);
+        ctx.fillStyle = i % 2 ? '#0f766e' : '#2D5016';
+        ctx.fill();
+      }}
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '600 16px sans-serif';
+      ctx.fillText('结论：变量越强，系统响应越明显；需要结合边界条件判断最终趋势。', 110, 510);
+      requestAnimationFrame(draw);
+    }}
+    draw();
+  </script>
+</body>
+</html>"""
+
+
+def _code_lab_html(
+    title: str,
+    topic: str,
+    course: str,
+    starter_code: str,
+    test_cases: list[dict],
+    task_description: str = "",
+    hints: list[str] | None = None,
+) -> str:
+    safe_title = escape(title)
+    safe_topic = escape(topic)
+    safe_course = escape(course)
+    safe_code = escape(starter_code)
+    safe_task = escape(task_description or f"完成 solve(input)，让它通过与「{topic}」相关的测试用例。")
+    hints = hints or []
+    hints_html = "".join(f"<li>{escape(hint)}</li>" for hint in hints[:5])
+    tests_json = json.dumps(test_cases, ensure_ascii=False)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{safe_title}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
+    .wrap {{ min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding: 18px; }}
+    h1 {{ margin: 0; font-size: 20px; }}
+    .meta {{ color: #64748b; font-size: 13px; margin-top: 4px; }}
+    .grid {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, .8fr); gap: 12px; min-height: 380px; }}
+    textarea {{ width: 100%; height: 100%; min-height: 360px; resize: none; border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px; font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    .panel {{ border: 1px solid #dbe3ea; border-radius: 8px; background: #fff; padding: 14px; overflow: auto; }}
+    .task {{ border: 1px solid #dbe3ea; border-radius: 8px; background: #fff; padding: 12px; margin-bottom: 12px; color: #334155; font-size: 14px; line-height: 1.65; }}
+    .hints {{ margin: 10px 0 0; padding-left: 18px; color: #475569; font-size: 13px; }}
+    button {{ border: 1px solid #cbd5e1; background: #0f172a; color: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }}
+    .case {{ padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 8px; }}
+    .pass {{ border-color: #86efac; background: #f0fdf4; }}
+    .fail {{ border-color: #fecaca; background: #fef2f2; }}
+    @media (max-width: 760px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>{safe_title}</h1>
+      <div class="meta">{safe_course} · {safe_topic} · JavaScript 浏览器内运行</div>
+    </header>
+    <div class="grid">
+      <textarea id="editor" spellcheck="false">{safe_code}</textarea>
+      <div class="panel">
+        <div class="task">
+          <strong>任务</strong><br />
+          {safe_task}
+          {"<ul class=\"hints\">" + hints_html + "</ul>" if hints_html else ""}
+        </div>
+        <button id="run">运行测试</button>
+        <div id="output"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const tests = {tests_json};
+    const editor = document.getElementById('editor');
+    const output = document.getElementById('output');
+    document.getElementById('run').onclick = () => {{
+      output.innerHTML = '';
+      let solve;
+      try {{
+        const module = {{}};
+        new Function('module', editor.value + '; module.solve = typeof solve === "function" ? solve : null;')(module);
+        solve = module.solve;
+        if (!solve) throw new Error('请定义 function solve(input) {{ ... }}');
+      }} catch (err) {{
+        output.innerHTML = '<div class="case fail">代码解析失败：' + String(err.message || err) + '</div>';
+        return;
+      }}
+      let passed = 0;
+      for (const item of tests) {{
+        let actual = '';
+        let ok = false;
+        try {{
+          actual = String(solve(item.input));
+          ok = actual.trim() === String(item.expected).trim();
+          if (ok) passed += 1;
+        }} catch (err) {{
+          actual = '运行错误：' + String(err.message || err);
+        }}
+        const div = document.createElement('div');
+        div.className = 'case ' + (ok ? 'pass' : 'fail');
+        div.innerHTML = '<strong>' + (ok ? '通过' : '未通过') + ' · ' + item.description + '</strong><br>' +
+          '输入：<code>' + item.input + '</code><br>' +
+          '期望：<code>' + item.expected + '</code><br>' +
+          '实际：<code>' + actual + '</code>';
+        output.appendChild(div);
+      }}
+      const summary = document.createElement('div');
+      summary.className = 'case ' + (passed === tests.length ? 'pass' : 'fail');
+      summary.innerHTML = '<strong>结果：' + passed + ' / ' + tests.length + ' 通过</strong>';
+      output.prepend(summary);
+    }};
+  </script>
+</body>
+</html>"""
 
 
 def _parse_bool(val):

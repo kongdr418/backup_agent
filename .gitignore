@@ -63,6 +63,9 @@ backend/generated_svg_ppt/
 # Generated classrooms (local output)
 backend/generated_classrooms/
 
+# Study tools user data (local output)
+backend/study_tools/users/
+
 # Reference project (not part of this repo)
 OpenMAIC/
 

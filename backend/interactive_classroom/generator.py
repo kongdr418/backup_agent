@@ -4,7 +4,6 @@ import asyncio
 import os
 import re
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from difflib import SequenceMatcher
 from html import unescape
@@ -32,8 +31,7 @@ class ClassroomGenerationCancelled(Exception):
 
 CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[dict[str, Any]], None]
-DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY = 10
-DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY = 4
+DEFAULT_ANIMATION_LAB_MAX_TOKENS = 6500
 
 
 def _emit_progress(
@@ -301,17 +299,72 @@ def _is_decorative_quiz_text(value: str) -> bool:
     return False
 
 
+def _is_low_quality_quiz_fragment(value: str) -> bool:
+    text = _clean_text(value)
+    if not text or _is_decorative_quiz_text(text):
+        return True
+    if re.match(r"^[—\-–_·•、：:，,\s]+", text):
+        return True
+    if re.match(r"^(情况[一二三四五六七八九十\d]+|第[一二三四五六七八九十\d]+种情况)\s*[：:、，,]?", text):
+        return True
+    if re.search(r"(同学们|大家|我们来看|我们来看看|接下来|首先|然后|现在|这里|本页|这一页)", text):
+        return True
+    if re.search(r"(示意图|页面|标题|主光轴)$", text) and len(text) <= 12:
+        return True
+    if re.fullmatch(r"[fuv]\s*[<≤>=]\s*[u2f\d\s<≤>=]+", text, flags=re.I):
+        return True
+    if len(text) < 10 and not re.search(r"(实像|虚像|倒立|正立|放大|缩小|焦距|物距|像距|会聚|发散)", text):
+        return True
+    return False
+
+
+def _is_generic_quiz_label(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(补强材料\s*\d*|第\s*\d+\s*页|页面|标题|讲解页|课程导入|导入|总结过渡|核心概念|学习目标)",
+            text,
+        )
+    )
+
+
+def _is_meaningful_quiz_point(value: str) -> bool:
+    text = _clean_knowledge_point(value)
+    if not text or _is_decorative_quiz_text(text) or _is_generic_quiz_label(text):
+        return False
+    if not _is_low_quality_quiz_fragment(text):
+        return True
+    # 很多真实知识点很短（如“遮挡”“场景干扰”）。只要不是泛标签，
+    # 就保留短中文概念，避免 fallback 题退回到大主题。
+    return bool(re.search(r"[\u4e00-\u9fff]", text) and 2 <= len(text) <= 24)
+
+
+def _is_explanatory_quiz_sentence(value: str) -> bool:
+    text = _clean_text(value)
+    if _is_low_quality_quiz_fragment(text):
+        return False
+    if len(text) < 14:
+        return False
+    return bool(
+        re.search(
+            r"(当|如果|因为|因此|所以|会|能够|不能|形成|决定|说明|表示|位于|大于|小于|等于|之间|以内|以外|实际|反向|会聚|发散|倒立|正立|放大|缩小|实像|虚像)",
+            text,
+        )
+    )
+
+
 def _quiz_points_from_scene(scene: ClassroomScene) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
-    title = _clean_text(scene.title)
     for value in [*scene.knowledge_points, *_scene_text_values(scene)]:
         text = _clean_knowledge_point(value)
         if (
             not text
-            or text == title
             or text in seen
             or _is_decorative_quiz_text(text)
+            or not _is_meaningful_quiz_point(text)
         ):
             continue
         seen.add(text)
@@ -1157,15 +1210,15 @@ def _question(
 def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]:
     content = scene.content or {}
     values: list[str] = []
-    extracted = content.get("extracted_text", [])
-    if isinstance(extracted, list):
-        values.extend(str(item) for item in extracted)
-    markdown = content.get("markdown", "")
-    if markdown:
-        values.append(str(markdown))
     for action in scene.actions or []:
         if action.type == "speech" and action.text:
             values.append(action.text)
+    markdown = content.get("markdown", "")
+    if markdown:
+        values.append(str(markdown))
+    extracted = content.get("extracted_text", [])
+    if isinstance(extracted, list):
+        values.extend(str(item) for item in extracted)
 
     snippets: list[str] = []
     for value in values:
@@ -1176,7 +1229,7 @@ def _scene_text_snippets(scene: ClassroomScene, max_items: int = 3) -> list[str]
             part = _clean_text(part)
             if len(part) < 8:
                 continue
-            if _is_decorative_quiz_text(part):
+            if not _is_explanatory_quiz_sentence(part):
                 continue
             if part not in snippets:
                 snippets.append(part[:90])
@@ -1201,7 +1254,7 @@ def _conceptual_distractors(
     candidates = [
         item
         for item in [*pool, *generic]
-        if item and item != correct
+        if item and item != correct and not _is_low_quality_quiz_fragment(item)
     ]
     result: list[str] = []
     seen: set[str] = set()
@@ -1379,6 +1432,210 @@ def _is_quiz_source_scene(scene: ClassroomScene, *, is_first_slide: bool = False
     if any(keyword in title for keyword in QUIZ_SOURCE_INTERACTION_TITLE_KEYWORDS):
         return False
     return True
+
+
+def _repair_animation_js_line_comments(script: str) -> str:
+    if "//" not in script:
+        return script
+    boundary = (
+        r"(?=(?:function\s+|const\s+|let\s+|var\s+|if\s*\(|else\b|for\s*\(|"
+        r"while\s*\(|return\b|document\.|ctx\.|canvas\.|requestAnimationFrame\s*\(|"
+        r"[A-Za-z_$][\w$]*\s*=|//))"
+    )
+
+    def repl(match: re.Match) -> str:
+        comment = (match.group(1) or "").strip()
+        return f"/* {comment} */" if comment else ""
+
+    return re.sub(r"//\s*([^/\n\r]*?)\s*" + boundary, repl, script)
+
+
+ANIMATION_LAB_EMBED_STYLE = """
+
+<style id="ai-creator-animation-lab-embed">
+html,
+body {
+  width: 100% !important;
+  min-height: 100% !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  background: #ffffff !important;
+}
+body {
+  box-sizing: border-box !important;
+  padding: 10px !important;
+  color: #0f172a !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+h1,
+h2 {
+  margin: 0 0 8px !important;
+  color: #2D5016 !important;
+  font-size: clamp(18px, 2.3vw, 24px) !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+}
+body > h1:first-child,
+body > h2:first-child {
+  display: none !important;
+}
+.container,
+main,
+.app,
+#app {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+canvas,
+svg {
+  display: block !important;
+  width: 100% !important;
+  max-width: min(100%, calc(166.67vh - 226px)) !important;
+  height: auto !important;
+  max-height: calc(100vh - 136px) !important;
+  margin: 0 auto !important;
+}
+.controls,
+form {
+  margin-top: 8px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px 12px !important;
+}
+label,
+.info,
+p {
+  margin-block: 4px !important;
+  line-height: 1.38 !important;
+}
+input[type="range"] {
+  width: min(520px, 58vw) !important;
+}
+button {
+  min-height: 32px !important;
+}
+</style>
+"""
+
+
+def _inject_animation_embed_style(html: str) -> str:
+    text = str(html or "")
+    if "ai-creator-animation-lab-embed" in text:
+        return text
+    if "</head>" in text.lower():
+        return re.sub(
+            r"</head>",
+            f"{ANIMATION_LAB_EMBED_STYLE}</head>",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return f"{ANIMATION_LAB_EMBED_STYLE}{text}"
+
+
+def _upgrade_animation_canvas_resolution(html: str) -> str:
+    text = str(html or "")
+
+    def repl(match: re.Match) -> str:
+        tag = match.group(0)
+
+        def read_attr(name: str) -> int | None:
+            found = re.search(rf'\b{name}\s*=\s*["\']?(\d+)', tag, flags=re.IGNORECASE)
+            return int(found.group(1)) if found else None
+
+        width = read_attr("width")
+        height = read_attr("height")
+        target_w = max(width or 0, 1200)
+        target_h = max(height or 0, 720)
+        if width and height and width >= 1000 and height >= 620:
+            return tag
+        if width:
+            tag = re.sub(r'\bwidth\s*=\s*["\']?\d+["\']?', f'width="{target_w}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' width="{target_w}">'
+        if height:
+            tag = re.sub(r'\bheight\s*=\s*["\']?\d+["\']?', f'height="{target_h}"', tag, flags=re.IGNORECASE)
+        else:
+            tag = tag[:-1] + f' height="{target_h}">'
+        return tag
+
+    text = re.sub(r"<canvas\b[^>]*>", repl, text, count=3, flags=re.IGNORECASE)
+    responsive_rule = (
+        "\ncanvas { max-width: 100% !important; height: auto !important; "
+        "image-rendering: auto; }\n"
+    )
+    if "</style>" in text.lower():
+        text = re.sub(r"</style>", responsive_rule + "</style>", text, count=1, flags=re.IGNORECASE)
+    else:
+        text = re.sub(
+            r"</head>",
+            f"<style>{responsive_rule}</style></head>",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
+def _repair_animation_html_for_display(html: str) -> str:
+    text = _upgrade_animation_canvas_resolution(str(html or ""))
+    text = _inject_animation_embed_style(text)
+
+    def repair_script(match: re.Match) -> str:
+        open_tag, script, close_tag = match.group(1), match.group(2), match.group(3)
+        return f"{open_tag}{_repair_animation_js_line_comments(script)}{close_tag}"
+
+    return re.sub(
+        r"(<script\b[^>]*>)(.*?)(</script>)",
+        repair_script,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _sanitize_animation_lab_html(html: str) -> str:
+    text = str(html or "").strip()
+    text = re.sub(r"^```(?:html)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = _repair_animation_html_for_display(text)
+    lowered = text.lower()
+    if not lowered.lstrip().startswith("<!doctype html") and "<html" not in lowered:
+        return ""
+    blocked = [
+        "<script src=",
+        "<iframe",
+        "<object",
+        "<embed",
+        "http://",
+        "https://",
+        "fetch(",
+        "xmlhttprequest",
+        "localstorage",
+        "sessionstorage",
+        "document.cookie",
+        "navigator.sendbeacon",
+        "websocket",
+    ]
+    if any(token in lowered for token in blocked):
+        return ""
+    if len(re.findall(r"<!doctype html", lowered)) > 1 or len(re.findall(r"<html", lowered)) > 1:
+        return ""
+    if "</html>" not in lowered:
+        return ""
+    if "<canvas" not in lowered and "<svg" not in lowered:
+        return ""
+    if "<button" not in lowered and 'type="range"' not in lowered and "type='range'" not in lowered:
+        return ""
+    return text[:120000]
 
 
 class InteractiveClassroomGenerator:
@@ -1744,72 +2001,366 @@ class InteractiveClassroomGenerator:
             scene_total=len(svg_files),
         )
 
-        max_workers = min(DEFAULT_SLIDE_SCENE_MAX_CONCURRENCY, len(svg_files))
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-slide") as executor:
-            future_to_index = {
-                executor.submit(
-                    self._build_single_slide_scene_from_svg,
-                    idx,
-                    fname,
-                    svg_dir,
-                    manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else "",
-                    len(svg_files),
-                    ppt_job_id,
-                    student_profile,
-                    cancel_check,
-                    critic_mode,
-                    knowledge_context,
-                    semantic_reviewer,
-                ): idx
-                for idx, fname in enumerate(svg_files, start=1)
+        for idx, fname in enumerate(svg_files, start=1):
+            _raise_if_cancelled(cancel_check)
+            scene = self._build_single_slide_scene_from_svg(
+                idx,
+                fname,
+                svg_dir,
+                manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else "",
+                len(svg_files),
+                ppt_job_id,
+                student_profile,
+                cancel_check,
+                critic_mode,
+                knowledge_context,
+                semantic_reviewer,
+            )
+            scenes.append(scene)
+
+            if tts_service is None or not audio_dir or not classroom_id:
+                _emit_progress(
+                    progress_callback,
+                    stage="build_scenes",
+                    stage_index=1,
+                    scene_index=idx,
+                    scene_total=len(svg_files),
+                    scene=scene,
+                )
+                continue
+
+            _emit_progress(
+                progress_callback,
+                stage="synthesize_tts",
+                stage_index=3,
+                scene_index=idx - 1,
+                scene_total=len(svg_files),
+            )
+            _synthesize_scene_speech_actions(
+                service=tts_service,
+                scene=scene,
+                audio_dir=audio_dir,
+                classroom_id=classroom_id,
+                cancel_check=cancel_check,
+            )
+            _emit_progress(
+                progress_callback,
+                stage="synthesize_tts",
+                stage_index=3,
+                scene_index=idx,
+                scene_total=len(svg_files),
+                scene=scene,
+            )
+        return scenes
+
+    def _load_ppt_job_sources(
+        self,
+        user_id: str,
+        ppt_job_id: str,
+    ) -> tuple[str, list[str], list[str]]:
+        job_dir = self._resolve_ppt_job_dir(user_id, ppt_job_id)
+        if not job_dir:
+            return "", [], []
+        svg_dir = os.path.join(job_dir, "svg_final")
+        if not os.path.exists(svg_dir):
+            svg_dir = os.path.join(job_dir, "svg_output")
+        return svg_dir, _sorted_svg_files(svg_dir), self._load_manuscript_notes(job_dir)
+
+    def _build_slide_probe_from_svg(
+        self,
+        idx: int,
+        fname: str,
+        svg_dir: str,
+        manuscript_note: str = "",
+    ) -> ClassroomScene:
+        path = os.path.join(svg_dir, fname)
+        with open(path, "r", encoding="utf-8") as f:
+            svg = f.read()
+        svg_texts = _extract_svg_texts(svg)
+        title = _derive_slide_title(idx, fname, svg_texts, manuscript_note)
+        return ClassroomScene(
+            id=f"scene_slide_{idx:03d}",
+            type="slide",
+            title=title,
+            order=idx,
+            knowledge_points=svg_texts[:4],
+            content={"extracted_text": svg_texts},
+            actions=[],
+        )
+
+    def _plan_quiz_jobs_by_slide_id(
+        self,
+        slide_probes: list[ClassroomScene],
+    ) -> dict[str, dict[str, Any]]:
+        quiz_source_slides = [
+            scene
+            for i, scene in enumerate(slide_probes)
+            if _is_quiz_source_scene(scene, is_first_slide=(i == 0))
+        ]
+        if not quiz_source_slides and slide_probes:
+            quiz_source_slides = list(slide_probes)
+
+        quiz_source_ids = {scene.id for scene in quiz_source_slides}
+        total_quiz_source_slides = len(quiz_source_slides)
+        quiz_source_index = 0
+        quiz_index = 1
+        pending_slide_ids: list[str] = []
+        jobs_by_after_slide_id: dict[str, dict[str, Any]] = {}
+
+        for scene in slide_probes:
+            if scene.id not in quiz_source_ids:
+                continue
+            quiz_source_index += 1
+            pending_slide_ids.append(scene.id)
+
+            is_last = quiz_source_index == total_quiz_source_slides
+            enough_for_mid_quiz = len(pending_slide_ids) >= 3 and not is_last
+            enough_for_final_quiz = is_last and pending_slide_ids
+            if not (enough_for_mid_quiz or enough_for_final_quiz):
+                continue
+
+            jobs_by_after_slide_id[scene.id] = {
+                "quiz_index": quiz_index,
+                "source_ids": list(pending_slide_ids),
+                "max_questions": 2 if not is_last else 3,
+                "require_short_answer": quiz_index % 3 == 0,
             }
+            quiz_index += 1
+            pending_slide_ids = []
 
-            completed = 0
-            scenes_by_index: dict[int, ClassroomScene] = {}
-            next_emit_index = 1
-            for future in as_completed(future_to_index):
-                _raise_if_cancelled(cancel_check)
-                idx = future_to_index[future]
-                scene = future.result()
-                scenes_by_index[idx] = scene
-                completed += 1
-                if tts_service is None or not audio_dir or not classroom_id:
-                    next_emit_index = _emit_ordered_ready_scenes(
-                        progress_callback,
-                        stage="build_scenes",
-                        stage_index=1,
-                        ready_scenes=scenes_by_index,
-                        next_emit_index=next_emit_index,
-                        scene_total=len(svg_files),
-                    )
-                    continue
+        return jobs_by_after_slide_id
 
-                while next_emit_index in scenes_by_index:
-                    ready_scene = scenes_by_index[next_emit_index]
-                    _emit_progress(
-                        progress_callback,
-                        stage="synthesize_tts",
-                        stage_index=3,
-                        scene_index=next_emit_index - 1,
-                        scene_total=len(svg_files),
-                    )
-                    _synthesize_scene_speech_actions(
-                        service=tts_service,
-                        scene=ready_scene,
-                        audio_dir=audio_dir,
-                        classroom_id=classroom_id,
-                        cancel_check=cancel_check,
-                    )
-                    _emit_progress(
-                        progress_callback,
-                        stage="synthesize_tts",
-                        stage_index=3,
-                        scene_index=next_emit_index,
-                        scene_total=len(svg_files),
-                        scene=ready_scene,
-                    )
-                    next_emit_index += 1
-            scenes = [scenes_by_index[idx] for idx in sorted(scenes_by_index)]
+    @staticmethod
+    def _resolve_animation_after_slide_id(
+        animation_scene: ClassroomScene | None,
+        slide_probes: list[ClassroomScene],
+    ) -> str:
+        if animation_scene is None or not slide_probes:
+            return ""
+        slide_ids = {scene.id for scene in slide_probes}
+        placement_after_scene_id = str(
+            (animation_scene.content or {}).get("placement_after_scene_id") or ""
+        ).strip()
+        if placement_after_scene_id in slide_ids:
+            return placement_after_scene_id
+
+        for idx, scene in enumerate(slide_probes):
+            if _is_quiz_source_scene(scene, is_first_slide=(idx == 0)):
+                return scene.id
+        return slide_probes[0].id
+
+    def _build_ordered_scenes_from_ppt_job(
+        self,
+        *,
+        user_id: str,
+        ppt_job_id: str,
+        topic: str,
+        course: str,
+        student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
+        progress_callback: ProgressCallback | None = None,
+        tts_service: ClassroomTTSService | None = None,
+        audio_dir: str = "",
+        classroom_id: str = "",
+        critic_mode: str = "off",
+        knowledge_context: dict[str, Any] | None = None,
+        semantic_reviewer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> list[ClassroomScene]:
+        svg_dir, svg_files, manuscript_notes = self._load_ppt_job_sources(user_id, ppt_job_id)
+        if not svg_files:
+            return []
+
+        _emit_progress(
+            progress_callback,
+            stage="read_ppt",
+            stage_index=0,
+            scene_index=0,
+            scene_total=len(svg_files),
+        )
+
+        slide_probes = [
+            self._build_slide_probe_from_svg(
+                idx,
+                fname,
+                svg_dir,
+                manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else "",
+            )
+            for idx, fname in enumerate(svg_files, start=1)
+        ]
+        quiz_jobs_by_after_slide_id = self._plan_quiz_jobs_by_slide_id(slide_probes)
+        animation_scene = (
+            self._maybe_build_animation_lab_scene(
+                topic=topic,
+                course=course or "通用课程",
+                scenes=slide_probes,
+                student_profile=student_profile,
+                cancel_check=cancel_check,
+            )
+            if semantic_reviewer is not None
+            else None
+        )
+        animation_after_slide_id = self._resolve_animation_after_slide_id(animation_scene, slide_probes)
+        expected_mindmap = len(slide_probes) >= 2
+        expected_scene_total = (
+            len(slide_probes)
+            + len(quiz_jobs_by_after_slide_id)
+            + (1 if animation_scene is not None else 0)
+            + (1 if expected_mindmap else 0)
+        )
+
+        _emit_progress(
+            progress_callback,
+            stage="build_scenes",
+            stage_index=1,
+            scene_index=0,
+            scene_total=expected_scene_total,
+            expected_scene_total=expected_scene_total,
+            expected_slide_total=len(slide_probes),
+        )
+
+        scenes: list[ClassroomScene] = []
+        generated_slides_by_id: dict[str, ClassroomScene] = {}
+        completed_quiz_jobs = 0
+        animation_inserted = False
+
+        def _append_and_emit(
+            scene: ClassroomScene,
+            *,
+            stage: str,
+            stage_index: int,
+            scene_index: int,
+            scene_total: int,
+        ) -> None:
+            scene.order = len(scenes) + 1
+            scenes.append(scene)
+            _emit_progress(
+                progress_callback,
+                stage=stage,
+                stage_index=stage_index,
+                scene_index=scene_index,
+                scene_total=scene_total,
+                expected_scene_total=expected_scene_total,
+                expected_slide_total=len(slide_probes),
+                scene=scene,
+            )
+
+        for idx, fname in enumerate(svg_files, start=1):
+            _raise_if_cancelled(cancel_check)
+            slide_scene = self._build_single_slide_scene_from_svg(
+                idx,
+                fname,
+                svg_dir,
+                manuscript_notes[idx - 1] if idx - 1 < len(manuscript_notes) else "",
+                len(svg_files),
+                ppt_job_id,
+                student_profile,
+                cancel_check,
+                critic_mode,
+                knowledge_context,
+                semantic_reviewer,
+            )
+            if tts_service is not None and audio_dir and classroom_id:
+                _synthesize_scene_speech_actions(
+                    service=tts_service,
+                    scene=slide_scene,
+                    audio_dir=audio_dir,
+                    classroom_id=classroom_id,
+                    cancel_check=cancel_check,
+                )
+            generated_slides_by_id[slide_scene.id] = slide_scene
+            _append_and_emit(
+                slide_scene,
+                stage="build_scenes",
+                stage_index=1,
+                scene_index=len(scenes) + 1,
+                scene_total=expected_scene_total,
+            )
+
+            if (
+                animation_scene is not None
+                and not animation_inserted
+                and animation_after_slide_id == slide_scene.id
+            ):
+                animation_inserted = True
+                _append_and_emit(
+                    animation_scene,
+                    stage="build_scenes",
+                    stage_index=1,
+                    scene_index=len(scenes) + 1,
+                    scene_total=expected_scene_total,
+                )
+
+            quiz_job = quiz_jobs_by_after_slide_id.get(slide_scene.id)
+            if quiz_job is None:
+                continue
+
+            completed_quiz_jobs += 1
+            quiz_source_scenes = [
+                generated_slides_by_id[scene_id]
+                for scene_id in quiz_job["source_ids"]
+                if scene_id in generated_slides_by_id
+            ]
+            quiz_scene = self._build_quiz_scene(
+                quiz_index=int(quiz_job["quiz_index"]),
+                order=len(scenes) + 1,
+                topic=topic,
+                scenes=quiz_source_scenes,
+                max_questions=int(quiz_job["max_questions"]),
+                student_profile=student_profile,
+                cancel_check=cancel_check,
+                progress_callback=progress_callback,
+                require_short_answer=bool(quiz_job["require_short_answer"]),
+                critic_mode=critic_mode,
+                knowledge_context=knowledge_context,
+                semantic_reviewer=semantic_reviewer,
+            )
+            if quiz_scene is None:
+                _emit_progress(
+                    progress_callback,
+                    stage="insert_quizzes",
+                    stage_index=2,
+                    scene_index=completed_quiz_jobs,
+                    scene_total=len(quiz_jobs_by_after_slide_id),
+                    expected_scene_total=expected_scene_total,
+                    expected_slide_total=len(slide_probes),
+                )
+                continue
+
+            self._renumber_quiz_scenes([*scenes, quiz_scene], topic)
+            _append_and_emit(
+                quiz_scene,
+                stage="insert_quizzes",
+                stage_index=2,
+                scene_index=completed_quiz_jobs,
+                scene_total=len(quiz_jobs_by_after_slide_id),
+            )
+
+        if animation_scene is not None and not animation_inserted:
+            _append_and_emit(
+                animation_scene,
+                stage="build_scenes",
+                stage_index=1,
+                scene_index=len(scenes) + 1,
+                scene_total=expected_scene_total,
+            )
+
+        if expected_mindmap:
+            _raise_if_cancelled(cancel_check)
+            mindmap_scene = self._build_mindmap_scene(
+                topic,
+                list(scenes),
+                student_profile,
+                cancel_check,
+            )
+            if mindmap_scene is not None:
+                _append_and_emit(
+                    mindmap_scene,
+                    stage="build_scenes",
+                    stage_index=1,
+                    scene_index=len(scenes) + 1,
+                    scene_total=expected_scene_total,
+                )
+
         return scenes
 
     def _build_single_slide_scene_from_svg(
@@ -2010,10 +2561,10 @@ class InteractiveClassroomGenerator:
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"关于“{primary_point}”，以下哪一项最能说明本节要求掌握的判断依据？",
+                        question=f"根据课堂对“{primary_point}”的讲解，哪一项最能说明它的判断依据？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"这道题考查的是对“{primary_point}”的理解依据，而不是记住它出现在第几页。",
+                        analysis=f"这道题考查的是对“{primary_point}”相关概念和条件的理解，而不是记住页面标题。",
                         knowledge_point=primary_point,
                     )
                 )
@@ -2031,10 +2582,10 @@ class InteractiveClassroomGenerator:
                 questions.append(
                     _question(
                         qid=f"{qid_prefix}{len(questions) + 1}",
-                        question=f"遇到与“{primary_point}”相关的新题时，应该优先采用哪种应用步骤？",
+                        question=f"分析“{primary_point}”相关题目时，应该优先完成哪一个应用步骤？",
                         correct=correct,
                         distractors=distractors,
-                        analysis=f"补强练习需要验证能否把“{primary_point}”迁移到新情境，而不是只匹配页面标题。",
+                        analysis=f"这类题需要先识别“{primary_point}”的适用条件，再结合题目情境判断。",
                         knowledge_point=primary_point,
                     )
                 )
@@ -2873,6 +3424,201 @@ class InteractiveClassroomGenerator:
             ],
         )
 
+    def _call_content_llm_animation_lab(self, prompt: str) -> str:
+        """Ask the content LLM whether a classroom animation lab is useful, and generate it."""
+        from generators.shared_config import content_llm_call
+
+        return content_llm_call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是智创空间的互动课堂动画实验设计 agent。"
+                        "你的任务不是每次都生成动画，而是判断课堂内容是否真的需要一个可交互动画实验。"
+                        "只输出 JSON 对象，不要 markdown，不要代码围栏，不要解释。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.35,
+            max_tokens=DEFAULT_ANIMATION_LAB_MAX_TOKENS,
+        )
+
+    def _build_animation_lab_prompt(
+        self,
+        *,
+        topic: str,
+        course: str,
+        slide_summaries: list[dict[str, Any]],
+        student_profile: dict[str, str] | None = None,
+    ) -> str:
+        context_lines: list[str] = []
+        for idx, slide in enumerate(slide_summaries, start=1):
+            title = _clean_text(str(slide.get("title") or ""))
+            points = [
+                _clean_text(str(p))
+                for p in slide.get("knowledge_points", [])
+                if _clean_text(str(p))
+            ][:6]
+            texts = [
+                _clean_text(str(t))
+                for t in slide.get("extracted_text", [])
+                if _clean_text(str(t))
+            ][:10]
+            speech = _clean_text(str(slide.get("speech_excerpt") or ""))[:220]
+            context_lines.append(
+                f"{idx}. scene_id={slide.get('scene_id')}\n"
+                f"   标题：{title or '无'}\n"
+                f"   关键点：{'；'.join(points) or '无'}\n"
+                f"   页面文本：{'；'.join(texts) or '无'}\n"
+                f"   讲稿摘录：{speech or '无'}"
+            )
+        profile_hint = _student_profile_hint(_normalize_student_profile(student_profile))
+        profile_section = f"\n## 学生画像\n{profile_hint}\n" if profile_hint else ""
+        return f"""请判断《{course or '通用课程'}》中《{topic}》这节互动课堂是否需要插入一个“动画实验”场景。
+
+## 已生成课堂页面
+{chr(10).join(context_lines)}
+{profile_section}
+
+## 生成判断
+只有当课堂里存在以下内容之一时才生成动画：
+- 几何、空间关系、物理过程、光路、电路、力学、化学变化、数据结构、算法过程、系统流程、概率/函数变化等可视化对象；
+- 学生仅靠文字/静态页容易误解，需要通过拖动参数或逐步播放观察规律；
+- 动画能明确服务某个页面里的关键知识点，而不是装饰。
+
+如果只是概念定义、历史背景、课程介绍、纯文本总结、学习建议，返回 should_generate=false。
+
+## JSON 输出格式
+必须返回 JSON 对象：
+{{
+  "should_generate": boolean,
+  "reason": "为什么生成或不生成，20-80字",
+  "placement_after_scene_id": "若生成，填最适合插入其后的 scene_id；若不生成可为空",
+  "title": "若生成，动画场景标题",
+  "summary": "若生成，动画实验摘要",
+  "knowledge_points": ["若生成，1-5个知识点"],
+  "video_prompt": "若生成，可用于视频生成的提示词",
+  "html": "若生成，完整 <!doctype html> 离线 HTML 文档"
+}}
+
+## HTML 硬性要求（should_generate=true 时）
+1. 完整 <!doctype html> 文档，只用内联 CSS/JS，不得引用外部 URL。
+2. 必须包含 canvas 或 SVG 动画，且至少一个 slider/button 交互控件。
+3. 动画逻辑必须贴合课堂页面内容，不要生成通用波形、通用粒子或无关占位。
+4. canvas width/height 内部缓冲不低于 1200x720，CSS 响应式适配容器。
+5. JavaScript 不得使用 // 行注释；注释必须使用 /* ... */。
+6. 页面会嵌入课堂 iframe，画布、标题和控件必须在 16:9 视口内完整展示，不依赖滚动；控件紧凑排列，避免大段说明。
+7. 不要给 body、主容器或 .container 添加卡片式边框、阴影、厚 padding；课堂播放器外层已提供承载区域。
+8. 浅色专业风格，主色 #0f172a 和 #2D5016。
+"""
+
+    def _maybe_build_animation_lab_scene(
+        self,
+        *,
+        topic: str,
+        course: str,
+        scenes: list[ClassroomScene],
+        student_profile: dict[str, str] | None = None,
+        cancel_check: CancelCheck | None = None,
+    ) -> ClassroomScene | None:
+        _raise_if_cancelled(cancel_check)
+        if not self.llm_quiz_enabled:
+            return None
+        slide_scenes = [s for s in scenes if s.type == "slide"]
+        if not slide_scenes:
+            return None
+
+        slide_summaries = self._build_slide_summaries(slide_scenes)
+        try:
+            prompt = self._build_animation_lab_prompt(
+                topic=topic,
+                course=course,
+                slide_summaries=slide_summaries,
+                student_profile=student_profile,
+            )
+            raw = self._call_content_llm_animation_lab(prompt)
+            _raise_if_cancelled(cancel_check)
+            data = json.loads(self._clean_llm_json(raw))
+        except Exception:
+            return None
+
+        if not isinstance(data, dict) or not bool(data.get("should_generate")):
+            return None
+        html = _sanitize_animation_lab_html(str(data.get("html") or ""))
+        if not html:
+            return None
+
+        title = _clean_text(str(data.get("title") or ""))[:80] or f"{topic} 动画实验"
+        summary = _clean_text(str(data.get("summary") or ""))[:300] or (
+            f"通过交互动画观察《{topic}》中的关键变化。"
+        )
+        reason = _clean_text(str(data.get("reason") or ""))[:300]
+        placement_after_scene_id = _clean_text(str(data.get("placement_after_scene_id") or ""))[:128]
+        points = [
+            _clean_text(str(item))[:60]
+            for item in data.get("knowledge_points", [])
+            if _clean_text(str(item))
+        ][:5] if isinstance(data.get("knowledge_points"), list) else []
+        if not points:
+            points = [topic]
+        video_prompt = _clean_text(str(data.get("video_prompt") or ""))[:1000]
+
+        scene_ts = int(datetime.now().timestamp() * 1000)
+        speech_text = (
+            f"这里插入一个互动动画实验：{title}。"
+            f"{summary}"
+            f"{' 生成原因是：' + reason if reason else ''}"
+            "你可以拖动控件观察变量变化，再回到后面的测验验证理解。"
+        )
+        return ClassroomScene(
+            id=f"scene_animation_{scene_ts}",
+            type="animation_lab",
+            title=title,
+            order=0,
+            knowledge_points=points,
+            content={
+                "format": "html",
+                "html": html,
+                "summary": summary,
+                "video_prompt": video_prompt,
+                "decision_reason": reason,
+                "placement_after_scene_id": placement_after_scene_id,
+                "source": "llm_decision",
+                "asset_kind": "interactive_animation",
+            },
+            actions=[
+                ClassroomAction(
+                    id=f"act_animation_{scene_ts}",
+                    type="speech",
+                    text=speech_text,
+                )
+            ],
+        )
+
+    def _insert_animation_lab_scene(
+        self,
+        scenes: list[ClassroomScene],
+        animation_scene: ClassroomScene,
+    ) -> list[ClassroomScene]:
+        placement_after_scene_id = str(
+            (animation_scene.content or {}).get("placement_after_scene_id") or ""
+        ).strip()
+        for idx, scene in enumerate(scenes):
+            if placement_after_scene_id and scene.id == placement_after_scene_id:
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        slide_seen = 0
+        for idx, scene in enumerate(scenes):
+            if scene.type != "slide":
+                continue
+            slide_seen += 1
+            if _is_quiz_source_scene(scene, is_first_slide=(slide_seen == 1)):
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        for idx, scene in enumerate(scenes):
+            if scene.type == "slide":
+                return [*scenes[:idx + 1], animation_scene, *scenes[idx + 1:]]
+        return [animation_scene, *scenes]
+
     def _insert_quiz_scenes(
         self,
         topic: str,
@@ -2890,14 +3636,6 @@ class InteractiveClassroomGenerator:
         if not slide_scenes:
             return scenes
 
-        # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
-        # 密度：每 3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final 测验
-        # 实际 mid 数 = max(0, (N-1)//3)，加 1 个 final
-        _n = len([s for i, s in enumerate(slide_scenes) if _is_quiz_source_scene(s, is_first_slide=(i == 0))])
-        quiz_count_estimate = max(0, (_n - 1) // 3) + 1
-
-        result_plan: list[tuple[str, ClassroomScene | int]] = []
-        quiz_jobs: list[dict[str, Any]] = []
         quiz_index = 1
         pending_slides: list[ClassroomScene] = []
         quiz_source_slides = [
@@ -2909,11 +3647,98 @@ class InteractiveClassroomGenerator:
             quiz_source_slides = list(slide_scenes)
         quiz_source_ids = {scene.id for scene in quiz_source_slides}
         total_quiz_source_slides = len(quiz_source_slides)
-        quiz_source_index = 0
+        # 估计要插入的 quiz 数量（按现有规则），用于阶段 3 的 scene_total
+        # 密度：每 3 张讲解 → 1 个 mid 测验 + 末尾 1 个 final 测验
+        # 实际 mid 数 = max(0, (N-1)//3)，加 1 个 final
+        quiz_count_estimate = max(0, (total_quiz_source_slides - 1) // 3) + 1
+        expected_scene_total = len(scenes) + quiz_count_estimate + max(0, expected_extra_scene_count)
+        _emit_progress(
+            progress_callback,
+            stage="insert_quizzes",
+            stage_index=2,
+            scene_index=0,
+            scene_total=quiz_count_estimate,
+            expected_scene_total=expected_scene_total,
+            expected_slide_total=len(slide_scenes),
+        )
 
-        for scene in slide_scenes:
+        quiz_source_index = 0
+        completed_quiz_jobs = 0
+        result: list[ClassroomScene] = []
+        pending_quiz_job: dict[str, Any] | None = None
+
+        def _append_scene(scene: ClassroomScene) -> None:
+            result.append(scene)
+            scene.order = len(result)
+
+        def _emit_existing_scene(scene: ClassroomScene) -> None:
+            _emit_progress(
+                progress_callback,
+                stage="insert_quizzes",
+                stage_index=2,
+                scene_index=completed_quiz_jobs,
+                scene_total=quiz_count_estimate,
+                expected_scene_total=expected_scene_total,
+                expected_slide_total=len(slide_scenes),
+                scene=scene,
+            )
+
+        def _flush_pending_quiz() -> None:
+            nonlocal completed_quiz_jobs, pending_quiz_job
+            if pending_quiz_job is None:
+                return
             _raise_if_cancelled(cancel_check)
-            result_plan.append(("slide", scene))
+            job = pending_quiz_job
+            pending_quiz_job = None
+            completed_quiz_jobs += 1
+            quiz_scene = self._build_quiz_scene(
+                quiz_index=int(job["quiz_index"]),
+                order=len(result) + 1,
+                topic=topic,
+                scenes=job["scenes"],
+                max_questions=int(job["max_questions"]),
+                student_profile=student_profile,
+                cancel_check=cancel_check,
+                progress_callback=progress_callback,
+                require_short_answer=bool(job["require_short_answer"]),
+                critic_mode=critic_mode,
+                knowledge_context=knowledge_context,
+                semantic_reviewer=semantic_reviewer,
+            )
+            if quiz_scene is None:
+                _emit_progress(
+                    progress_callback,
+                    stage="insert_quizzes",
+                    stage_index=2,
+                    scene_index=completed_quiz_jobs,
+                    scene_total=quiz_count_estimate,
+                    expected_scene_total=expected_scene_total,
+                    expected_slide_total=len(slide_scenes),
+                )
+                return
+
+            _append_scene(quiz_scene)
+            self._renumber_quiz_scenes(result, topic)
+            _emit_progress(
+                progress_callback,
+                stage="insert_quizzes",
+                stage_index=2,
+                scene_index=completed_quiz_jobs,
+                scene_total=quiz_count_estimate,
+                expected_scene_total=expected_scene_total,
+                expected_slide_total=len(slide_scenes),
+                scene=quiz_scene,
+            )
+
+        for scene in scenes:
+            _raise_if_cancelled(cancel_check)
+            if scene.type != "slide":
+                _append_scene(scene)
+                _emit_existing_scene(scene)
+                continue
+
+            _flush_pending_quiz()
+            _append_scene(scene)
             if scene.id not in quiz_source_ids:
                 continue
 
@@ -2929,91 +3754,16 @@ class InteractiveClassroomGenerator:
                 # P1-3 调优：每 3 个测验页出 1 道简答题（quiz_index 3/6/9/...）
                 # 配合"默认不强制"prompt，理论 ~33% 测验含简答。
                 require_short_answer = (quiz_index % 3 == 0)
-                quiz_jobs.append(
-                    {
-                        "quiz_index": quiz_index,
-                        "scenes": list(pending_slides),
-                        "max_questions": 2 if not is_last else 3,
-                        "require_short_answer": require_short_answer,
-                    }
-                )
-                result_plan.append(("quiz", quiz_index))
+                pending_quiz_job = {
+                    "quiz_index": quiz_index,
+                    "scenes": list(pending_slides),
+                    "max_questions": 2 if not is_last else 3,
+                    "require_short_answer": require_short_answer,
+                }
                 quiz_index += 1
                 pending_slides = []
 
-        if not quiz_jobs:
-            return [item for kind, item in result_plan if kind == "slide" and isinstance(item, ClassroomScene)]
-
-        expected_scene_total = len(result_plan) + max(0, expected_extra_scene_count)
-        _emit_progress(
-            progress_callback,
-            stage="insert_quizzes",
-            stage_index=2,
-            scene_index=0,
-            scene_total=len(quiz_jobs),
-            expected_scene_total=expected_scene_total,
-            expected_slide_total=len(slide_scenes),
-        )
-
-        quiz_order_by_index: dict[int, int] = {
-            int(item): order
-            for order, (kind, item) in enumerate(result_plan, start=1)
-            if kind == "quiz"
-        }
-        quiz_by_index: dict[int, ClassroomScene] = {}
-        completed_quiz_indexes: set[int] = set()
-        max_workers = min(DEFAULT_QUIZ_SCENE_MAX_CONCURRENCY, len(quiz_jobs))
-        if self.llm_quiz_enabled:
-            self._get_quiz_generator()
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="classroom-quiz") as executor:
-            future_to_job = {
-                executor.submit(
-                    self._build_quiz_scene,
-                    quiz_index=job["quiz_index"],
-                    order=0,
-                    topic=topic,
-                    scenes=job["scenes"],
-                    max_questions=job["max_questions"],
-                    student_profile=student_profile,
-                    cancel_check=cancel_check,
-                    progress_callback=progress_callback,
-                    require_short_answer=job["require_short_answer"],
-                    critic_mode=critic_mode,
-                    knowledge_context=knowledge_context,
-                    semantic_reviewer=semantic_reviewer,
-                ): job
-                for job in quiz_jobs
-            }
-            next_emit_quiz_index = 1
-            for done_idx, future in enumerate(as_completed(future_to_job), start=1):
-                _raise_if_cancelled(cancel_check)
-                job = future_to_job[future]
-                quiz_scene = future.result()
-                quiz_index = int(job["quiz_index"])
-                completed_quiz_indexes.add(quiz_index)
-                if quiz_scene is not None:
-                    quiz_scene.order = quiz_order_by_index.get(quiz_index, quiz_scene.order)
-                    quiz_by_index[quiz_index] = quiz_scene
-                next_emit_quiz_index = _emit_ordered_ready_scenes(
-                    progress_callback,
-                    stage="insert_quizzes",
-                    stage_index=2,
-                    ready_scenes=quiz_by_index,
-                    completed_indexes=completed_quiz_indexes,
-                    next_emit_index=next_emit_quiz_index,
-                    scene_total=len(quiz_jobs),
-                    expected_scene_total=expected_scene_total,
-                    expected_slide_total=len(slide_scenes),
-                )
-
-        result: list[ClassroomScene] = []
-        for kind, item in result_plan:
-            if kind == "slide" and isinstance(item, ClassroomScene):
-                result.append(item)
-            elif kind == "quiz":
-                quiz_scene = quiz_by_index.get(int(item))
-                if quiz_scene is not None:
-                    result.append(quiz_scene)
+        _flush_pending_quiz()
         self._renumber_quiz_scenes(result, topic)
         return result
 
@@ -3061,21 +3811,25 @@ class InteractiveClassroomGenerator:
         )
         audio_dir = self.storage.audio_dir(user_id, classroom_id)
         tts = ClassroomTTSService(output_dir=audio_dir, tts_config=tts_config)
+        scenes_are_materialized = False
 
         if ppt_job_id:
-            scenes = self._build_slide_scenes_from_ppt_job(
-                user_id,
-                ppt_job_id,
-                normalized_profile,
-                cancel_check,
-                progress_callback,
-                tts,
-                audio_dir,
-                classroom_id,
-                normalized_critic_mode,
-                knowledge_context,
-                semantic_reviewer,
+            scenes = self._build_ordered_scenes_from_ppt_job(
+                user_id=user_id,
+                ppt_job_id=ppt_job_id,
+                topic=topic,
+                course=course,
+                student_profile=normalized_profile,
+                cancel_check=cancel_check,
+                progress_callback=progress_callback,
+                tts_service=tts,
+                audio_dir=audio_dir,
+                classroom_id=classroom_id,
+                critic_mode=normalized_critic_mode,
+                knowledge_context=knowledge_context,
+                semantic_reviewer=semantic_reviewer,
             )
+            scenes_are_materialized = bool(scenes)
             if not scenes:
                 scenes = self._build_fallback_slide_scenes(
                     topic, normalized_profile, cancel_check, progress_callback
@@ -3086,16 +3840,27 @@ class InteractiveClassroomGenerator:
             )
 
         _raise_if_cancelled(cancel_check)
-        slide_count = sum(1 for s in scenes if s.type == "slide")
-        if slide_count >= 2:
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="classroom-mindmap") as executor:
-                mindmap_future = executor.submit(
-                    self._build_mindmap_scene,
-                    topic,
-                    list(scenes),
-                    normalized_profile,
-                    cancel_check,
+        if scenes_are_materialized:
+            for idx, scene in enumerate(scenes, start=1):
+                _raise_if_cancelled(cancel_check)
+                scene.order = idx
+        else:
+            slide_count = sum(1 for s in scenes if s.type == "slide")
+            animation_scene = (
+                self._maybe_build_animation_lab_scene(
+                    topic=topic,
+                    course=course or "通用课程",
+                    scenes=scenes,
+                    student_profile=normalized_profile,
+                    cancel_check=cancel_check,
                 )
+                if semantic_reviewer is not None
+                else None
+            )
+            if animation_scene is not None:
+                scenes = self._insert_animation_lab_scene(scenes, animation_scene)
+
+            if slide_count >= 2:
                 scenes = self._insert_quiz_scenes(
                     topic,
                     scenes,
@@ -3108,31 +3873,38 @@ class InteractiveClassroomGenerator:
                     semantic_reviewer=semantic_reviewer,
                 )
                 _raise_if_cancelled(cancel_check)
-                mindmap_scene = mindmap_future.result()
+                mindmap_scene = self._build_mindmap_scene(
+                    topic,
+                    list(scenes),
+                    normalized_profile,
+                    cancel_check,
+                )
                 if mindmap_scene is not None:
+                    mindmap_scene.order = len(scenes) + 1
+                    scenes.append(mindmap_scene)
                     _emit_progress(
                         progress_callback,
                         stage="build_scenes",
                         stage_index=1,
                         scene_index=len(scenes),
-                        scene_total=len(scenes) + 1,
+                        scene_total=len(scenes),
+                        scene=mindmap_scene,
                     )
-                    scenes.append(mindmap_scene)
-        else:
-            scenes = self._insert_quiz_scenes(
-                topic,
-                scenes,
-                normalized_profile,
-                cancel_check,
-                progress_callback,
-                critic_mode=normalized_critic_mode,
-                knowledge_context=knowledge_context,
-                semantic_reviewer=semantic_reviewer,
-            )
+            else:
+                scenes = self._insert_quiz_scenes(
+                    topic,
+                    scenes,
+                    normalized_profile,
+                    cancel_check,
+                    progress_callback,
+                    critic_mode=normalized_critic_mode,
+                    knowledge_context=knowledge_context,
+                    semantic_reviewer=semantic_reviewer,
+                )
 
-        for idx, scene in enumerate(scenes, start=1):
-            _raise_if_cancelled(cancel_check)
-            scene.order = idx
+            for idx, scene in enumerate(scenes, start=1):
+                _raise_if_cancelled(cancel_check)
+                scene.order = idx
 
         classroom = InteractiveClassroom(
             id=classroom_id,

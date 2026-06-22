@@ -18,6 +18,7 @@ from interactive_classroom.generator import (
     _emit_progress,
     _extract_svg_highlight_targets,
     _fallback_teaching_segments,
+    _sanitize_animation_lab_html,
     _select_teaching_targets,
     _synthesize_scene_speech_actions,
 )
@@ -93,6 +94,114 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertEqual("随堂测验 1：测试主题", quiz_scenes[0].title)
         self.assertEqual(["scene_slide_004", "scene_slide_005"], quiz_scenes[0].content["covered_scene_ids"])
         self.assertTrue(all(q["id"].startswith("q1_") for q in quiz_scenes[0].content["questions"]))
+
+    def test_preserves_inserted_interactive_scene_before_generated_quiz(self) -> None:
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+            ClassroomScene(
+                id="scene_animation_test",
+                type="animation_lab",
+                title="概念 B 动画实验",
+                order=0,
+                knowledge_points=["要点 B1"],
+                content={"format": "html", "html": "<!doctype html><html></html>"},
+                actions=[],
+            ),
+            _slide(4, "案例分析", ["案例步骤"]),
+        ]
+
+        result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
+
+        ordered_ids = [scene.id for scene in result]
+        self.assertIn("scene_animation_test", ordered_ids)
+        self.assertLess(
+            ordered_ids.index("scene_animation_test"),
+            ordered_ids.index("scene_quiz_001"),
+        )
+        self.assertEqual(
+            ["scene_slide_001", "scene_slide_002", "scene_slide_003"],
+            next(scene for scene in result if scene.id == "scene_quiz_001").content["covered_scene_ids"],
+        )
+
+    def test_ordered_ppt_generation_streams_quizzes_in_playback_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_dir = os.path.join(tmpdir, "generated_svg_ppt", "users", "user_1", "job_1")
+            svg_dir = os.path.join(job_dir, "svg_final")
+            os.makedirs(svg_dir)
+            with open(os.path.join(job_dir, "manuscript.md"), "w", encoding="utf-8") as f:
+                f.write("\n---\n".join([f"第 {idx} 页讲稿" for idx in range(1, 6)]))
+            for idx in range(1, 6):
+                with open(os.path.join(svg_dir, f"slide_{idx:03d}.svg"), "w", encoding="utf-8") as f:
+                    f.write(
+                        f"""
+                        <svg viewBox="0 0 1000 562">
+                          <text x="80" y="100" font-size="32">概念 {idx}</text>
+                          <text x="120" y="210" font-size="24">要点 {idx}</text>
+                        </svg>
+                        """
+                    )
+
+            generator = InteractiveClassroomGenerator(
+                backend_dir=tmpdir,
+                storage=None,  # type: ignore[arg-type]
+                llm_quiz_enabled=False,
+            )
+
+            def teaching_segments(**kwargs):  # noqa: ANN001
+                page_index = int(kwargs["page_index"])
+                return [
+                    {
+                        "target_id": "hl_001",
+                        "mode": "spotlight",
+                        "text": f"第 {page_index} 页讲解内容，说明概念 {page_index} 的判断依据。",
+                    }
+                ], {}
+
+            def mindmap_scene(topic, scenes, student_profile=None, cancel_check=None):  # noqa: ANN001, ARG001
+                return ClassroomScene(
+                    id="scene_mindmap_test",
+                    type="mindmap",
+                    title=f"知识结构：{topic}",
+                    order=0,
+                    knowledge_points=[topic],
+                    content={"format": "markmap", "markmap_md": f"# {topic}"},
+                    actions=[],
+                )
+
+            generator._generate_teaching_segments = teaching_segments  # type: ignore[method-assign]  # noqa: SLF001
+            generator._build_mindmap_scene = mindmap_scene  # type: ignore[method-assign]  # noqa: SLF001
+            events: list[dict] = []
+
+            scenes = generator._build_ordered_scenes_from_ppt_job(  # noqa: SLF001
+                user_id="user_1",
+                ppt_job_id="job_1",
+                topic="测试主题",
+                course="测试课程",
+                progress_callback=events.append,
+            )
+
+        ordered_ids = [scene.id for scene in scenes]
+        self.assertEqual(
+            [
+                "scene_slide_001",
+                "scene_slide_002",
+                "scene_slide_003",
+                "scene_quiz_001",
+                "scene_slide_004",
+                "scene_slide_005",
+                "scene_quiz_002",
+                "scene_mindmap_test",
+            ],
+            ordered_ids,
+        )
+        streamed_ids = [
+            event["scene_payload"]["id"]
+            for event in events
+            if event.get("scene_payload")
+        ]
+        self.assertEqual(ordered_ids, streamed_ids)
 
     def test_skips_wrap_up_and_discussion_slides_as_quiz_sources(self) -> None:
         scenes = [
@@ -719,6 +828,63 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
         self.assertTrue(quiz_scene.content["questions"])
 
+    def test_fallback_quiz_filters_slide_fragments_and_teacher_leadins(self) -> None:
+        class BadQuizGenerator:
+            def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
+                return '{"modules": [{"questions": [{"text": "缺少选项和答案"}]}]}'
+
+        generator = InteractiveClassroomGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            quiz_generator=BadQuizGenerator(),
+        )
+        scene = ClassroomScene(
+            id="scene_slide_005",
+            type="slide",
+            title="第二种情况：当物体放在一倍焦距和两倍焦距之间",
+            order=1,
+            knowledge_points=[
+                "凸透镜成像规律",
+                "—— 情况二：f < u < 2f",
+                "光路示意图",
+                "主光轴",
+            ],
+            content={
+                "extracted_text": [
+                    "光路示意图",
+                    "—— 情况二：f < u < 2f",
+                    "主光轴",
+                ]
+            },
+            actions=[
+                ClassroomAction(
+                    id="act_slide_005",
+                    type="speech",
+                    text=(
+                        "同学们，我们来看凸透镜成像的第二种情况。"
+                        "当物体位于一倍焦距和两倍焦距之间时，凸透镜会形成倒立、放大的实像。"
+                        "这种情况说明物距范围会直接决定像的大小和倒正。"
+                    ),
+                )
+            ],
+        )
+
+        quiz_scene = generator._build_quiz_scene(1, 1, "凸透镜成像", [scene])  # noqa: SLF001
+
+        self.assertEqual("slide_text", quiz_scene.content["quiz_source"])
+        rows: list[str] = []
+        for question in quiz_scene.content["questions"]:
+            rows.append(question["question"])
+            rows.extend(option["label"] for option in question.get("options", []))
+            rows.append(question.get("knowledge_point", ""))
+        blob = "\n".join(rows)
+        self.assertNotIn("同学们", blob)
+        self.assertNotIn("我们来看", blob)
+        self.assertNotIn("—— 情况二", blob)
+        self.assertNotIn("光路示意图", blob)
+        self.assertNotIn("主光轴", blob)
+        self.assertIn("倒立、放大的实像", blob)
+
     def test_rejects_llm_quiz_about_cover_decoration_terms(self) -> None:
         class CoverDecorationQuizGenerator:
             def generate_context_quiz_json(self, topic, slide_summaries, question_count):  # noqa: ANN001
@@ -890,6 +1056,65 @@ class InteractiveClassroomP3Test(unittest.TestCase):
                 )
 
             self.assertEqual([], storage.list_classrooms("user_1"))
+
+    def test_animation_lab_scene_is_inserted_when_llm_decides_it_is_useful(self) -> None:
+        class AnimationLabGenerator(InteractiveClassroomGenerator):
+            def _call_content_llm_animation_lab(self, prompt: str) -> str:  # noqa: ARG002
+                return """
+                {
+                  "should_generate": true,
+                  "reason": "凸透镜成像涉及物距和像距变化，适合通过滑块观察规律。",
+                  "placement_after_scene_id": "scene_slide_002",
+                  "title": "凸透镜成像互动实验",
+                  "summary": "拖动物距，观察像的位置和性质变化。",
+                  "knowledge_points": ["物距", "像距", "实像与虚像"],
+                  "video_prompt": "生成凸透镜成像光路动画",
+                  "html": "<!doctype html><html><head><style>body{margin:0}canvas{border:1px solid #ddd}</style></head><body><canvas id='c' width='600' height='400'></canvas><input type='range' id='u'><button>播放</button><script>const c=document.getElementById('c');const ctx=c.getContext('2d');function draw(){ctx.fillStyle='#2D5016';ctx.fillRect(20,20,100,80);}draw();</script></body></html>"
+                }
+                """
+
+        generator = AnimationLabGenerator(
+            backend_dir=BACKEND_DIR,
+            storage=None,  # type: ignore[arg-type]
+            llm_quiz_enabled=True,
+        )
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "凸透镜成像规律", ["物距", "像距"]),
+            _slide(3, "像的性质", ["实像", "虚像"]),
+        ]
+
+        animation_scene = generator._maybe_build_animation_lab_scene(  # noqa: SLF001
+            topic="凸透镜成像",
+            course="大学物理",
+            scenes=scenes,
+        )
+        self.assertIsNotNone(animation_scene)
+        assert animation_scene is not None
+        result = generator._insert_animation_lab_scene(scenes, animation_scene)  # noqa: SLF001
+
+        self.assertEqual("animation_lab", animation_scene.type)
+        self.assertEqual("scene_slide_002", result[1].id)
+        self.assertEqual(animation_scene.id, result[2].id)
+        self.assertIn('width="1200"', animation_scene.content["html"])
+        self.assertIn("ai-creator-animation-lab-embed", animation_scene.content["html"])
+        self.assertEqual("llm_decision", animation_scene.content["source"])
+
+    def test_animation_lab_html_sanitizer_rejects_external_resources(self) -> None:
+        html = "<!doctype html><html><body><script src='https://example.com/a.js'></script></body></html>"
+        self.assertEqual("", _sanitize_animation_lab_html(html))
+
+    def test_animation_lab_html_sanitizer_injects_classroom_embed_style(self) -> None:
+        html = (
+            "<!doctype html><html><head><style>body{padding:20px}</style></head>"
+            "<body><canvas width='600' height='400'></canvas><input type='range'></body></html>"
+        )
+
+        sanitized = _sanitize_animation_lab_html(html)
+
+        self.assertIn("ai-creator-animation-lab-embed", sanitized)
+        self.assertIn("overflow: hidden !important", sanitized)
+        self.assertIn('width="1200"', sanitized)
 
 
 if __name__ == "__main__":
