@@ -41,6 +41,53 @@ MULTI_AGENT_DISCUSSION_TURNS: tuple[dict[str, str], ...] = (
 )
 
 
+def _normalize_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def normalize_discussion_request(data: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    if not isinstance(data, dict):
+        return None, "请求体必须是 JSON 对象"
+
+    played_scene_ids = _normalize_text(data.get("played_scene_ids"))[:200]
+    current_scene_id = str(data.get("current_scene_id") or "").strip()
+
+    raw_messages = data.get("messages")
+    if raw_messages is None:
+        raw_messages = data.get("conversation")
+    if not isinstance(raw_messages, list):
+        return None, "messages 必须是数组"
+
+    messages: list[dict[str, str]] = []
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        messages.append({"role": role, "content": content})
+
+    if not messages or not any(item["role"] == "user" for item in messages):
+        return None, "messages 不能为空"
+
+    trigger = str(data.get("trigger") or "manual").strip() or "manual"
+    quick_action = str(data.get("quick_action") or data.get("quickAction") or "").strip()
+
+    return {
+        "played_scene_ids": played_scene_ids,
+        "messages": messages[-12:],
+        "trigger": trigger,
+        "quick_action": quick_action,
+        "current_scene_id": current_scene_id,
+        "multi_agent": _normalize_bool(data.get("multi_agent", False)),
+    }, ""
+
+
 def _normalize_text(value: Any) -> list[str]:
     if isinstance(value, str):
         text = value.strip()
