@@ -855,11 +855,11 @@
 
               <section v-if="selectedLab" class="practice-lab-preview">
                 <div class="practice-lab-preview-head">
-                  <div>
+                  <div class="practice-lab-preview-meta">
                     <div class="practice-lab-title">{{ selectedLab.title }}</div>
                     <div class="practice-lab-subtitle">{{ selectedLab.course || '通用课程' }} · {{ selectedLab.topic }}</div>
                   </div>
-                  <div class="flex items-center gap-2">
+                  <div class="practice-lab-tags">
                     <n-tag size="small" :bordered="false" :type="selectedLab.content.generation_mode === 'llm' ? 'success' : 'warning'">
                       {{ selectedLab.content.generation_mode === 'llm' ? 'LLM 生成' : '模板回退' }}
                     </n-tag>
@@ -3227,15 +3227,44 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   gap: 12px;
   margin-bottom: 12px;
 }
+.practice-lab-preview-head {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.82fr) minmax(0, 1.18fr);
+  align-items: start;
+}
+.practice-lab-preview-meta {
+  min-width: 0;
+}
 .practice-lab-title {
   font-size: 14px;
   font-weight: 650;
   color: rgb(var(--ink-1-rgb));
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .practice-lab-subtitle {
   margin-top: 2px;
   font-size: 12px;
   color: rgb(var(--ink-3-rgb));
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.practice-lab-tags {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.practice-lab-tags :deep(.n-tag) {
+  max-width: min(100%, 360px);
+}
+.practice-lab-tags :deep(.n-tag__content) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .practice-type-switch {
   display: grid;
@@ -3308,6 +3337,7 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 }
 .practice-lab-preview {
   margin-top: 14px;
+  overflow: hidden;
 }
 .video-prompt-box {
   display: grid;
@@ -3321,8 +3351,8 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
 }
 .practice-lab-frame {
   width: 100%;
-  height: min(78vh, 760px);
-  min-height: 680px;
+  height: clamp(560px, 72vh, 760px);
+  min-height: 560px;
   border: 1px solid rgb(var(--line-rgb));
   border-radius: 8px;
   background: #fff;
@@ -3378,6 +3408,15 @@ function sourceTagType(s: string): 'default' | 'success' | 'info' | 'warning' {
   }
   .flash-face {
     padding: 20px 16px;
+  }
+  .practice-lab-preview-head {
+    grid-template-columns: 1fr;
+  }
+  .practice-lab-tags {
+    justify-content: flex-start;
+  }
+  .practice-lab-tags :deep(.n-tag) {
+    max-width: 100%;
   }
   .practice-lab-frame {
     height: 620px;
