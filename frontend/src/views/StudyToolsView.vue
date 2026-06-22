@@ -1347,6 +1347,11 @@ function isRequestTimeout(err: unknown): boolean {
   return /timeout|exceeded|超时/i.test(message)
 }
 
+function getRequestErrorMessage(err: unknown): string {
+  const data = (err as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+  return data?.message || data?.error || ''
+}
+
 async function fetchLabs() {
   labsLoading.value = true
   try {
@@ -1398,7 +1403,7 @@ async function onGenerateLab() {
       }, 8000)
     }
     else {
-      message.error('生成失败，请检查模型配置或稍后重试')
+      message.error(getRequestErrorMessage(err) || '生成失败，请检查模型配置或稍后重试')
     }
   }
   finally {
