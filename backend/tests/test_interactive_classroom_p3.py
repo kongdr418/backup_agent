@@ -95,6 +95,114 @@ class InteractiveClassroomP3Test(unittest.TestCase):
         self.assertEqual(["scene_slide_004", "scene_slide_005"], quiz_scenes[0].content["covered_scene_ids"])
         self.assertTrue(all(q["id"].startswith("q1_") for q in quiz_scenes[0].content["questions"]))
 
+    def test_preserves_inserted_interactive_scene_before_generated_quiz(self) -> None:
+        scenes = [
+            _slide(1, "导入", ["学习目标"]),
+            _slide(2, "概念 A", ["要点 A1"]),
+            _slide(3, "概念 B", ["要点 B1"]),
+            ClassroomScene(
+                id="scene_animation_test",
+                type="animation_lab",
+                title="概念 B 动画实验",
+                order=0,
+                knowledge_points=["要点 B1"],
+                content={"format": "html", "html": "<!doctype html><html></html>"},
+                actions=[],
+            ),
+            _slide(4, "案例分析", ["案例步骤"]),
+        ]
+
+        result = self.generator._insert_quiz_scenes("测试主题", scenes)  # noqa: SLF001
+
+        ordered_ids = [scene.id for scene in result]
+        self.assertIn("scene_animation_test", ordered_ids)
+        self.assertLess(
+            ordered_ids.index("scene_animation_test"),
+            ordered_ids.index("scene_quiz_001"),
+        )
+        self.assertEqual(
+            ["scene_slide_001", "scene_slide_002", "scene_slide_003"],
+            next(scene for scene in result if scene.id == "scene_quiz_001").content["covered_scene_ids"],
+        )
+
+    def test_ordered_ppt_generation_streams_quizzes_in_playback_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_dir = os.path.join(tmpdir, "generated_svg_ppt", "users", "user_1", "job_1")
+            svg_dir = os.path.join(job_dir, "svg_final")
+            os.makedirs(svg_dir)
+            with open(os.path.join(job_dir, "manuscript.md"), "w", encoding="utf-8") as f:
+                f.write("\n---\n".join([f"第 {idx} 页讲稿" for idx in range(1, 6)]))
+            for idx in range(1, 6):
+                with open(os.path.join(svg_dir, f"slide_{idx:03d}.svg"), "w", encoding="utf-8") as f:
+                    f.write(
+                        f"""
+                        <svg viewBox="0 0 1000 562">
+                          <text x="80" y="100" font-size="32">概念 {idx}</text>
+                          <text x="120" y="210" font-size="24">要点 {idx}</text>
+                        </svg>
+                        """
+                    )
+
+            generator = InteractiveClassroomGenerator(
+                backend_dir=tmpdir,
+                storage=None,  # type: ignore[arg-type]
+                llm_quiz_enabled=False,
+            )
+
+            def teaching_segments(**kwargs):  # noqa: ANN001
+                page_index = int(kwargs["page_index"])
+                return [
+                    {
+                        "target_id": "hl_001",
+                        "mode": "spotlight",
+                        "text": f"第 {page_index} 页讲解内容，说明概念 {page_index} 的判断依据。",
+                    }
+                ], {}
+
+            def mindmap_scene(topic, scenes, student_profile=None, cancel_check=None):  # noqa: ANN001, ARG001
+                return ClassroomScene(
+                    id="scene_mindmap_test",
+                    type="mindmap",
+                    title=f"知识结构：{topic}",
+                    order=0,
+                    knowledge_points=[topic],
+                    content={"format": "markmap", "markmap_md": f"# {topic}"},
+                    actions=[],
+                )
+
+            generator._generate_teaching_segments = teaching_segments  # type: ignore[method-assign]  # noqa: SLF001
+            generator._build_mindmap_scene = mindmap_scene  # type: ignore[method-assign]  # noqa: SLF001
+            events: list[dict] = []
+
+            scenes = generator._build_ordered_scenes_from_ppt_job(  # noqa: SLF001
+                user_id="user_1",
+                ppt_job_id="job_1",
+                topic="测试主题",
+                course="测试课程",
+                progress_callback=events.append,
+            )
+
+        ordered_ids = [scene.id for scene in scenes]
+        self.assertEqual(
+            [
+                "scene_slide_001",
+                "scene_slide_002",
+                "scene_slide_003",
+                "scene_quiz_001",
+                "scene_slide_004",
+                "scene_slide_005",
+                "scene_quiz_002",
+                "scene_mindmap_test",
+            ],
+            ordered_ids,
+        )
+        streamed_ids = [
+            event["scene_payload"]["id"]
+            for event in events
+            if event.get("scene_payload")
+        ]
+        self.assertEqual(ordered_ids, streamed_ids)
+
     def test_skips_wrap_up_and_discussion_slides_as_quiz_sources(self) -> None:
         scenes = [
             _slide(1, "Spring Boot 核心价值", ["自动配置", "起步依赖"]),

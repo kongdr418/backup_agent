@@ -175,7 +175,7 @@ class InteractiveClassroomHighlightTest(unittest.TestCase):
         )
         self.assertEqual(action.payload["highlight_cues"][0]["mode"], "spotlight")
 
-    def test_ppt_job_builds_slide_scenes_concurrently_while_preserving_order(self) -> None:
+    def test_ppt_job_builds_slide_scenes_serially_in_page_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = os.path.join(tmpdir, "generated_svg_ppt", "users", "user_1", "job_1")
             svg_dir = os.path.join(job_dir, "svg_final")
@@ -214,14 +214,14 @@ class InteractiveClassroomHighlightTest(unittest.TestCase):
             scenes = generator._build_slide_scenes_from_ppt_job("user_1", "job_1")
             elapsed = time.perf_counter() - start
 
-        self.assertLess(elapsed, 0.45)
+        self.assertGreaterEqual(elapsed, 0.55)
+        self.assertEqual([page_index for page_index, _ in starts], [1, 2, 3])
         self.assertEqual([scene.id for scene in scenes], ["scene_slide_001", "scene_slide_002", "scene_slide_003"])
         self.assertEqual([scene.actions[0].text for scene in scenes], [
             "第 1 页讲解内容，说明这一页的核心标题和重点。",
             "第 2 页讲解内容，说明这一页的核心标题和重点。",
             "第 3 页讲解内容，说明这一页的核心标题和重点。",
         ])
-        self.assertLess(max(ts for _, ts in starts) - min(ts for _, ts in starts), 0.15)
 
     def test_ppt_job_fallback_expands_short_notes_around_svg_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
