@@ -65,10 +65,12 @@ from datetime import datetime
 # ==================== 日志配置 ====================
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(name)s - %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+LOG_LEVEL_NAME = os.environ.get('APP_LOG_LEVEL', os.environ.get('LOG_LEVEL', 'DEBUG')).strip().upper()
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
 # 配置根日志记录器
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=LOG_LEVEL,
     format=LOG_FORMAT,
     datefmt=LOG_DATE_FORMAT,
     handlers=[
@@ -78,15 +80,15 @@ logging.basicConfig(
 
 # 创建 Flask 应用日志记录器
 app_logger = logging.getLogger('MiniMaxAgent.app')
-app_logger.setLevel(logging.DEBUG)
+app_logger.setLevel(LOG_LEVEL)
 
 # 创建 API 日志记录器
 api_logger = logging.getLogger('MiniMaxAgent.api')
-api_logger.setLevel(logging.DEBUG)
+api_logger.setLevel(LOG_LEVEL)
 
 # 请求日志记录器
 request_logger = logging.getLogger('MiniMaxAgent.request')
-request_logger.setLevel(logging.DEBUG)
+request_logger.setLevel(LOG_LEVEL)
 
 # ==================== 全局记忆管理器 ====================
 _memory_manager = None

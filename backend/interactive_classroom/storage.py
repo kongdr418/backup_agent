@@ -54,11 +54,20 @@ class ClassroomStorage:
         os.makedirs(path, exist_ok=True)
         return path
 
+    def _write_json_file(self, path: str, payload: dict[str, Any]) -> None:
+        temp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
     def save_classroom(self, user_id: str, classroom_id: str, payload: dict[str, Any]) -> str:
         path = os.path.join(self.classroom_dir(user_id, classroom_id), "classroom.json")
         payload["updated_at"] = _now_iso()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        self._write_json_file(path, payload)
         return path
 
     def load_classroom(self, user_id: str, classroom_id: str) -> dict[str, Any] | None:
@@ -120,8 +129,7 @@ class ClassroomStorage:
         existing.setdefault("scenes", {})
         existing["scenes"][scene_id] = answers_payload
         existing["updated_at"] = _now_iso()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(existing, f, ensure_ascii=False, indent=2)
+        self._write_json_file(path, existing)
 
     def load_answers(self, user_id: str, classroom_id: str) -> dict[str, Any]:
         path = os.path.join(self.classroom_dir(user_id, classroom_id, create=False), "answers.json")
@@ -133,8 +141,7 @@ class ClassroomStorage:
     def save_report(self, user_id: str, classroom_id: str, payload: dict[str, Any]) -> None:
         path = os.path.join(self.classroom_dir(user_id, classroom_id), "report.json")
         payload["updated_at"] = _now_iso()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        self._write_json_file(path, payload)
 
     def load_report(self, user_id: str, classroom_id: str) -> dict[str, Any] | None:
         path = os.path.join(
@@ -173,18 +180,13 @@ class ClassroomStorage:
             self.classroom_dir(user_id, classroom_id),
             "knowledge_point_map.json",
         )
-        temp_path = f"{path}.tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "knowledge_points": rows,
-                    "updated_at": _now_iso(),
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
-        os.replace(temp_path, path)
+        self._write_json_file(
+            path,
+            {
+                "knowledge_points": rows,
+                "updated_at": _now_iso(),
+            },
+        )
 
     def list_classrooms(self, user_id: str) -> list[dict[str, Any]]:
         user_id = _safe_id(user_id, "user_id")
@@ -249,10 +251,7 @@ class ClassroomStorage:
 
     def _write_events_file(self, user_id: str, classroom_id: str, data: dict[str, Any]) -> None:
         path = self._events_path(user_id, classroom_id)
-        temp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
+        self._write_json_file(path, data)
 
     def save_event(self, user_id: str, classroom_id: str, event: "LearningEvent") -> None:
         with self._event_lock(user_id, classroom_id):

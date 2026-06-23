@@ -6,6 +6,32 @@ from typing import Any, Callable
 from flask import Blueprint, Response, jsonify, request
 
 
+_REDACTED = "[REDACTED]"
+_SENSITIVE_LOG_FIELDS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "password",
+    "base_url",
+    "baseUrl",
+}
+
+
+def _redact_for_log(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (_REDACTED if key in _SENSITIVE_LOG_FIELDS else _redact_for_log(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_for_log(item) for item in value]
+    return value
+
+
 def create_chat_blueprint(
     *,
     get_user_id: Callable[[], str],
@@ -23,7 +49,7 @@ def create_chat_blueprint(
     def chat():
         logger.info("=" * 50)
         logger.info("[CHAT] 收到非流式聊天请求")
-        logger.info("[CHAT] 请求数据: %s", request.json)
+        logger.debug("[CHAT] 请求数据: %s", _redact_for_log(request.json))
 
         data = request.json or {}
         message = data.get("message", "").strip()
@@ -67,7 +93,7 @@ def create_chat_blueprint(
     def chat_stream():
         logger.info("=" * 50)
         logger.info("[STREAM] 收到流式聊天请求")
-        logger.info("[STREAM] 请求数据: %s", request.json)
+        logger.debug("[STREAM] 请求数据: %s", _redact_for_log(request.json))
 
         data = request.json or {}
         message = data.get("message", "").strip()
