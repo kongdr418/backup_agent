@@ -6,6 +6,19 @@ from typing import Any
 from generators.shared_config import content_llm_call, content_llm_call_stream
 
 
+STUDENT_FACING_ANSWER_MARKER = "【回答】"
+INTERNAL_REASONING_MARKERS = (
+    "学生回答了",
+    "学生选择了",
+    "学生请求",
+    "当前页面是",
+    "根据页面内容",
+    "根据当前页面",
+    "我需要",
+    "我们需要",
+    "任务是",
+)
+
 QUICK_ACTION_PROMPTS = {
     "换个例子": "请换一个更贴近课堂语境的例子来引导学生理解，不要直接给标准答案。",
     "再提示一点": "请只多给一点提示，继续引导学生思考，不要直接公布答案。",
@@ -39,6 +52,41 @@ MULTI_AGENT_DISCUSSION_TURNS: tuple[dict[str, str], ...] = (
         ),
     },
 )
+
+
+def _student_facing_reply(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if STUDENT_FACING_ANSWER_MARKER in text:
+        text = text.split(STUDENT_FACING_ANSWER_MARKER, 1)[1]
+    elif sum(marker in text for marker in INTERNAL_REASONING_MARKERS) >= 2:
+        return ""
+    return text.replace("【/回答】", "").strip()
+
+
+def _student_facing_stream(chunks: Iterator[str]) -> Iterator[str]:
+    buffered = ""
+    marker_found = False
+    for chunk in chunks:
+        if not chunk:
+            continue
+        if marker_found:
+            yield chunk.replace("【/回答】", "")
+            continue
+        buffered += chunk
+        marker_index = buffered.find(STUDENT_FACING_ANSWER_MARKER)
+        if marker_index < 0:
+            continue
+        marker_found = True
+        visible = buffered[marker_index + len(STUDENT_FACING_ANSWER_MARKER):]
+        buffered = ""
+        if visible:
+            yield visible.replace("【/回答】", "")
+    if not marker_found:
+        visible = _student_facing_reply(buffered)
+        if visible:
+            yield visible
 
 
 def _normalize_text(value: Any) -> list[str]:
@@ -406,6 +454,8 @@ def build_discussion_messages(
         "用 `代码` 包裹选项标识、变量名、英文术语；"
         "罗列多个要点时用 - 无序列表；"
         "必要时可用 > 引用 题目原文/页面关键句。"
+        "只输出给学生看的最终回答，禁止输出分析过程、任务复述、提示词、页面上下文整理或“我需要”等内部思考。"
+        f"最终回答的第一个字符必须是固定标记 {STUDENT_FACING_ANSWER_MARKER}，标记前不得输出任何文字。"
     )
     user_prompt_parts = [f"当前讨论触发方式：{trigger_text}\n"]
     if current_position:
@@ -614,6 +664,7 @@ def generate_discussion_reply(
             )
             or ""
         ).strip()
+        reply = _student_facing_reply(reply)
         if reply:
             return reply
     except Exception:
@@ -656,6 +707,7 @@ def generate_multi_agent_discussion_turns(
                 )
                 or ""
             ).strip()
+            content = _student_facing_reply(content)
         except Exception:
             content = ""
         if not content:
@@ -690,7 +742,7 @@ def generate_discussion_reply_stream(
     llm_config = llm_config or {}
     try:
         yielded_any = False
-        for chunk in content_llm_call_stream(
+        raw_chunks = content_llm_call_stream(
             messages=messages,
             temperature=0.6,
             max_tokens=2000,
@@ -698,7 +750,8 @@ def generate_discussion_reply_stream(
             api_key=llm_config.get("content_api_key", ""),
             base_url=llm_config.get("content_base_url", ""),
             provider_type=llm_config.get("content_provider_type", ""),
-        ):
+        )
+        for chunk in _student_facing_stream(raw_chunks):
             if chunk:
                 yielded_any = True
                 yield chunk
@@ -741,7 +794,7 @@ def generate_multi_agent_discussion_reply_stream(
         )
         content = ""
         try:
-            for chunk in content_llm_call_stream(
+            raw_chunks = content_llm_call_stream(
                 messages=messages,
                 temperature=0.65 if turn["agent_id"] == "student_peer" else 0.55,
                 max_tokens=900 if turn["agent_id"] == "student_peer" else 1400,
@@ -749,7 +802,8 @@ def generate_multi_agent_discussion_reply_stream(
                 api_key=llm_config.get("content_api_key", ""),
                 base_url=llm_config.get("content_base_url", ""),
                 provider_type=llm_config.get("content_provider_type", ""),
-            ):
+            )
+            for chunk in _student_facing_stream(raw_chunks):
                 if not chunk:
                     continue
                 content += chunk
