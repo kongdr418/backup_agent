@@ -79,6 +79,7 @@ def content_llm_call(
     api_key: str = '',
     base_url: str = '',
     provider_type: str = '',
+    thinking_enabled: bool | None = None,
 ) -> str:
     """统一的 LLM 调用，根据 provider_type 自动选择 OpenAI 或 Anthropic 兼容接口。
 
@@ -100,13 +101,18 @@ def content_llm_call(
         has_system = any(m.get('role') == 'system' for m in messages)
         if not has_system:
             messages = [{"role": "system", "content": "你是智创空间智慧课堂的学习内容生成智能体，面向学生输出严谨、清晰、可学习的资料。"}] + messages
-        response = client.chat.completions.create(
+        request_kwargs = dict(
             model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=120,
         )
+        if thinking_enabled is not None and model.lower().startswith('deepseek-v4'):
+            request_kwargs['extra_body'] = {
+                'thinking': {'type': 'enabled' if thinking_enabled else 'disabled'},
+            }
+        response = client.chat.completions.create(**request_kwargs)
         choice = response.choices[0] if response.choices else None
         content = choice.message.content if (choice and choice.message) else None
         if not content:

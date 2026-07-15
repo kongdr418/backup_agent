@@ -537,7 +537,8 @@ def _build_llm_lab_payload(
             base_url=llm_config.get("content_base_url", ""),
             provider_type=llm_config.get("content_provider_type", ""),
             temperature=0.35,
-            max_tokens=6500 if lab_type == "animation" else 3600,
+            max_tokens=20000 if lab_type == "animation" else 3600,
+            thinking_enabled=False if lab_type == "animation" else None,
         )
         payload = _parse_llm_lab_payload(raw, lab_type=lab_type, source=data)
         if payload is not None:
