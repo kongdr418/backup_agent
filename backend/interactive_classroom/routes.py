@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
+from research_logging import ResearchLogger
+
 from .discussion_service import (
     generate_discussion_reply,
     generate_discussion_reply_stream,
@@ -52,6 +54,38 @@ def create_interactive_classroom_blueprint(
         if classroom is None:
             return None, ({'success': False, 'error': '课堂不存在'}, 404)
         return classroom, None
+
+    def _research_logger() -> ResearchLogger:
+        return ResearchLogger(memory_root=get_storage().memory_root)
+
+    def _log_discussion_sample(
+        *,
+        user_id: str,
+        classroom: dict[str, Any],
+        discussion: dict[str, Any],
+        response: str,
+        llm_config: dict[str, Any],
+        streaming: bool,
+        assistant_messages: list[dict[str, Any]] | None = None,
+    ) -> str:
+        try:
+            saved = _research_logger().record_discussion_sample(
+                user_id=user_id,
+                classroom=classroom,
+                discussion=discussion,
+                response=response,
+                llm_config=llm_config,
+                streaming=streaming,
+                assistant_messages=assistant_messages,
+            )
+            return (saved or {}).get("output_id", "")
+        except Exception as exc:
+            logger.warning(
+                "[RESEARCH] 讨论样本记录失败 classroom_id=%s error=%s",
+                classroom.get("id", ""),
+                type(exc).__name__,
+            )
+            return ""
 
     @bp.route("/generate", methods=["POST"])
     def generate():
@@ -302,6 +336,16 @@ def create_interactive_classroom_blueprint(
                 current_scene_id=discussion['current_scene_id'],
                 llm_config=llm_config,
             )
+            final_reply = (turns[-1].get('content') if turns else '') or ''
+            research_output_id = _log_discussion_sample(
+                user_id=user_id,
+                classroom=classroom,
+                discussion=discussion,
+                response=final_reply,
+                llm_config=llm_config,
+                streaming=False,
+                assistant_messages=turns,
+            )
             return jsonify({
                 'success': True,
                 'assistant_message': turns[-1] if turns else {
@@ -311,6 +355,7 @@ def create_interactive_classroom_blueprint(
                 },
                 'assistant_messages': turns,
                 'auto_advance_paused': True,
+                'research_output_id': research_output_id,
             })
         reply = generate_discussion_reply(
             classroom=classroom,
@@ -321,6 +366,14 @@ def create_interactive_classroom_blueprint(
             current_scene_id=discussion['current_scene_id'],
             llm_config=llm_config,
         )
+        research_output_id = _log_discussion_sample(
+            user_id=user_id,
+            classroom=classroom,
+            discussion=discussion,
+            response=reply,
+            llm_config=llm_config,
+            streaming=False,
+        )
         return jsonify({
             'success': True,
             'assistant_message': {
@@ -329,6 +382,7 @@ def create_interactive_classroom_blueprint(
                 'trigger': discussion['trigger'],
             },
             'auto_advance_paused': True,
+            'research_output_id': research_output_id,
         })
 
     @bp.route("/<classroom_id>/discuss/stream", methods=["POST"])
@@ -345,6 +399,8 @@ def create_interactive_classroom_blueprint(
         llm_config = resolve_content_llm_request_config(data)
 
         def generate():
+            assistant_messages: list[dict[str, Any]] = []
+            reply_chunks: list[str] = []
             try:
                 if discussion['multi_agent']:
                     for event in generate_multi_agent_discussion_reply_stream(
@@ -356,7 +412,17 @@ def create_interactive_classroom_blueprint(
                         current_scene_id=discussion['current_scene_id'],
                         llm_config=llm_config,
                     ):
+                        if event.get("type") == "agent_done":
+                            assistant_messages.append({
+                                "role": event.get("role", "assistant"),
+                                "agent_id": event.get("agent_id", ""),
+                                "agent_name": event.get("agent_name", ""),
+                                "message_id": event.get("message_id", ""),
+                                "content": event.get("content", ""),
+                                "trigger": event.get("trigger", discussion['trigger']),
+                            })
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    response_text = (assistant_messages[-1].get("content") if assistant_messages else "") or ""
                 else:
                     for chunk in generate_discussion_reply_stream(
                         classroom=classroom,
@@ -367,8 +433,19 @@ def create_interactive_classroom_blueprint(
                         current_scene_id=discussion['current_scene_id'],
                         llm_config=llm_config,
                     ):
+                        reply_chunks.append(chunk)
                         yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'done': True, 'auto_advance_paused': True}, ensure_ascii=False)}\n\n"
+                    response_text = "".join(reply_chunks)
+                research_output_id = _log_discussion_sample(
+                    user_id=user_id,
+                    classroom=classroom,
+                    discussion=discussion,
+                    response=response_text,
+                    llm_config=llm_config,
+                    streaming=True,
+                    assistant_messages=assistant_messages,
+                )
+                yield f"data: {json.dumps({'done': True, 'auto_advance_paused': True, 'research_output_id': research_output_id}, ensure_ascii=False)}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"

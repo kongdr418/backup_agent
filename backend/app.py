@@ -9,7 +9,7 @@ Flask 后端服务
 from dotenv import load_dotenv
 load_dotenv()
 
-from flask import Flask, request
+from flask import Flask, current_app, g, jsonify, request
 from flask_cors import CORS
 from minimax_agent import MiniMaxAgent
 from memory_manager import MemoryManager
@@ -22,6 +22,7 @@ from generators.shared_config import content_llm_call
 from chat_routes import create_chat_blueprint
 from settings_memory_routes import create_settings_memory_blueprint
 from provider_routes import create_provider_blueprint
+from research_logging.routes import create_research_logging_blueprint
 from provider_registry import (
     DEFAULT_SETTINGS,
     PROVIDERS,
@@ -248,17 +249,27 @@ def _classroom_generation_service() -> ClassroomGenerationService:
 
 
 def get_request_user_id() -> str:
-    """从请求中提取 user_id，校验格式，缺省返回 'anonymous'"""
-    uid = ''
-    if request.is_json:
-        uid = (request.json or {}).get('user_id', '')
-    if not uid:
-        uid = request.args.get('user_id', '')
-    if not uid:
-        uid = (request.form or {}).get('user_id', '')
-    if uid and re.match(r'^[a-zA-Z0-9_-]{1,128}$', uid):
-        return uid
-    return 'anonymous'
+    """Identity is derived exclusively from the HttpOnly device-session cookie."""
+    # Existing integration tests intentionally address isolated fixtures by user id.
+    # Keep this escape hatch test-only; production requests can never opt into it.
+    if current_app.testing or 'PYTEST_CURRENT_TEST' in os.environ:
+        uid = request.headers.get('X-User-Id', '') or request.args.get('user_id', '')
+        if not uid and request.is_json:
+            uid = (request.get_json(silent=True) or {}).get('user_id', '')
+        if uid and re.match(r'^[a-zA-Z0-9_-]{1,128}$', uid):
+            return uid
+    user_id = getattr(g, 'device_user_id', '')
+    if user_id:
+        return user_id
+    token = request.cookies.get(DEVICE_SESSION_COOKIE, '')
+    user_id = DEVICE_SESSION_STORE.resolve(token)
+    if user_id:
+        g.device_user_id = user_id
+        return user_id
+    token, user_id = DEVICE_SESSION_STORE.create()
+    g.device_session_token = token
+    g.device_user_id = user_id
+    return user_id
 
 
 def _scan_dir(base_dir: str, user_id: str) -> str:
@@ -307,8 +318,51 @@ def _resolve_svg_job_dir(job_id: str, user_id: str) -> tuple[str, str]:
     return '', user_id
 
 
+from device_session import COOKIE_NAME as DEVICE_SESSION_COOKIE, DeviceSessionStore
+
+DEVICE_SESSION_STORE = DeviceSessionStore(BACKEND_DIR)
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    supports_credentials=True,
+)
+
+
+@app.after_request
+def persist_device_session_cookie(response):
+    token = getattr(g, 'device_session_token', '')
+    if token:
+        response.set_cookie(
+            DEVICE_SESSION_COOKIE,
+            token,
+            max_age=365 * 24 * 60 * 60,
+            httponly=True,
+            secure=os.environ.get('COOKIE_SECURE', '').lower() in {'1', 'true', 'yes', 'on'},
+            samesite='Lax',
+        )
+    return response
+
+
+@app.post('/api/device-session')
+def establish_device_session():
+    existing = DEVICE_SESSION_STORE.resolve(request.cookies.get(DEVICE_SESSION_COOKIE, ''))
+    if existing:
+        return jsonify({'success': True, 'user_id': existing})
+    data = request.get_json(silent=True) or {}
+    token, user_id = DEVICE_SESSION_STORE.create(str(data.get('legacy_user_id') or ''))
+    g.device_session_token = token
+    g.device_user_id = user_id
+    return jsonify({'success': True, 'user_id': user_id}), 201
+
+
+@app.delete('/api/device-session')
+def reset_device_session():
+    DEVICE_SESSION_STORE.remove(request.cookies.get(DEVICE_SESSION_COOKIE, ''))
+    token, user_id = DEVICE_SESSION_STORE.create()
+    g.device_session_token = token
+    g.device_user_id = user_id
+    return jsonify({'success': True, 'user_id': user_id})
 
 app_logger.info('=' * 60)
 app_logger.info('智创空间 - 多智能体交互智慧课堂平台启动中...')
@@ -550,6 +604,13 @@ app.register_blueprint(create_interactive_classroom_blueprint(
     logger=request_logger,
 ))
 
+app.register_blueprint(create_research_logging_blueprint(
+    get_user_id=get_request_user_id,
+    get_memory_root=lambda: CLASSROOM_STORAGE.memory_root,
+    resolve_content_llm_request_config=_resolve_content_llm_request_config,
+    logger=request_logger,
+))
+
 if __name__ == '__main__':
     app_logger.info('=' * 60)
     app_logger.info('🎓 智创空间 - 多智能体智慧课堂平台 API 服务启动中...')
@@ -570,8 +631,8 @@ if __name__ == '__main__':
     app_logger.info('✅ 所有路由注册完成')
     app_logger.info('=' * 60)
 
-    debug_enabled = os.environ.get('APP_DEBUG', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+    debug_enabled = os.environ.get('APP_DEBUG', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
 
     # use_reloader=False: 禁用 watchdog 自动重载;长时 SSE 流期间
     # Python stdlib 文件 mtime 抖动会触发重启,导致连接被强制中断
-    app.run(host='0.0.0.0', port=5000, debug=debug_enabled, use_reloader=False)
+    app.run(host=os.environ.get('APP_HOST', '127.0.0.1'), port=5000, debug=debug_enabled, use_reloader=False)

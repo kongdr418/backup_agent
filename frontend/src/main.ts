@@ -5,6 +5,7 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 import App from './App.vue'
 import router from './router'
 import { useThemeStore } from './stores/themeStore'
+import { ensureDeviceSession } from './api/deviceSession'
 
 import './assets/styles/tailwind.css'
 
@@ -18,4 +19,6 @@ app.use(pinia)
 useThemeStore().init()
 
 app.use(router)
-app.mount('#app')
+ensureDeviceSession()
+  .catch((error) => console.warn('[device-session] 初始化失败，将在后续 API 请求时重试', error))
+  .finally(() => app.mount('#app'))

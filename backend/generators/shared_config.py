@@ -6,6 +6,8 @@
 import os
 import json
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from collections.abc import Iterator
 
 import requests as req
@@ -16,28 +18,44 @@ _content_model: str = 'deepseek-chat'
 _content_api_key: str | None = None
 _content_base_url: str | None = None
 _content_provider_type: str = 'openai'
+_scoped_content_config: ContextVar[dict | None] = ContextVar('scoped_content_config', default=None)
 
 
 def get_content_llm_config():
     """获取内容生成 LLM 配置，优先使用设置的值，否则回退到环境变量"""
-    api_key = _content_api_key
+    scoped = _scoped_content_config.get() or {}
+    model = scoped.get('model') or _content_model
+    api_key = scoped.get('api_key') or _content_api_key
     if not api_key:
         try:
             from app import SERVER_API_KEYS, _get_provider_for_model
-            pid, _, _ = _get_provider_for_model(_content_model)
+            pid, _, _ = _get_provider_for_model(model)
             if pid and pid in SERVER_API_KEYS:
                 api_key = SERVER_API_KEYS[pid]
         except ImportError:
             pass
     if not api_key:
         api_key = os.environ.get('DEEPSEEK_API_KEY', '')
-    base_url = _content_base_url or 'https://api.deepseek.com'
-    return _content_model, api_key, base_url
+    base_url = scoped.get('base_url') or _content_base_url or 'https://api.deepseek.com'
+    return model, api_key, base_url
 
 
 def get_content_provider_type():
     """获取内容生成 provider 类型"""
-    return _content_provider_type
+    scoped = _scoped_content_config.get() or {}
+    return scoped.get('provider_type') or _content_provider_type
+
+
+@contextmanager
+def content_llm_config_scope(*, model: str = '', api_key: str = '', base_url: str = '', provider_type: str = ''):
+    """隔离单次请求或后台任务的内容模型配置，避免并发请求互相覆盖。"""
+    token = _scoped_content_config.set({
+        'model': model, 'api_key': api_key, 'base_url': base_url, 'provider_type': provider_type,
+    })
+    try:
+        yield
+    finally:
+        _scoped_content_config.reset(token)
 
 
 def set_content_llm_config(model: str = '', api_key: str = '', base_url: str = '', provider_type: str = ''):

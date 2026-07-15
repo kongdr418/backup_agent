@@ -5,7 +5,7 @@
       <div
         v-if="currentSlide"
         class="svg-stage"
-        v-html="currentSlide.svg"
+        v-html="sanitizeSvg(currentSlide.svg)"
       />
       <div v-else class="placeholder-wrap">
         <ImagePlay class="placeholder-icon" />
@@ -26,7 +26,7 @@
         >
           <div
             class="thumb-svg"
-            v-html="s.svg"
+            v-html="sanitizeSvg(s.svg)"
           />
           <span class="thumb-no">{{ s.page }}</span>
         </button>
@@ -60,6 +60,7 @@
 import { computed } from 'vue'
 import { ChevronLeft, ChevronRight, ImagePlay } from 'lucide-vue-next'
 import type { PptSlide } from '@/types'
+import { sanitizeSvg } from '@/utils/sanitizeSvg'
 
 const props = defineProps<{
   slides: PptSlide[]

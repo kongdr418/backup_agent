@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from generators.shared_config import content_llm_config_scope
+
 import json
 import queue
 import re
 import threading
 from typing import Any, Callable
+
+from research_logging import ResearchLogger
 
 from .critic_service import build_content_llm_semantic_reviewer
 from .generation_jobs import ClassroomGenerationJobService
@@ -44,6 +48,37 @@ class ClassroomGenerationService:
         self.resolve_critic_mode = resolve_critic_mode
         self.logger = logger
 
+    def _research_logger(self) -> ResearchLogger:
+        return ResearchLogger(memory_root=self.classroom_storage.memory_root)
+
+    def _log_generation_context(
+        self,
+        *,
+        user_id: str,
+        request_id: str,
+        topic: str,
+        course: str,
+        generation_kwargs: dict[str, Any],
+        classroom_payload: dict[str, Any] | None,
+        status: str,
+    ) -> None:
+        try:
+            self._research_logger().record_generation_context(
+                user_id=user_id,
+                request_id=request_id,
+                topic=topic,
+                course=course,
+                generation_kwargs=generation_kwargs,
+                classroom_payload=classroom_payload,
+                status=status,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "[RESEARCH] 课堂生成上下文记录失败 request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
+
     def start_generation(self, *, user_id: str, data: dict) -> tuple[dict, int]:
         topic = (data.get("topic") or "").strip()
         course = (data.get("course") or "通用课程").strip()
@@ -82,7 +117,6 @@ class ClassroomGenerationService:
             learner_profile,
             course,
         )
-        self.apply_content_llm_config(data)
         critic_llm_config = self.resolve_content_llm_request_config(data)
         generation_kwargs = {
             "user_id": user_id,
@@ -101,6 +135,12 @@ class ClassroomGenerationService:
             "critic_mode": self.resolve_critic_mode(data),
             "semantic_reviewer": build_content_llm_semantic_reviewer(critic_llm_config),
         }
+        content_scope_config = {
+            "model": critic_llm_config.get("content_model", ""),
+            "api_key": critic_llm_config.get("content_api_key", ""),
+            "base_url": critic_llm_config.get("content_base_url", ""),
+            "provider_type": critic_llm_config.get("content_provider_type", ""),
+        }
         cancel_event = self.job_service.register(request_id)
         generation_kwargs["cancel_check"] = (
             cancel_event.is_set if cancel_event is not None else None
@@ -108,7 +148,7 @@ class ClassroomGenerationService:
 
         if request_id:
             self.job_service.mark_running(request_id, topic)
-            self._start_background_generation(request_id, generation_kwargs)
+            self._start_background_generation(request_id, generation_kwargs, content_scope_config)
             return {
                 "success": True,
                 "request_id": request_id,
@@ -117,7 +157,8 @@ class ClassroomGenerationService:
             }, 202
 
         try:
-            payload = self.generator.generate(**generation_kwargs)
+            with content_llm_config_scope(**content_scope_config):
+                payload = self.generator.generate(**generation_kwargs)
         except ClassroomGenerationCancelled:
             self.logger.info(
                 "[INTERACTIVE-CLASSROOM] 生成已取消 request_id=%s",
@@ -127,6 +168,15 @@ class ClassroomGenerationService:
         finally:
             self.job_service.finish(request_id)
 
+        self._log_generation_context(
+            user_id=user_id,
+            request_id=request_id,
+            topic=topic,
+            course=course,
+            generation_kwargs=generation_kwargs,
+            classroom_payload=payload,
+            status="ready",
+        )
         return {
             "success": True,
             "classroom_id": payload.get("id"),
@@ -241,14 +291,25 @@ class ClassroomGenerationService:
         self,
         request_id: str,
         generation_kwargs: dict,
+        content_scope_config: dict,
     ) -> None:
         def run_generation_job() -> None:
             try:
-                payload = self.generator.generate(
-                    **generation_kwargs,
-                    progress_callback=lambda event: self.job_service.emit(request_id, event),
-                )
+                with content_llm_config_scope(**content_scope_config):
+                    payload = self.generator.generate(
+                        **generation_kwargs,
+                        progress_callback=lambda event: self.job_service.emit(request_id, event),
+                    )
                 self.job_service.mark_done(request_id, payload.get("id"), payload)
+                self._log_generation_context(
+                    user_id=generation_kwargs.get("user_id", ""),
+                    request_id=request_id,
+                    topic=generation_kwargs.get("topic", ""),
+                    course=generation_kwargs.get("course", ""),
+                    generation_kwargs=generation_kwargs,
+                    classroom_payload=payload,
+                    status="ready",
+                )
                 self.job_service.emit(
                     request_id,
                     {

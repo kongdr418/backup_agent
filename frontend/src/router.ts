@@ -65,6 +65,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('./views/StudentProfileView.vue'),
         meta: { title: '学习者中心' },
       },
+      {
+        path: 'research-annotation',
+        name: 'research-annotation',
+        component: () => import('./views/ResearchAnnotationView.vue'),
+        meta: { title: '研究标注' },
+      },
     ],
   },
   {

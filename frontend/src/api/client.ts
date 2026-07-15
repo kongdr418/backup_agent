@@ -4,6 +4,7 @@ import { getUserId } from '@/composables/useUserId'
 const client = axios.create({
   baseURL: '',
   timeout: 60_000,
+  withCredentials: true,
 })
 
 client.interceptors.request.use((config: InternalAxiosRequestConfig) => {

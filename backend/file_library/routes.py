@@ -35,6 +35,21 @@ def create_file_library_blueprint(
 ) -> Blueprint:
     bp = Blueprint("file_library", __name__, url_prefix="/api/files")
 
+    def authorized_file(file_path: str) -> tuple[str, bool]:
+        """Resolve a path and require it to live under this user's generated roots."""
+        candidate = os.path.realpath(os.path.abspath(file_path or ""))
+        user_id = get_user_id()
+        roots = [scan_dir(os.path.join(generators_dir, d), user_id) for d in _generated_dirs()]
+        roots.append(scan_dir(os.path.join(backend_dir, "generated_svg_ppt"), user_id))
+        for root in roots:
+            resolved_root = os.path.realpath(os.path.abspath(root))
+            try:
+                if os.path.commonpath([candidate, resolved_root]) == resolved_root:
+                    return candidate, True
+            except ValueError:
+                continue
+        return candidate, False
+
     @bp.get("")
     def get_files():
         """获取所有生成的文件列表"""
@@ -206,10 +221,7 @@ def create_file_library_blueprint(
         if not file_path or not os.path.exists(file_path):
             return jsonify({"success": False, "error": "文件不存在"}), 404
 
-        allowed_dirs = [os.path.join(generators_dir, d) for d in _generated_dirs()]
-        allowed_dirs.append(os.path.join(backend_dir, "generated_svg_ppt"))
-        abs_path = os.path.abspath(file_path)
-        is_allowed = any(abs_path.startswith(d) for d in allowed_dirs)
+        abs_path, is_allowed = authorized_file(file_path)
 
         if not is_allowed:
             logger.warning(f"[FILES] 非法删除路径: {file_path}")
@@ -236,15 +248,7 @@ def create_file_library_blueprint(
         if not new_name or "/" in new_name or "\\" in new_name:
             return jsonify({"success": False, "error": "无效的文件名"}), 400
 
-        allowed_dirs = [
-            scan_dir(os.path.join(generators_dir, d), user_id)
-            for d in _generated_dirs()
-            if d != "generated_content"
-        ]
-        allowed_dirs.append(scan_dir(os.path.join(generators_dir, "generated_content"), user_id))
-        allowed_dirs.append(scan_dir(os.path.join(backend_dir, "generated_svg_ppt"), user_id))
-        abs_old = os.path.abspath(old_path)
-        is_allowed = any(abs_old.startswith(d) for d in allowed_dirs)
+        abs_old, is_allowed = authorized_file(old_path)
 
         if not is_allowed:
             logger.warning(f"[FILES] 非法重命名路径: {old_path}")
@@ -324,27 +328,8 @@ def create_file_library_blueprint(
         if not filepath:
             return jsonify({"error": "缺少 path 参数"}), 400
 
-        abs_path = os.path.abspath(filepath)
-        base_dir = os.path.abspath(backend_dir)
-        if not abs_path.startswith(base_dir):
-            return jsonify({"error": "非法路径"}), 403
-
-        allowed_prefixes = [os.path.join(base_dir, d) for d in [
-            "generated_ppt", "generated_lectures", "generated_content",
-            "generated_outlines", "generated_speeches", "generated_exercises",
-            "generated_quizzes", "generated_cards", "generated_mindmaps",
-            "generated_svg_ppt",
-            os.path.join("generators", "generated_exercises"),
-            os.path.join("generators", "generated_quizzes"),
-            os.path.join("generators", "generated_lectures"),
-            os.path.join("generators", "generated_outlines"),
-            os.path.join("generators", "generated_speeches"),
-            os.path.join("generators", "generated_cards"),
-            os.path.join("generators", "generated_mindmaps"),
-            os.path.join("generators", "generated_ppt"),
-            os.path.join("generators", "generated_content"),
-        ]]
-        if not any(abs_path.startswith(p) for p in allowed_prefixes):
+        abs_path, is_allowed = authorized_file(filepath)
+        if not is_allowed:
             return jsonify({"error": "文件不在允许的目录中"}), 403
         if not os.path.isfile(abs_path):
             return jsonify({"error": "文件不存在"}), 404
@@ -356,9 +341,8 @@ def create_file_library_blueprint(
         if not filepath:
             return jsonify({"error": "缺少 path 参数"}), 400
 
-        abs_path = os.path.abspath(filepath)
-        base_dir = os.path.abspath(backend_dir)
-        if not abs_path.startswith(base_dir):
+        abs_path, is_allowed = authorized_file(filepath)
+        if not is_allowed:
             return jsonify({"error": "非法路径"}), 403
         if not os.path.isfile(abs_path):
             return jsonify({"error": "文件不存在"}), 404

@@ -19,6 +19,7 @@ export interface SseRequest {
  */
 export async function* sseFetch(req: SseRequest): AsyncGenerator<SseEvent, void, void> {
   const res = await fetch(req.url, {
+    credentials: 'include',
     method: req.method ?? 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',

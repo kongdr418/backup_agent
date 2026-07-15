@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ppt_engine.config import (
     LLM_CONNECT_TIMEOUT,
+    LLM_POOL_TIMEOUT,
     LLM_READ_TIMEOUT,
     LLM_WRITE_TIMEOUT,
 )
@@ -44,7 +45,7 @@ class AnthropicProvider(LLMProvider):
             connect=LLM_CONNECT_TIMEOUT,
             read=LLM_READ_TIMEOUT,
             write=LLM_WRITE_TIMEOUT,
-            pool=30.0,
+            pool=LLM_POOL_TIMEOUT,
         )
 
     def _convert_messages(self, messages: list[LLMMessage]) -> tuple[str, list[dict]]:

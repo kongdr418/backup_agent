@@ -13,7 +13,12 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
-from ppt_engine.config import REFERENCES_DIR, SVG_MAX_CONCURRENCY
+from ppt_engine.config import (
+    REFERENCES_DIR,
+    SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS,
+    SVG_INITIAL_LLM_TIMEOUT_SECONDS,
+    SVG_MAX_CONCURRENCY,
+)
 from ppt_engine.critic import CriticConfig, CriticReport, check_svg
 from ppt_engine.llm import LLMMessage, LLMProvider, LLMResponse
 from ppt_engine.agents.provider_guidance import is_deepseek_provider, deepseek_executor_guidance
@@ -24,8 +29,6 @@ logger = get_logger(__name__)
 
 MAX_REPAIR_ATTEMPTS = 2
 MAX_SVG_EXTRACTION_ATTEMPTS = 2
-SVG_INITIAL_LLM_TIMEOUT_SECONDS = 60  # 70 调回 60，70 没改善超时率且失败等待翻倍
-SVG_EXTRACTION_RETRY_TIMEOUT_SECONDS = 90
 
 _SLIDE_DELIMITER_RE = re.compile(r"(?m)^\s*---\s*$")
 _COMPACT_CONTEXT_LIMIT = 1800
@@ -241,7 +244,7 @@ async def _chat_with_timeout(
     *,
     temperature: float,
     max_tokens: int,
-    timeout_seconds: int,
+    timeout_seconds: float,
 ) -> LLMResponse:
     return await asyncio.wait_for(
         llm.chat(messages, model, temperature=temperature, max_tokens=max_tokens),

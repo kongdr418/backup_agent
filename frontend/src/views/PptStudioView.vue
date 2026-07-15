@@ -104,7 +104,7 @@
             <span class="template-preview-label">模板预览：{{ templatePreview.label }}</span>
             <span class="template-preview-counter">{{ templatePreview.pageOrder[previewPageIdx + 1] ? (previewPageIdx + 1) + '/' + templatePreview.pageOrder.length : '' }}</span>
           </div>
-          <div class="template-preview-svg" v-html="templatePreview.pages[templatePreview.pageOrder[previewPageIdx]]"></div>
+          <div class="template-preview-svg" v-html="sanitizeSvg(templatePreview.pages[templatePreview.pageOrder[previewPageIdx]])"></div>
           <div v-if="templatePreview.pageOrder.length > 1" class="template-preview-nav">
             <button class="preview-nav-btn" :disabled="previewPageIdx === 0" @click="previewPageIdx--">‹</button>
             <span class="preview-nav-label">{{ templatePreview.getLabel ? templatePreview.getLabel(templatePreview.pageOrder[previewPageIdx]) : templatePreview.pageOrder[previewPageIdx] }}</span>
@@ -145,6 +145,7 @@
 </template>
 
 <script setup lang="ts">
+import { sanitizeSvg } from '@/utils/sanitizeSvg'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { History, SlidersHorizontal, X } from 'lucide-vue-next'

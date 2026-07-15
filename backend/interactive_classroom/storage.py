@@ -35,6 +35,13 @@ class ClassroomStorage:
         self.memory_root = os.path.join(backend_dir, "memory", "users")
         self._event_locks: dict[tuple[str, str], threading.Lock] = {}
         self._event_locks_guard = threading.Lock()
+        self._answer_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._answer_locks_guard = threading.Lock()
+
+    def _answer_lock(self, user_id: str, classroom_id: str) -> threading.Lock:
+        key = (user_id, classroom_id)
+        with self._answer_locks_guard:
+            return self._answer_locks.setdefault(key, threading.Lock())
 
     def classroom_dir(self, user_id: str, classroom_id: str, create: bool = True) -> str:
         user_id = _safe_id(user_id, "user_id")
@@ -121,15 +128,16 @@ class ClassroomStorage:
         scene_id: str,
         answers_payload: dict[str, Any],
     ) -> None:
-        path = os.path.join(self.classroom_dir(user_id, classroom_id), "answers.json")
-        existing: dict[str, Any] = {"scenes": {}}
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-        existing.setdefault("scenes", {})
-        existing["scenes"][scene_id] = answers_payload
-        existing["updated_at"] = _now_iso()
-        self._write_json_file(path, existing)
+        with self._answer_lock(user_id, classroom_id):
+            path = os.path.join(self.classroom_dir(user_id, classroom_id), "answers.json")
+            existing: dict[str, Any] = {"scenes": {}}
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            existing.setdefault("scenes", {})
+            existing["scenes"][scene_id] = answers_payload
+            existing["updated_at"] = _now_iso()
+            self._write_json_file(path, existing)
 
     def load_answers(self, user_id: str, classroom_id: str) -> dict[str, Any]:
         path = os.path.join(self.classroom_dir(user_id, classroom_id, create=False), "answers.json")

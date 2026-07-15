@@ -50,7 +50,7 @@
       <section class="scene-body">
         <div v-if="currentScene.type === 'slide'" class="slide-wrap">
           <div v-if="sceneSvg" ref="svgStageRef" class="svg-stage">
-            <div ref="svgBoxRef" class="svg-box" v-html="sceneSvg" />
+            <div ref="svgBoxRef" class="svg-box" v-html="sanitizeSvg(sceneSvg)" />
             <div
               v-if="activeHighlight && highlightLayerStyle && highlightBoxStyle"
               class="highlight-layer"
@@ -534,6 +534,7 @@
 </template>
 
 <script setup lang="ts">
+import { sanitizeSvg } from '@/utils/sanitizeSvg'
 import { ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Lock, MessageSquare, Pause, PauseCircle, Play, PlayCircle, Sparkles, Volume2, VolumeX, XCircle } from 'lucide-vue-next'
 import DiscussionSidebar from '@/components/classroom/DiscussionSidebar.vue'
 import MindmapScene from '@/components/classroom/MindmapScene.vue'

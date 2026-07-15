@@ -18,7 +18,7 @@
         :class="{ active: activeSlide === slide.page }"
         @click="activeSlide = slide.page"
       >
-        <div class="thumb-img" v-html="slide.svg" />
+        <div class="thumb-img" v-html="sanitizeSvg(slide.svg)" />
         <div class="thumb-label">{{ slide.page }}</div>
       </div>
     </div>
@@ -28,7 +28,7 @@
         <span class="slide-title">第 {{ activeSlide }} 页</span>
         <span class="slide-of">/ {{ slides.length }}</span>
       </div>
-      <div class="slide-full" v-html="activeSlideData.svg" />
+      <div class="slide-full" v-html="sanitizeSvg(activeSlideData.svg)" />
     </div>
 
     <!-- Download link -->
@@ -51,6 +51,7 @@ import { Download } from 'lucide-vue-next'
 import type { PptSlide } from '@/types'
 import { getPptAllSlides, pptDownloadUrl } from '@/api/pptSvg'
 import { getUserId } from '@/composables/useUserId'
+import { sanitizeSvg } from '@/utils/sanitizeSvg'
 
 const props = defineProps<{
   jobId: string
